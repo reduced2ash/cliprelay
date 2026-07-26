@@ -119,6 +119,21 @@ ApplicationWindow {
             }
         }
 
+        // This sits behind the real controls. Buttons keep normal input, while
+        // blank header, page-title, and brand areas start the native macOS or
+        // Windows move operation directly from the mouse-down event.
+        MouseArea {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 82
+            z: -1
+            acceptedButtons: Qt.LeftButton
+            onPressed: function(mouse) {
+                mouse.accepted = window.startSystemMove()
+            }
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
@@ -381,8 +396,4 @@ ApplicationWindow {
         Timer { id: toastTimer; interval: 5200; onTriggered: toast.shown = false }
     }
 
-    WindowChrome {
-        anchors.fill: parent
-        hostWindow: window
-    }
 }

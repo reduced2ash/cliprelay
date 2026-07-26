@@ -87,17 +87,13 @@ def test_settings_exposes_maximum_mode_and_live_performance_diagnostics() -> Non
     assert 'controller.settings.performance_mode === "maximum"' in library
 
 
-def test_window_chrome_restores_native_move_and_edge_resize() -> None:
+def test_header_background_starts_native_move_without_blocking_controls() -> None:
     main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
-    chrome = (QML_DIR / "WindowChrome.qml").read_text(encoding="utf-8")
 
-    assert "WindowChrome {" in main
-    assert "hostWindow: window" in main
-    assert "root.hostWindow.startSystemMove()" in chrome
-    assert "root.hostWindow.startSystemResize(edges)" in chrome
-    assert chrome.count("root.beginResize(") == 8
-    for edge in ("LeftEdge", "RightEdge", "TopEdge", "BottomEdge"):
-        assert f"Qt.{edge}" in chrome
+    assert "height: 82" in main
+    assert "z: -1" in main
+    assert "mouse.accepted = window.startSystemMove()" in main
+    assert "startSystemResize" not in main
 
 
 def test_combo_popup_treats_trigger_as_its_parent() -> None:

@@ -23,12 +23,12 @@ release.
 
 ### Fixed
 
-- Restored native window moving plus edge and corner resizing for the extended
-  macOS window chrome.
+- Restored dependable title-surface dragging and native edge and corner
+  resizing for the extended macOS window chrome.
 - Made shared dropdown triggers close an open menu instead of immediately
   reopening it.
-- Increased discrete mouse-wheel travel on macOS while preserving precise
-  trackpad scrolling.
+- Added faster eased mouse-wheel momentum throughout the app while preserving
+  precise native trackpad scrolling.
 
 ## [0.1.0-beta.2] - 2026-07-26
 

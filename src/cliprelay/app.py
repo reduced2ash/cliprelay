@@ -32,7 +32,7 @@ from .secrets import SecretStore
 from .settings import Settings
 
 
-_MINIMUM_MOUSE_WHEEL_LINES = 8
+_MINIMUM_MOUSE_WHEEL_LINES = 14
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -32,15 +32,15 @@ def test_macos_mouse_wheel_scrolling_gets_a_useful_minimum(
 
     app_module._configure_mouse_wheel_scrolling(application)
 
-    assert application.hints.wheel_lines == 8
-    assert application.hints.set_calls == [8]
+    assert application.hints.wheel_lines == 14
+    assert application.hints.set_calls == [14]
 
 
 def test_mouse_wheel_configuration_preserves_faster_or_non_macos_values(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(app_module.sys, "platform", "darwin")
-    fast_application = FakeApplication(12)
+    fast_application = FakeApplication(18)
     app_module._configure_mouse_wheel_scrolling(fast_application)
     assert fast_application.hints.set_calls == []
 
