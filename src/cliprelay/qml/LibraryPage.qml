@@ -836,8 +836,21 @@ Rectangle {
                         clip: true
                         model: libraryModel
                         property int columns: Math.max(1, Math.floor(width / 236))
+                        readonly property real tileContentWidth: Math.max(
+                            0,
+                            cellWidth - 12
+                        )
+                        readonly property real tilePosterHeight: Math.max(
+                            132,
+                            tileContentWidth * 0.58
+                        )
+                        // Title, metadata, margins, and the inter-row gutter.
+                        readonly property real tileChromeHeight: 64
                         cellWidth: width / columns
-                        cellHeight: 220
+                        cellHeight: Math.max(
+                            220,
+                            Math.ceil(tilePosterHeight + tileChromeHeight)
+                        )
                         cacheBuffer: cellHeight * 2
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -859,6 +872,7 @@ Rectangle {
                             required property int postedCount
                             width: libraryGrid.cellWidth
                             height: libraryGrid.cellHeight
+                            clip: true
                             MediaTile {
                                 anchors.fill: parent
                                 anchors.rightMargin: 12

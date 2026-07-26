@@ -38,3 +38,13 @@ def test_prepare_uses_one_filmstrip_timeline_for_seek_and_cut() -> None:
     assert "id: inHandle" in timeline
     assert "id: outHandle" in timeline
     assert "CUT  " in timeline
+
+
+def test_library_grid_height_tracks_responsive_tile_width() -> None:
+    source = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+
+    assert "readonly property real tilePosterHeight" in source
+    assert "Math.ceil(tilePosterHeight + tileChromeHeight)" in source
+    assert "cellHeight: 220" not in source
+    assert "height: libraryGrid.cellHeight" in source
+    assert "clip: true" in source
