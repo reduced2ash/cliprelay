@@ -399,21 +399,18 @@ class Database:
             row = connection.execute("SELECT * FROM media_files WHERE id=?", (media_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_media(
-        self,
-        search: str = "",
-        folder: str = "",
-        sort_mode: str = "newest",
-        limit: int = 5000,
-        offset: int = 0,
-    ) -> list[dict[str, Any]]:
-        order = {
-            "name": "name COLLATE NOCASE ASC",
-            "oldest": "mtime ASC",
-            "duration": "duration DESC",
-            "size": "size_bytes DESC",
-            "newest": "mtime DESC",
-        }.get(sort_mode, "mtime DESC")
+    @staticmethod
+    def _media_order(sort_mode: str) -> str:
+        return {
+            "name": "name COLLATE NOCASE ASC, id ASC",
+            "oldest": "mtime ASC, id ASC",
+            "duration": "duration DESC, id ASC",
+            "size": "size_bytes DESC, id ASC",
+            "newest": "mtime DESC, id DESC",
+        }.get(sort_mode, "mtime DESC, id DESC")
+
+    @staticmethod
+    def _media_filter(search: str, folder: str) -> tuple[list[str], list[Any]]:
         clauses = ["valid=1", "active=1"]
         values: list[Any] = []
         if search.strip():
@@ -423,6 +420,18 @@ class Database:
         if folder:
             clauses.append("folder=?")
             values.append(folder)
+        return clauses, values
+
+    def list_media(
+        self,
+        search: str = "",
+        folder: str = "",
+        sort_mode: str = "newest",
+        limit: int = 5000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        order = self._media_order(sort_mode)
+        clauses, values = self._media_filter(search, folder)
         values.extend([limit, max(0, offset)])
         with self.connection() as connection:
             rows = connection.execute(
@@ -431,6 +440,35 @@ class Database:
                 values,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def navigation_neighbors(
+        self,
+        media_id: int,
+        search: str = "",
+        folder: str = "",
+        sort_mode: str = "newest",
+    ) -> dict[str, int | bool]:
+        """Return the adjacent active videos in the same order as the library."""
+        clauses, values = self._media_filter(search, folder)
+        order = self._media_order(sort_mode)
+        with self.connection() as connection:
+            row = connection.execute(
+                "WITH ordered AS ("
+                "SELECT id, "
+                f"LAG(id) OVER (ORDER BY {order}) AS previous_id, "
+                f"LEAD(id) OVER (ORDER BY {order}) AS next_id "
+                f"FROM media_files WHERE {' AND '.join(clauses)}"
+                ") "
+                "SELECT previous_id, next_id FROM ordered WHERE id=?",
+                [*values, int(media_id)],
+            ).fetchone()
+        if not row:
+            return {"found": False, "previousId": 0, "nextId": 0}
+        return {
+            "found": True,
+            "previousId": int(row["previous_id"] or 0),
+            "nextId": int(row["next_id"] or 0),
+        }
 
     def list_folders(self) -> list[dict[str, Any]]:
         with self.connection() as connection:

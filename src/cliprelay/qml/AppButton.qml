@@ -79,7 +79,8 @@ Button {
         Behavior on color { ColorAnimation { duration: Theme.fastMotion } }
     }
 
-    ToolTip.visible: control.iconOnly && control.hovered
+    ToolTip.visible: control.hovered
+        && (control.iconOnly || control.toolTipText !== control.text)
     ToolTip.text: control.toolTipText
     ToolTip.delay: 450
     Behavior on scale { NumberAnimation { duration: Theme.quickMotion; easing.type: Easing.OutQuart } }

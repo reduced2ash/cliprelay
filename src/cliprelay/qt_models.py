@@ -3,7 +3,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    Property,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
 
 from .database import Database
 from .utils import format_bytes, format_duration
@@ -237,6 +245,172 @@ class FolderModel(DictListModel):
                 if row["folderPath"] == folder
             ),
             -1,
+        )
+
+
+class RandomFolderModel(DictListModel):
+    PathRole = Qt.ItemDataRole.UserRole + 1
+    NameRole = PathRole + 1
+    DetailRole = PathRole + 2
+    CountRole = PathRole + 3
+    SelectedRole = PathRole + 4
+    ROLE_NAMES = {
+        PathRole: b"folderPath",
+        NameRole: b"folderName",
+        DetailRole: b"folderDetail",
+        CountRole: b"videoCount",
+        SelectedRole: b"folderSelected",
+    }
+
+    summaryChanged = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self._all_rows: list[dict[str, Any]] = []
+        self._row_by_path: dict[str, dict[str, Any]] = {}
+        self._visible_index: dict[str, int] = {}
+        self._filter = ""
+        self._selected_only = False
+
+    @Property(int, notify=summaryChanged)
+    def totalCount(self) -> int:
+        return len(self._all_rows)
+
+    @Property(int, notify=summaryChanged)
+    def visibleCount(self) -> int:
+        return len(self.rows)
+
+    @Property(bool, notify=summaryChanged)
+    def selectedOnly(self) -> bool:
+        return self._selected_only
+
+    def _matches(self, row: dict[str, Any]) -> bool:
+        if self._selected_only and not row["folderSelected"]:
+            return False
+        if not self._filter:
+            return True
+        return self._filter in row["_searchText"]
+
+    def _apply_filter(self) -> None:
+        self.beginResetModel()
+        self.rows = [row for row in self._all_rows if self._matches(row)]
+        self._visible_index = {
+            str(row["folderPath"]): index
+            for index, row in enumerate(self.rows)
+        }
+        self.endResetModel()
+        self.summaryChanged.emit()
+
+    def set_rows(
+        self,
+        rows: list[dict[str, Any]],
+        selected: set[str] | None = None,
+    ) -> None:
+        selected_paths = selected or set()
+        mapped: list[dict[str, Any]] = []
+        for source in rows:
+            path = str(source.get("folder") or "")
+            if path:
+                name = path.rsplit("/", 1)[-1]
+                parent = path.rsplit("/", 1)[0] if "/" in path else ""
+                detail = (
+                    parent.replace("/", "  /  ")
+                    if parent
+                    else "Top level"
+                )
+            else:
+                name = "Library root only"
+                detail = "Files directly inside the chosen library"
+            mapped.append({
+                "folderPath": path,
+                "folderName": name,
+                "folderDetail": detail,
+                "videoCount": int(source.get("count") or 0),
+                "folderSelected": path in selected_paths,
+                "_searchText": f"{name}\n{path}".casefold(),
+            })
+        self._all_rows = mapped
+        self._row_by_path = {
+            str(row["folderPath"]): row
+            for row in self._all_rows
+        }
+        self._apply_filter()
+
+    @Slot()
+    def clear(self) -> None:
+        self._all_rows = []
+        self._row_by_path = {}
+        self._apply_filter()
+
+    @Slot(str)
+    def setFilter(self, value: str) -> None:
+        normalized = str(value).strip().casefold()
+        if normalized == self._filter:
+            return
+        self._filter = normalized
+        self._apply_filter()
+
+    @Slot(bool)
+    def setSelectedOnly(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._selected_only:
+            return
+        self._selected_only = enabled
+        self._apply_filter()
+
+    def set_selected(self, folder: str, enabled: bool) -> None:
+        row = self._row_by_path.get(folder)
+        if not row or bool(row["folderSelected"]) == bool(enabled):
+            return
+        row["folderSelected"] = bool(enabled)
+        if self._selected_only:
+            self._apply_filter()
+            return
+        visible_index = self._visible_index.get(folder, -1)
+        if visible_index >= 0:
+            model_index = self.index(visible_index, 0)
+            self.dataChanged.emit(
+                model_index,
+                model_index,
+                [self.SelectedRole],
+            )
+
+    def sync_selected(self, selected: set[str]) -> None:
+        changed_paths: list[str] = []
+        for row in self._all_rows:
+            next_value = str(row["folderPath"]) in selected
+            if bool(row["folderSelected"]) != next_value:
+                row["folderSelected"] = next_value
+                changed_paths.append(str(row["folderPath"]))
+        if not changed_paths:
+            return
+        if self._selected_only:
+            self._apply_filter()
+            return
+        changed_indexes = sorted(
+            self._visible_index[path]
+            for path in changed_paths
+            if path in self._visible_index
+        )
+        if not changed_indexes:
+            return
+        range_start = changed_indexes[0]
+        range_end = changed_indexes[0]
+        for changed_index in changed_indexes[1:]:
+            if changed_index == range_end + 1:
+                range_end = changed_index
+                continue
+            self.dataChanged.emit(
+                self.index(range_start, 0),
+                self.index(range_end, 0),
+                [self.SelectedRole],
+            )
+            range_start = changed_index
+            range_end = changed_index
+        self.dataChanged.emit(
+            self.index(range_start, 0),
+            self.index(range_end, 0),
+            [self.SelectedRole],
         )
 
 

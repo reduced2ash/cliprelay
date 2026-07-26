@@ -18,6 +18,8 @@ Item {
     required property int postedCount
     property bool selected: false
     signal chosen(int mediaId)
+    signal playbackRequested(int mediaId)
+    signal navigationRequested(int direction)
 
     function requestThumbnail() {
         if (
@@ -230,6 +232,17 @@ Item {
         }
     }
 
-    Keys.onSpacePressed: root.chosen(root.mediaId)
+    Keys.onSpacePressed: function(event) {
+        root.playbackRequested(root.mediaId)
+        event.accepted = true
+    }
+    Keys.onLeftPressed: function(event) {
+        root.navigationRequested(-1)
+        event.accepted = true
+    }
+    Keys.onRightPressed: function(event) {
+        root.navigationRequested(1)
+        event.accepted = true
+    }
     Keys.onReturnPressed: root.chosen(root.mediaId)
 }

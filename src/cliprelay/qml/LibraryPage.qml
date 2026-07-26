@@ -14,7 +14,28 @@ Rectangle {
     property bool compactToolbar: width < 1100
     property Item fullscreenHost
     property bool prepareFullscreen: false
+    property bool commandShortcutsEnabled: !randomSourcePopup.opened
     objectName: "libraryPage"
+
+    function focusSearch() {
+        searchField.forceActiveFocus()
+        searchField.selectAll()
+    }
+
+    function togglePlayback() {
+        if (Number(controller.selectedMediaId || 0) > 0)
+            preparePanel.togglePlayback()
+    }
+
+    function playMedia(mediaId) {
+        if (Number(controller.selectedMediaId || 0) !== Number(mediaId))
+            controller.selectMedia(mediaId)
+        Qt.callLater(root.togglePlayback)
+    }
+
+    function navigateSelection(direction) {
+        controller.navigateSelection(direction)
+    }
 
     Connections {
         target: controller
@@ -38,6 +59,11 @@ Rectangle {
             if (Number(controller.selectedMediaId || 0) <= 0)
                 root.prepareFullscreen = false
         }
+        function onLibrarySelectionRequested(mediaIndex) {
+            if (mediaIndex >= 0) {
+                libraryGrid.positionViewAtIndex(mediaIndex, GridView.Visible)
+            }
+        }
     }
 
     FolderDialog {
@@ -49,6 +75,7 @@ Rectangle {
     Popup {
         id: randomSourcePopup
         parent: root
+        property bool selectedOnly: false
         x: Math.max(
             16,
             Math.min(
@@ -58,68 +85,109 @@ Rectangle {
         )
         y: 70
         z: 100
-        width: Math.min(380, root.width - 32)
-        height: Math.min(560, root.height - 92)
+        width: Math.min(520, root.width - 32)
+        height: Math.min(640, root.height - 92)
         padding: 0
         modal: false
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: {
-            randomFolderSearch.text = ""
             controller.loadRandomFolderOptions()
-            randomFolderSearch.forceActiveFocus()
+            randomFolderModel.setSelectedOnly(selectedOnly)
+            randomFolderModel.setFilter(randomFolderSearch.text)
+            Qt.callLater(function() {
+                randomFolderSearch.forceActiveFocus()
+            })
+        }
+
+        Timer {
+            id: randomFolderSearchTimer
+            interval: 120
+            onTriggered: randomFolderModel.setFilter(randomFolderSearch.text)
         }
 
         background: Rectangle {
             color: Theme.surface
-            radius: Theme.radiusMd
+            radius: Theme.radiusLg
             border.width: 1
-            border.color: Theme.border
+            border.color: Theme.borderStrong
         }
 
         contentItem: ColumnLayout {
             spacing: 0
 
-            ColumnLayout {
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                Layout.topMargin: 14
-                Layout.bottomMargin: 12
-                spacing: 3
-                Text {
-                    text: "Random source"
-                    color: Theme.text
-                    font.pixelSize: Theme.textSection
-                    font.weight: Font.DemiBold
+                Layout.topMargin: 16
+                Layout.bottomMargin: 14
+                spacing: 12
+
+                Rectangle {
+                    Layout.preferredWidth: 38
+                    Layout.preferredHeight: 38
+                    radius: Theme.radiusSm
+                    color: Theme.accentSoft
+                    AppIcon {
+                        anchors.centerIn: parent
+                        width: 19
+                        height: 19
+                        name: "folders"
+                        strokeWidth: 1.8
+                        iconColor: Theme.accentText
+                    }
                 }
-                Text {
-                    text: "Selected folders include every folder inside them."
-                    color: Theme.muted
-                    font.pixelSize: Theme.textXs
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: "Random sources"
+                        color: Theme.text
+                        font.pixelSize: Theme.textSection
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        text: "Choose one or more folders. Nested folders are included."
+                        color: Theme.muted
+                        font.pixelSize: Theme.textXs
+                    }
                 }
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-            Item {
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 64
+                Layout.leftMargin: 12
+                Layout.rightMargin: 10
+                Layout.topMargin: 10
+                Layout.bottomMargin: 10
+                spacing: 6
                 AppField {
                     id: randomFolderSearch
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    anchors.topMargin: 10
-                    anchors.bottomMargin: 10
-                    placeholderText: "Find a folder"
+                    Layout.fillWidth: true
+                    iconName: "search"
+                    placeholderText: "Search by folder name or path"
                     Accessible.name: "Search random source folders"
+                    onTextChanged: randomFolderSearchTimer.restart()
+                }
+                AppButton {
+                    visible: randomFolderSearch.text.length > 0
+                    text: "Clear folder search"
+                    iconName: "close"
+                    kind: "ghost"
+                    compact: true
+                    onClicked: {
+                        randomFolderSearch.text = ""
+                        randomFolderSearch.forceActiveFocus()
+                    }
                 }
             }
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 48
+                Layout.preferredHeight: 54
                 color: allFoldersChoice.hovered || allFoldersChoice.activeFocus
                     ? Theme.active
                     : "transparent"
@@ -139,6 +207,45 @@ Rectangle {
 
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 12
+                Layout.rightMargin: 10
+                Layout.topMargin: 6
+                Layout.bottomMargin: 6
+                spacing: 8
+
+                AppButton {
+                    text: "Selected only"
+                    iconName: randomSourcePopup.selectedOnly ? "check" : ""
+                    kind: randomSourcePopup.selectedOnly
+                        ? "secondary" : "ghost"
+                    onClicked: {
+                        randomSourcePopup.selectedOnly =
+                            !randomSourcePopup.selectedOnly
+                        randomFolderModel.setSelectedOnly(
+                            randomSourcePopup.selectedOnly
+                        )
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: randomFolderModel.visibleCount.toLocaleString()
+                        + " of "
+                        + randomFolderModel.totalCount.toLocaleString()
+                    color: Theme.muted
+                    font.pixelSize: Theme.textXs
+                }
+                AppButton {
+                    text: "Clear selected"
+                    kind: "ghost"
+                    enabled: controller.randomFolderSelectionCount > 0
+                    onClicked: controller.clearRandomFolders()
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -150,67 +257,158 @@ Rectangle {
                     anchors.bottomMargin: 4
                     clip: true
                     reuseItems: true
-                    model: controller.randomFolderOptions
+                    spacing: 2
+                    model: randomFolderModel
+                    boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: AppScrollBar { }
 
                     delegate: Rectangle {
                         id: randomFolderChoice
-                        required property var modelData
-                        property bool matchesSearch: {
-                            const term = randomFolderSearch.text.trim().toLowerCase()
-                            return !term.length
-                                || modelData.folderName.toLowerCase().includes(term)
-                        }
+                        required property string folderPath
+                        required property string folderName
+                        required property string folderDetail
+                        required property int videoCount
+                        required property bool folderSelected
                         width: ListView.view.width
-                        height: matchesSearch ? 48 : 0
-                        visible: matchesSearch
-                        color: folderCheck.hovered || folderCheck.activeFocus
-                            ? Theme.active
-                            : "transparent"
+                        height: 62
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.CheckBox
+                        Accessible.name: folderName + ", " + folderDetail
+                            + ", " + videoCount + " videos"
+                        Accessible.checked: folderSelected
+                        radius: Theme.radiusSm
+                        color: folderSelected
+                            ? Theme.accentSoft
+                            : randomFolderHover.hovered || activeFocus
+                                ? Theme.active : "transparent"
+                        border.width: activeFocus ? Theme.focusWidth : 0
+                        border.color: Theme.accent
 
-                        AppCheckBox {
-                            id: folderCheck
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 64
-                            text: randomFolderChoice.modelData.folderName
-                            checked: randomFolderChoice.modelData.selected
-                            focusPolicy: Qt.StrongFocus
-                            Accessible.name: text + ", "
-                                + randomFolderChoice.modelData.videoCount + " videos"
-                            onClicked: controller.setRandomFolderEnabled(
-                                randomFolderChoice.modelData.folderPath,
-                                checked
+                        function toggleFolder() {
+                            controller.setRandomFolderEnabled(
+                                randomFolderChoice.folderPath,
+                                !randomFolderChoice.folderSelected
                             )
                         }
+
+                        Rectangle {
+                            id: folderIndicator
+                            anchors.left: parent.left
+                            anchors.leftMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 21
+                            height: 21
+                            radius: 5
+                            color: randomFolderChoice.folderSelected
+                                ? Theme.accent : Theme.raised
+                            border.width: 1
+                            border.color: randomFolderChoice.folderSelected
+                                ? Theme.accent : Theme.borderStrong
+                            AppIcon {
+                                anchors.centerIn: parent
+                                width: 15
+                                height: 15
+                                visible: randomFolderChoice.folderSelected
+                                name: "check"
+                                strokeWidth: 2.4
+                                iconColor: Theme.accentContent
+                            }
+                        }
+
+                        Column {
+                            anchors.left: folderIndicator.right
+                            anchors.leftMargin: 12
+                            anchors.right: folderCount.left
+                            anchors.rightMargin: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
+                            Text {
+                                width: parent.width
+                                text: randomFolderChoice.folderName
+                                color: Theme.text
+                                font.pixelSize: Theme.textSm
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideMiddle
+                            }
+                            Text {
+                                width: parent.width
+                                text: randomFolderChoice.folderDetail
+                                color: Theme.muted
+                                font.pixelSize: Theme.textXs
+                                elide: Text.ElideMiddle
+                            }
+                        }
+
                         Text {
+                            id: folderCount
                             anchors.right: parent.right
                             anchors.rightMargin: 16
                             anchors.verticalCenter: parent.verticalCenter
-                            text: randomFolderChoice.modelData.videoCount
-                            color: Theme.muted
+                            text: randomFolderChoice.videoCount.toLocaleString()
+                                + (randomFolderChoice.videoCount === 1
+                                    ? " video" : " videos")
+                            color: randomFolderChoice.folderSelected
+                                ? Theme.accentText : Theme.muted
                             font.pixelSize: Theme.textXs
+                            font.weight: randomFolderChoice.folderSelected
+                                ? Font.DemiBold : Font.Normal
                         }
+
+                        HoverHandler { id: randomFolderHover }
+                        TapHandler {
+                            onTapped: {
+                                randomFolderChoice.forceActiveFocus()
+                                randomFolderChoice.toggleFolder()
+                            }
+                        }
+                        Keys.onSpacePressed:
+                            randomFolderChoice.toggleFolder()
+                        Keys.onReturnPressed:
+                            randomFolderChoice.toggleFolder()
+                    }
+                }
+
+                Column {
+                    visible: controller.randomFolderOptionsLoading
+                        && randomFolderModel.totalCount === 0
+                    anchors.centerIn: parent
+                    width: Math.min(220, parent.width - 48)
+                    spacing: 10
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "Loading folder sources…"
+                        color: Theme.muted
+                        font.pixelSize: Theme.textSm
+                    }
+                    AppProgressBar {
+                        width: parent.width
+                        indeterminate: true
                     }
                 }
 
                 Text {
-                    visible: controller.randomFolderOptionsLoading
-                        && controller.randomFolderOptions.length === 0
-                    anchors.centerIn: parent
-                    text: "Loading folders…"
-                    color: Theme.muted
-                    font.pixelSize: Theme.textSm
-                }
-
-                Text {
                     visible: !controller.randomFolderOptionsLoading
-                        && controller.randomFolderOptions.length === 0
+                        && randomFolderModel.totalCount === 0
                     anchors.centerIn: parent
                     width: parent.width - 48
                     text: controller.scanning
                         ? "Folders will appear as filenames are found."
                         : "Rescan the library to build the folder list."
+                    color: Theme.muted
+                    font.pixelSize: Theme.textSm
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                    visible: !controller.randomFolderOptionsLoading
+                        && randomFolderModel.totalCount > 0
+                        && randomFolderModel.visibleCount === 0
+                    anchors.centerIn: parent
+                    width: parent.width - 48
+                    text: randomSourcePopup.selectedOnly
+                        ? "No selected folders match this search."
+                        : "No folders match this search."
                     color: Theme.muted
                     font.pixelSize: Theme.textSm
                     wrapMode: Text.Wrap
@@ -240,7 +438,7 @@ Rectangle {
                 }
                 AppButton {
                     text: "Done"
-                    kind: "ghost"
+                    kind: "secondary"
                     onClicked: randomSourcePopup.close()
                 }
             }
@@ -255,7 +453,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 82
             Layout.leftMargin: 26; Layout.rightMargin: 24
-            spacing: 12
+            spacing: 8
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -283,6 +481,24 @@ Rectangle {
                 onClicked: libraryDialog.open()
             }
             AppButton {
+                text: "Previous video"
+                iconName: "chevronLeft"
+                compact: true
+                toolTipText: "Previous video  ·  ←"
+                kind: "ghost"
+                enabled: controller.canSelectPrevious
+                onClicked: controller.navigateSelection(-1)
+            }
+            AppButton {
+                text: "Next video"
+                iconName: "chevronRight"
+                compact: true
+                toolTipText: "Next video  ·  →"
+                kind: "ghost"
+                enabled: controller.canSelectNext
+                onClicked: controller.navigateSelection(1)
+            }
+            AppButton {
                 id: randomSourceButton
                 Layout.preferredWidth: root.compactToolbar ? 146 : 180
                 Layout.maximumWidth: root.compactToolbar ? 146 : 180
@@ -294,9 +510,20 @@ Rectangle {
                 onClicked: randomSourcePopup.open()
             }
             AppButton {
+                text: "Previous random"
+                iconName: "history"
+                compact: true
+                toolTipText: "Previous random  ·  Shift+R"
+                kind: "ghost"
+                enabled: controller.canPickPreviousRandom
+                onClicked: controller.pickPreviousRandom()
+            }
+            AppButton {
                 text: controller.randomPicking ? "Picking…" : "Pick random"
                 iconName: "shuffle"
                 kind: "primary"
+                compact: root.width < 900
+                toolTipText: "Pick random  ·  R"
                 enabled: !controller.randomPicking
                     && (controller.settings.fast_random
                         ? Boolean(controller.settings.library_root)
@@ -521,6 +748,9 @@ Rectangle {
                                 postedCount: tileCell.postedCount
                                 selected: controller.selectedMediaId === tileCell.mediaId
                                 onChosen: controller.selectMedia(mediaId)
+                                onPlaybackRequested: root.playMedia(mediaId)
+                                onNavigationRequested:
+                                    controller.navigateSelection(direction)
                             }
                         }
                     }

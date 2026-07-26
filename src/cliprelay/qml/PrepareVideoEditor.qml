@@ -36,6 +36,15 @@ ColumnLayout {
         return editCanvas.editSpec()
     }
 
+    function togglePlayback() {
+        if (controller.selectedMediaChecking)
+            return
+        if (previewPlayer.playbackState === MediaPlayer.PlayingState)
+            previewPlayer.pause()
+        else
+            previewPlayer.play()
+    }
+
     Rectangle {
         id: videoFrame
         Layout.fillWidth: true
@@ -171,10 +180,9 @@ ColumnLayout {
                     ? "pause" : "play"
                 compact: true
                 kind: "ghost"
+                toolTipText: text + "  ·  Space"
                 enabled: !controller.selectedMediaChecking
-                onClicked: previewPlayer.playbackState === MediaPlayer.PlayingState
-                    ? previewPlayer.pause()
-                    : previewPlayer.play()
+                onClicked: root.togglePlayback()
             }
             AppSlider {
                 Layout.fillWidth: true

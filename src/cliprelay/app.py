@@ -104,6 +104,10 @@ def main(argv: list[str] | None = None) -> int:
     context.setContextProperty("controller", controller)
     context.setContextProperty("libraryModel", library_model)
     context.setContextProperty("folderModel", folder_model)
+    context.setContextProperty(
+        "randomFolderModel",
+        controller.random_folder_model,
+    )
     context.setContextProperty("historyModel", history_model)
     qml_file = Path(__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))

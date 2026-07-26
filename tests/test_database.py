@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from cliprelay.database import Database
-from cliprelay.qt_models import HistoryModel, LibraryModel
+from cliprelay.qt_models import HistoryModel, LibraryModel, RandomFolderModel
 from cliprelay.settings import Settings
 
 
@@ -204,6 +204,77 @@ def test_large_library_model_is_paginated_without_filesystem_access(tmp_path: Pa
     assert model.rows[0]["mediaUrl"].startswith("file:")
     assert model.load_more()
     assert len(model.rows) == 480
+
+
+def test_media_neighbors_follow_library_order_and_filters(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+
+    media_ids: list[int] = []
+    for index, (name, mtime, folder) in enumerate([
+        ("newest.mp4", 300, "one"),
+        ("middle.mp4", 200, "one"),
+        ("oldest.mp4", 100, "two"),
+    ]):
+        path = root / folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(str(index).encode())
+        payload = media_payload(path, root, name)
+        payload.update(
+            relative_path=f"{folder}/{name}",
+            folder=folder,
+            mtime=mtime,
+        )
+        media_ids.append(database.upsert_media(payload))
+
+    neighbors = database.navigation_neighbors(
+        media_ids[1],
+        sort_mode="newest",
+    )
+    assert neighbors == {
+        "found": True,
+        "previousId": media_ids[0],
+        "nextId": media_ids[2],
+    }
+
+    filtered = database.navigation_neighbors(
+        media_ids[1],
+        folder="one",
+        sort_mode="newest",
+    )
+    assert filtered == {
+        "found": True,
+        "previousId": media_ids[0],
+        "nextId": 0,
+    }
+    assert database.navigation_neighbors(
+        media_ids[2],
+        folder="one",
+        sort_mode="newest",
+    )["found"] is False
+
+
+def test_random_folder_model_updates_selection_without_resetting() -> None:
+    model = RandomFolderModel()
+    reset_events: list[bool] = []
+    model.modelReset.connect(lambda: reset_events.append(True))
+    model.set_rows([
+        {"folder": "events/2025", "count": 8},
+        {"folder": "events/2026", "count": 11},
+        {"folder": "personal", "count": 3},
+    ], {"events/2025"})
+    reset_count = len(reset_events)
+
+    model.set_selected("events/2026", True)
+
+    assert len(reset_events) == reset_count
+    assert model.rows[1]["folderSelected"] is True
+    model.setFilter("2026")
+    assert model.visibleCount == 1
+    assert model.rows[0]["folderPath"] == "events/2026"
+    model.setSelectedOnly(True)
+    assert model.visibleCount == 1
 
 
 def test_large_library_safe_defaults(tmp_path: Path) -> None:

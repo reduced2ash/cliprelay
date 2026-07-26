@@ -50,10 +50,23 @@ ApplicationWindow {
         value: window.themeMode
     }
 
-    Shortcut { sequence: "Ctrl+1"; onActivated: window.currentPage = 0 }
-    Shortcut { sequence: "Ctrl+2"; onActivated: window.currentPage = 1 }
-    Shortcut { sequence: "Ctrl+,"; onActivated: window.currentPage = 2 }
-    Shortcut { sequence: "Ctrl+R"; onActivated: controller.pickRandom() }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+1" : "Ctrl+1"
+        onActivated: window.currentPage = 0
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+2" : "Ctrl+2"
+        onActivated: window.currentPage = 1
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+," : "Ctrl+,"
+        onActivated: window.currentPage = 2
+    }
+    Shortcut {
+        sequences: [StandardKey.Find]
+        enabled: window.currentPage === 0
+        onActivated: libraryPage.focusSearch()
+    }
 
     Connections {
         target: controller
@@ -70,12 +83,41 @@ ApplicationWindow {
 
     Item {
         id: scaledWorkspace
+        focus: true
         anchors.left: parent.left
         anchors.top: parent.top
         width: parent.width / window.uiScale
         height: parent.height / window.uiScale
         scale: window.uiScale
         transformOrigin: Item.TopLeft
+        Keys.priority: Keys.AfterItem
+        Keys.onPressed: function(event) {
+            if (
+                window.currentPage !== 0
+                || !libraryPage.commandShortcutsEnabled
+                || event.isAutoRepeat
+            ) {
+                return
+            }
+            const noModifier = event.modifiers === Qt.NoModifier
+            const shiftOnly = event.modifiers === Qt.ShiftModifier
+            if (event.key === Qt.Key_Space && noModifier) {
+                libraryPage.togglePlayback()
+                event.accepted = true
+            } else if (event.key === Qt.Key_Left && noModifier) {
+                libraryPage.navigateSelection(-1)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Right && noModifier) {
+                libraryPage.navigateSelection(1)
+                event.accepted = true
+            } else if (event.key === Qt.Key_R && noModifier) {
+                controller.pickRandom()
+                event.accepted = true
+            } else if (event.key === Qt.Key_R && shiftOnly) {
+                controller.pickPreviousRandom()
+                event.accepted = true
+            }
+        }
 
         RowLayout {
             anchors.fill: parent

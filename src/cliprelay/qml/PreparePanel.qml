@@ -88,6 +88,10 @@ Rectangle {
         })
     }
 
+    function togglePlayback() {
+        videoEditor.togglePlayback()
+    }
+
     onStudioModeChanged: root.resetScrollPositions()
 
     Shortcut {

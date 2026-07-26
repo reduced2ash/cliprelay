@@ -22,7 +22,12 @@ more folders, including their descendants.
 
 When repeat avoidance is enabled, a selected video is removed from the current
 random pool. The pool resets after all eligible videos have been seen. Use
-**Reset shuffle** to reset it earlier.
+**Previous random** to walk backward through valid picks from the current app
+session, or **Reset shuffle** to reset the pool and session trail.
+
+The **From** picker supports search and a selected-only view. Selecting a
+folder updates it in place, so long folder lists keep their current scroll
+position.
 
 A newly discovered video is validated after selection. Preparation controls
 remain unavailable if the file is unreadable or while that single-file check
@@ -42,6 +47,19 @@ Available adjustments:
 
 The regular Prepare panel can be widened. Full-screen Prepare keeps the same
 live playback and editing state while providing a larger editor.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Space` | Play or pause the selected video |
+| `←` / `→` | Select the previous or next video |
+| `R` | Pick a random video |
+| `Shift+R` | Return to the previous random pick |
+| `Cmd+F` / `Ctrl+F` | Focus library search |
+| `Cmd+1` / `Ctrl+1` | Open Library |
+| `Cmd+2` / `Ctrl+2` | Open History |
+| `Cmd+,` / `Ctrl+,` | Open Settings |
 
 ## Telegram
 

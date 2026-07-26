@@ -368,6 +368,80 @@ async def test_random_folder_filter_uses_selected_subtree(
 
 
 @pytest.mark.asyncio
+async def test_selection_navigation_and_previous_random_history(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    media_ids: list[int] = []
+    for index, (name, mtime) in enumerate([
+        ("newest.mp4", 300),
+        ("middle.mp4", 200),
+        ("oldest.mp4", 100),
+    ]):
+        source = library_root / name
+        source.write_bytes(str(index).encode())
+        media_ids.append(database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": name,
+            "relative_path": name,
+            "folder": "",
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": mtime,
+        }))
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+
+    controller.selectMedia(media_ids[1])
+    for _ in range(100):
+        if controller._selection_navigation_task is None:
+            break
+        await asyncio.sleep(0.01)
+    assert controller.canSelectPrevious
+    assert controller.canSelectNext
+
+    controller.navigateSelection(-1)
+    assert controller.selectedMediaId == media_ids[0]
+
+    random_rows = [
+        database.get_media(media_ids[1]),
+        database.get_media(media_ids[2]),
+    ]
+    monkeypatch.setattr(
+        database,
+        "random_media",
+        lambda *_args, **_kwargs: random_rows.pop(0),
+    )
+    await controller._pick_random_cached_async()
+    await controller._pick_random_cached_async()
+    assert controller.selectedMediaId == media_ids[2]
+    assert controller.canPickPreviousRandom
+
+    controller.pickPreviousRandom()
+    assert controller.selectedMediaId == media_ids[1]
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_select_generates_thumbnail_and_reveals_nested_file(
     monkeypatch, tmp_path: Path
 ) -> None:
