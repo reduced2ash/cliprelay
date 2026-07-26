@@ -47,9 +47,9 @@ Changelog = "https://github.com/reduced2ash/cliprelay/blob/main/CHANGELOG.md"
 dev = [
   "pyinstaller>=6.11,<7",
   "pillow>=11,<13",
-  "pytest>=8.3,<9",
-  "pytest-asyncio>=0.25,<1",
-  "pytest-cov>=6,<7",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "pytest-cov>=6,<8",
 ]
 
 [project.scripts]
