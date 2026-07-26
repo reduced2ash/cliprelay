@@ -28,27 +28,6 @@ Rectangle {
 
     color: root.studioMode ? Theme.ink : Theme.surface
 
-    function timeLabel(seconds) {
-        var safe = Math.max(0, Number(seconds) || 0)
-        var hours = Math.floor(safe / 3600)
-        var minutes = Math.floor((safe % 3600) / 60)
-        var secs = Math.floor(safe % 60)
-        var base = String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0")
-        return hours > 0 ? String(hours).padStart(2, "0") + ":" + base : base
-    }
-
-    function parseTime(value, fallback) {
-        var parts = String(value).trim().split(":")
-        var total = 0
-        if (parts.length === 3)
-            total = Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2])
-        else if (parts.length === 2)
-            total = Number(parts[0]) * 60 + Number(parts[1])
-        else
-            total = Number(parts[0])
-        return isNaN(total) ? fallback : total
-    }
-
     function submit(action) {
         var presetCodes = [
             "original", "balanced", "fit_bot", "fit_x",
@@ -470,6 +449,12 @@ Rectangle {
         studioMode: root.studioMode
         trimStart: root.trimStart
         trimEnd: root.trimEnd
+        onTrimStartEdited: function(seconds) {
+            root.trimStart = seconds
+        }
+        onTrimEndEdited: function(seconds) {
+            root.trimEnd = seconds
+        }
     }
 
     ColumnLayout {
@@ -550,121 +535,10 @@ Rectangle {
     }
 
     ColumnLayout {
-        id: trimSection
-        parent: root.studioMode ? studioTimelineColumn : regularColumn
-        Layout.fillWidth: true
-        Layout.row: root.studioMode ? 1 : 3
-        Layout.column: 0
-        Layout.leftMargin: root.studioMode ? 0 : 22
-        Layout.rightMargin: root.studioMode ? 0 : 22
-        Layout.topMargin: root.studioMode ? 0 : 18
-        spacing: 10
-        enabled: !controller.selectedMediaChecking
-
-        Rectangle {
-            visible: !root.studioMode
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.border
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Text {
-                text: "CUT"
-                color: Theme.muted
-                font.pixelSize: Theme.textXs
-                font.letterSpacing: 1.2
-                Layout.fillWidth: true
-            }
-            StatusPill {
-                status: "accent"
-                text: root.timeLabel(
-                    Math.max(0, root.trimEnd - root.trimStart)
-                ) + " selected"
-            }
-        }
-
-        AppRangeSlider {
-            id: rangeSlider
-            Layout.fillWidth: true
-            from: 0
-            to: Math.max(0.1, Number(controller.selectedMedia.duration || 0.1))
-            first.value: root.trimStart
-            second.value: root.trimEnd
-            stepSize: 0.05
-            first.onMoved: {
-                root.trimStart = first.value
-                videoEditor.player.position = root.trimStart * 1000
-            }
-            second.onMoved: root.trimEnd = second.value
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Text {
-                visible: root.studioMode
-                text: "In"
-                color: Theme.muted
-                font.pixelSize: Theme.textXs
-            }
-            AppField {
-                id: startField
-                Layout.preferredWidth: root.studioMode ? 112 : 92
-                text: root.timeLabel(root.trimStart)
-                Accessible.name: "Cut start time"
-                onEditingFinished: root.trimStart = Math.max(
-                    0,
-                    Math.min(
-                        root.parseTime(text, root.trimStart),
-                        root.trimEnd - 0.05
-                    )
-                )
-            }
-            Text {
-                text: root.studioMode ? "Out" : "to"
-                color: Theme.muted
-                font.pixelSize: Theme.textSm
-            }
-            AppField {
-                id: endField
-                Layout.preferredWidth: root.studioMode ? 112 : 92
-                text: root.timeLabel(root.trimEnd)
-                Accessible.name: "Cut end time"
-                onEditingFinished: root.trimEnd = Math.min(
-                    Number(controller.selectedMedia.duration || 0),
-                    Math.max(
-                        root.parseTime(text, root.trimEnd),
-                        root.trimStart + 0.05
-                    )
-                )
-            }
-            Item { Layout.fillWidth: true }
-            AppButton {
-                visible: root.studioMode
-                text: "Reset cut"
-                iconName: "refresh"
-                kind: "ghost"
-                onClicked: {
-                    root.trimStart = 0
-                    root.trimEnd = Number(
-                        controller.selectedMedia.duration || 0
-                    )
-                    videoEditor.player.position = 0
-                }
-            }
-        }
-    }
-
-    ColumnLayout {
         id: frameSection
         parent: root.studioMode ? studioEditColumn : regularColumn
         Layout.fillWidth: true
-        Layout.row: root.studioMode ? 0 : 4
+        Layout.row: root.studioMode ? 0 : 3
         Layout.column: 0
         Layout.leftMargin: root.studioMode ? 20 : 22
         Layout.rightMargin: root.studioMode ? 20 : 22

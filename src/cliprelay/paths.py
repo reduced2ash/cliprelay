@@ -59,6 +59,12 @@ def preview_dir() -> Path:
     return path
 
 
+def timeline_dir() -> Path:
+    path = cache_dir() / "timelines"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def bundled_binary(name: str) -> Path | None:
     executable = f"{name}.exe" if sys.platform == "win32" else name
     candidates: list[Path] = []

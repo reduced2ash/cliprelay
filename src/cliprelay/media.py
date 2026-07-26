@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .database import Database
-from .paths import ffmpeg_path, ffprobe_path, is_within, preview_dir, thumbnail_dir
+from .paths import (
+    ffmpeg_path,
+    ffprobe_path,
+    is_within,
+    preview_dir,
+    thumbnail_dir,
+    timeline_dir,
+)
 from .utils import clamp, media_cache_key, safe_stem
 
 
@@ -622,6 +629,123 @@ class MediaIndexer:
             return output
         partial.unlink(missing_ok=True)
         return None
+
+    def ensure_timeline(self, media_id: int, frame_count: int = 12) -> Path | None:
+        media = self.ensure_metadata(media_id)
+        if not media or not self.ffmpeg:
+            return None
+        existing = media.get("timeline_path")
+        if existing and Path(existing).is_file():
+            return Path(existing)
+        key = media_cache_key(
+            media["path"],
+            int(media["size_bytes"]),
+            float(media["mtime"]),
+        )
+        output = timeline_dir() / f"{key}.jpg"
+        lock_key = f"timeline:{key}"
+        with self._thumbnail_lock_guard:
+            timeline_lock = self._thumbnail_locks.setdefault(
+                lock_key,
+                threading.Lock(),
+            )
+        with timeline_lock:
+            if output.is_file() and output.stat().st_size > 0:
+                self.database.set_media_asset(
+                    media_id,
+                    "timeline_path",
+                    str(output),
+                )
+                return output
+            duration = max(0.1, float(media.get("duration") or 0.1))
+            frames = max(4, min(int(frame_count), 20))
+            partial = output.with_name(f"{output.stem}.partial.jpg")
+            frame_pattern = output.with_name(
+                f"{output.stem}.partial-%02d.jpg"
+            )
+            frame_paths = [
+                output.with_name(f"{output.stem}.partial-{index:02d}.jpg")
+                for index in range(frames)
+            ]
+            scale_filter = (
+                "scale=160:90:force_original_aspect_ratio=increase,"
+                "crop=160:90"
+            )
+            try:
+                for index, frame_path in enumerate(frame_paths):
+                    frame_path.unlink(missing_ok=True)
+                    timestamp = duration * (index + 0.5) / frames
+                    completed = subprocess.run(
+                        [
+                            str(self.ffmpeg),
+                            "-hide_banner",
+                            "-loglevel",
+                            "error",
+                            "-y",
+                            "-ss",
+                            f"{timestamp:.6f}",
+                            "-i",
+                            str(media["path"]),
+                            "-frames:v",
+                            "1",
+                            "-vf",
+                            scale_filter,
+                            "-q:v",
+                            "4",
+                            str(frame_path),
+                        ],
+                        capture_output=True,
+                        timeout=20,
+                        check=False,
+                    )
+                    if (
+                        completed.returncode != 0
+                        or not frame_path.is_file()
+                        or frame_path.stat().st_size <= 0
+                    ):
+                        return None
+                completed = subprocess.run(
+                    [
+                        str(self.ffmpeg),
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-framerate",
+                        "1",
+                        "-start_number",
+                        "0",
+                        "-i",
+                        str(frame_pattern),
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        f"tile={frames}x1:padding=0:margin=0",
+                        "-q:v",
+                        "4",
+                        str(partial),
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+                if (
+                    completed.returncode == 0
+                    and partial.is_file()
+                    and partial.stat().st_size > 0
+                ):
+                    partial.replace(output)
+                    self.database.set_media_asset(
+                        media_id,
+                        "timeline_path",
+                        str(output),
+                    )
+                    return output
+                return None
+            finally:
+                partial.unlink(missing_ok=True)
+                for frame_path in frame_paths:
+                    frame_path.unlink(missing_ok=True)
 
 
 class MediaProcessor:

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS media_files (
     mtime REAL NOT NULL DEFAULT 0,
     thumbnail_path TEXT,
     preview_path TEXT,
+    timeline_path TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     valid INTEGER NOT NULL DEFAULT 1,
     seen INTEGER NOT NULL DEFAULT 0,
@@ -122,6 +123,10 @@ class Database:
             if "active" not in columns:
                 connection.execute(
                     "ALTER TABLE media_files ADD COLUMN active INTEGER NOT NULL DEFAULT 1"
+                )
+            if "timeline_path" not in columns:
+                connection.execute(
+                    "ALTER TABLE media_files ADD COLUMN timeline_path TEXT"
                 )
             export_columns = {
                 row["name"]
@@ -261,6 +266,7 @@ class Database:
                     frame_rate=CASE WHEN {changed} THEN 0 ELSE media_files.frame_rate END,
                     thumbnail_path=CASE WHEN {changed} THEN NULL ELSE media_files.thumbnail_path END,
                     preview_path=CASE WHEN {changed} THEN NULL ELSE media_files.preview_path END,
+                    timeline_path=CASE WHEN {changed} THEN NULL ELSE media_files.timeline_path END,
                     seen=CASE WHEN {changed} THEN 0 ELSE media_files.seen END,
                     size_bytes=excluded.size_bytes,
                     mtime=excluded.mtime,
@@ -305,7 +311,7 @@ class Database:
         with self.connection() as connection:
             rows = connection.execute(
                 """SELECT id,path,name,relative_path,folder,size_bytes,mtime,
-                          duration,valid,thumbnail_path,preview_path
+                          duration,valid,thumbnail_path,preview_path,timeline_path
                    FROM media_files WHERE root_path=?""",
                 (str(root_path),),
             ).fetchall()
@@ -377,7 +383,7 @@ class Database:
             )
 
     def set_media_asset(self, media_id: int, kind: str, path: str) -> None:
-        if kind not in {"thumbnail_path", "preview_path"}:
+        if kind not in {"thumbnail_path", "preview_path", "timeline_path"}:
             raise ValueError("Unsupported media asset kind")
         with self.connection() as connection:
             connection.execute(
@@ -386,7 +392,7 @@ class Database:
             )
 
     def clear_media_asset(self, media_id: int, kind: str) -> None:
-        if kind not in {"thumbnail_path", "preview_path"}:
+        if kind not in {"thumbnail_path", "preview_path", "timeline_path"}:
             raise ValueError("Unsupported media asset kind")
         with self.connection() as connection:
             connection.execute(

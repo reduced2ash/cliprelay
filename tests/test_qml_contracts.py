@@ -15,3 +15,26 @@ def test_prepare_video_autoplays_and_loops() -> None:
     assert "onPositionChanged: function(position)" in source
     assert "previewPlayer.position = root.trimStart * 1000" in source
     assert "mediaStatus === MediaPlayer.EndOfMedia" in source
+
+
+def test_prepare_uses_one_filmstrip_timeline_for_seek_and_cut() -> None:
+    editor = (QML_DIR / "PrepareVideoEditor.qml").read_text(encoding="utf-8")
+    panel = (QML_DIR / "PreparePanel.qml").read_text(encoding="utf-8")
+    timeline = (QML_DIR / "VideoTimeline.qml").read_text(encoding="utf-8")
+
+    assert "VideoTimeline {" in editor
+    assert "filmstripUrl: controller.selectedMedia.timelineUrl" in editor
+    assert "filmstripLoading: controller.selectedMediaTimelineLoading" in editor
+    assert "onTrimStartEdited: function(seconds)" in editor
+    assert "AppSlider {" not in editor
+    assert "AppRangeSlider {" not in panel
+
+    assert "readonly property int frameCount: 12" in timeline
+    assert "sourceClipRect: Qt.rect(" in timeline
+    assert "signal seekRequested(real seconds)" in timeline
+    assert "signal trimStartEdited(real seconds)" in timeline
+    assert "signal trimEndEdited(real seconds)" in timeline
+    assert "id: playhead" in timeline
+    assert "id: inHandle" in timeline
+    assert "id: outHandle" in timeline
+    assert "CUT  " in timeline

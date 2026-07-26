@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine, QQmlEngine
+from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -184,16 +185,38 @@ def main(argv: list[str] | None = None) -> int:
             window.raise_()
             window.requestActivate()
             await asyncio.sleep(0.25)
+            captured = False
+            content_item = window.property("contentItem")
+            if isinstance(content_item, QQuickItem):
+                grab_pointer = content_item.grabToImage()
+                grab_result = grab_pointer.data()
+                grab_ready = loop.create_future()
+
+                def mark_grab_ready() -> None:
+                    if not grab_ready.done():
+                        grab_ready.set_result(None)
+
+                grab_result.ready.connect(mark_grab_ready)
+                try:
+                    await asyncio.wait_for(grab_ready, timeout=2)
+                    captured = grab_result.saveToFile(
+                        str(args.screenshot)
+                    )
+                except TimeoutError:
+                    pass
             screen = window.screen() or app.primaryScreen()
-            if screen:
-                frame = window.frameGeometry()
-                screen.grabWindow(
-                    0,
-                    int(frame.x()),
-                    int(frame.y()),
-                    int(frame.width()),
-                    int(frame.height()),
-                ).save(str(args.screenshot))
+            if not captured and screen:
+                image = screen.grabWindow(int(window.winId()))
+                if image.isNull():
+                    frame = window.frameGeometry()
+                    image = screen.grabWindow(
+                        0,
+                        int(frame.x()),
+                        int(frame.y()),
+                        int(frame.width()),
+                        int(frame.height()),
+                    )
+                image.save(str(args.screenshot))
             loop.stop()
 
         asyncio.ensure_future(capture())

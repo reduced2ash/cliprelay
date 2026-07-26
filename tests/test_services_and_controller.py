@@ -429,6 +429,7 @@ async def test_selection_navigation_and_previous_random_history(
         HistoryModel(database),
     )
     monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
 
     controller.selectMedia(media_ids[1])
     for _ in range(100):
@@ -498,7 +499,9 @@ async def test_select_generates_thumbnail_and_reveals_nested_file(
         HistoryModel(database),
     )
     generated: list[int] = []
+    timeline_generated: list[int] = []
     thumbnail = tmp_path / "chosen.jpg"
+    timeline = tmp_path / "chosen-timeline.jpg"
 
     def record_thumbnail(selected_id: int) -> Path:
         generated.append(selected_id)
@@ -506,15 +509,28 @@ async def test_select_generates_thumbnail_and_reveals_nested_file(
         database.set_media_asset(selected_id, "thumbnail_path", str(thumbnail))
         return thumbnail
 
+    def record_timeline(selected_id: int) -> Path:
+        timeline_generated.append(selected_id)
+        timeline.write_bytes(b"timeline")
+        database.set_media_asset(
+            selected_id,
+            "timeline_path",
+            str(timeline),
+        )
+        return timeline
+
     monkeypatch.setattr(controller.indexer, "ensure_thumbnail", record_thumbnail)
+    monkeypatch.setattr(controller.indexer, "ensure_timeline", record_timeline)
     controller.selectMedia(media_id)
     for _ in range(50):
-        if not controller._thumbnail_jobs:
+        if not controller._thumbnail_jobs and controller._timeline_task is None:
             break
         await asyncio.sleep(0.01)
     assert generated == [media_id]
+    assert timeline_generated == [media_id]
     assert library.rows[0]["thumbnailState"] == "ready"
     assert library.rows[0]["thumbnailUrl"].startswith("file:")
+    assert controller.selectedMedia["timelineUrl"].startswith("file:")
 
     library.search = "does not match"
     library.folder = "elsewhere"

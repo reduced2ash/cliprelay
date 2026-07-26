@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 import QtMultimedia
 import "."
@@ -14,17 +13,14 @@ ColumnLayout {
     property alias editor: editCanvas
     property alias player: previewPlayer
 
-    spacing: 6
-    implicitHeight: videoFrame.Layout.preferredHeight + playbackBar.Layout.preferredHeight + spacing
+    signal trimStartEdited(real seconds)
+    signal trimEndEdited(real seconds)
 
-    function timeLabel(seconds) {
-        var safe = Math.max(0, Number(seconds) || 0)
-        var hours = Math.floor(safe / 3600)
-        var minutes = Math.floor((safe % 3600) / 60)
-        var secs = Math.floor(safe % 60)
-        var base = String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0")
-        return hours > 0 ? String(hours).padStart(2, "0") + ":" + base : base
-    }
+    spacing: 6
+    implicitHeight: root.studioMode
+        ? 0
+        : videoFrame.Layout.preferredHeight
+            + playbackTimeline.implicitHeight + spacing
 
     function reset() {
         previewPlayer.stop()
@@ -58,9 +54,8 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: root.studioMode
         Layout.minimumHeight: root.studioMode ? 220 : 190
-        Layout.preferredHeight: root.studioMode
-            ? Math.max(300, Math.min(620, width * 0.5625))
-            : Math.max(190, width * 0.54)
+        implicitHeight: root.studioMode
+            ? 0 : Math.max(190, width * 0.54)
         radius: root.studioMode ? Theme.radiusLg : Theme.radiusMd
         color: Theme.mediaWell
         border.width: 1
@@ -178,51 +173,35 @@ ColumnLayout {
         }
     }
 
-    Item {
-        id: playbackBar
+    VideoTimeline {
+        id: playbackTimeline
         Layout.fillWidth: true
-        Layout.preferredHeight: Theme.controlHeight
-
-        RowLayout {
-            anchors.fill: parent
-            spacing: 8
-
-            AppButton {
-                text: previewPlayer.playbackState === MediaPlayer.PlayingState
-                    ? "Pause" : "Play"
-                iconName: previewPlayer.playbackState === MediaPlayer.PlayingState
-                    ? "pause" : "play"
-                compact: true
-                kind: "ghost"
-                toolTipText: text + "  ·  Space"
-                enabled: !controller.selectedMediaChecking
-                onClicked: root.togglePlayback()
-            }
-            AppSlider {
-                Layout.fillWidth: true
-                from: 0
-                to: Math.max(1, Number(controller.selectedMedia.duration || 0) * 1000)
-                value: previewPlayer.position
-                enabled: !controller.selectedMediaChecking
-                    && Number(controller.selectedMedia.duration || 0) > 0
-                onMoved: previewPlayer.position = value
-                Accessible.name: "Video playback position"
-            }
-            Text {
-                text: root.timeLabel(previewPlayer.position / 1000)
-                color: Theme.textSoft
-                font.pixelSize: Theme.textXs
-            }
-            Text {
-                text: "/"
-                color: Theme.mutedSoft
-                font.pixelSize: Theme.textXs
-            }
-            Text {
-                text: root.timeLabel(controller.selectedMedia.duration || 0)
-                color: Theme.muted
-                font.pixelSize: Theme.textXs
-            }
+        player: previewPlayer
+        duration: Number(controller.selectedMedia.duration || 0)
+        trimStart: root.trimStart
+        trimEnd: root.trimEnd
+        filmstripUrl: controller.selectedMedia.timelineUrl || ""
+        thumbnailUrl: controller.selectedMedia.thumbnailUrl || ""
+        filmstripLoading: controller.selectedMediaTimelineLoading
+        studioMode: root.studioMode
+        controlsEnabled: !controller.selectedMediaChecking
+        onTogglePlaybackRequested: root.togglePlayback()
+        onSeekRequested: function(seconds) {
+            previewPlayer.position = seconds * 1000
+        }
+        onTrimStartEdited: function(seconds) {
+            root.trimStartEdited(seconds)
+            previewPlayer.position = seconds * 1000
+        }
+        onTrimEndEdited: function(seconds) {
+            root.trimEndEdited(seconds)
+        }
+        onResetCutRequested: {
+            root.trimStartEdited(0)
+            root.trimEndEdited(
+                Number(controller.selectedMedia.duration || 0)
+            )
+            previewPlayer.position = 0
         }
     }
 }

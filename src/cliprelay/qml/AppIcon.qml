@@ -208,6 +208,22 @@ Canvas {
         } else if (root.name === "pause") {
             context.fillRect(7.2, 5.5, 3.2, 13)
             context.fillRect(13.6, 5.5, 3.2, 13)
+        } else if (root.name === "skipBack") {
+            context.fillRect(4.7, 6, 1.8, 12)
+            context.beginPath()
+            context.moveTo(17.8, 6.2)
+            context.lineTo(9, 12)
+            context.lineTo(17.8, 17.8)
+            context.closePath()
+            context.fill()
+        } else if (root.name === "skipForward") {
+            context.fillRect(17.5, 6, 1.8, 12)
+            context.beginPath()
+            context.moveTo(6.2, 6.2)
+            context.lineTo(15, 12)
+            context.lineTo(6.2, 17.8)
+            context.closePath()
+            context.fill()
         } else if (root.name === "external") {
             context.beginPath()
             context.rect(4.5, 7.5, 12, 12)

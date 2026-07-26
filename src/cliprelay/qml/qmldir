@@ -17,6 +17,7 @@ NavButton 1.0 NavButton.qml
 MediaTile 1.0 MediaTile.qml
 PreparePanel 1.0 PreparePanel.qml
 PrepareVideoEditor 1.0 PrepareVideoEditor.qml
+VideoTimeline 1.0 VideoTimeline.qml
 VideoEditCanvas 1.0 VideoEditCanvas.qml
 LibraryPage 1.0 LibraryPage.qml
 HistoryPage 1.0 HistoryPage.qml

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from cliprelay.database import Database
 from cliprelay.media import MediaIndexer, MediaProcessor, normalize_edit_spec
@@ -50,6 +51,12 @@ def test_recursive_index_thumbnail_preview_and_cache(tmp_path: Path) -> None:
     assert row["width"] == 480 and row["height"] == 270
     assert Path(row["thumbnail_path"]).is_file()
     assert indexer.ensure_preview(row["id"]).is_file()
+    timeline = indexer.ensure_timeline(row["id"])
+    assert timeline and timeline.is_file()
+    with Image.open(timeline) as filmstrip:
+        assert filmstrip.size == (1920, 90)
+    assert database.get_media(row["id"])["timeline_path"] == str(timeline)
+    assert indexer.ensure_timeline(row["id"]) == timeline
 
     second = indexer.scan(library)
     assert second.skipped == 1

@@ -56,6 +56,7 @@ class AppController(QObject):
     scanStateChanged = Signal()
     randomStateChanged = Signal()
     randomFoldersChanged = Signal()
+    timelineStateChanged = Signal()
     selectionNavigationChanged = Signal()
     countsChanged = Signal()
     publishStateChanged = Signal()
@@ -133,6 +134,11 @@ class AppController(QObject):
         self._thumbnail_semaphore = asyncio.Semaphore(2)
         self._preview_jobs: dict[int, asyncio.Task] = {}
         self._preview_semaphore = asyncio.Semaphore(1)
+        self._timeline_task: asyncio.Task | None = None
+        self._timeline_media_id = 0
+        self._timeline_generation = 0
+        self._timeline_loading = False
+        self._timeline_semaphore = asyncio.Semaphore(1)
         self._load_more_task: asyncio.Task | None = None
         self._counts_cache: dict[str, int] = {"media": 0, "posts": 0, "unseen": 0}
         self._scan_progress = 0.0
@@ -209,6 +215,10 @@ class AppController(QObject):
     @Property(bool, notify=selectedMediaChanged)
     def selectedMediaChecking(self) -> bool:
         return self._selected_checking
+
+    @Property(bool, notify=timelineStateChanged)
+    def selectedMediaTimelineLoading(self) -> bool:
+        return self._timeline_loading
 
     @Property(bool, notify=selectionNavigationChanged)
     def canSelectPrevious(self) -> bool:
@@ -384,6 +394,7 @@ class AppController(QObject):
         path = Path(row["path"])
         thumb = row.get("thumbnail_path")
         preview = row.get("preview_path")
+        timeline = row.get("timeline_path")
         checked = float(row["duration"]) > 0
         return {
             "mediaId": int(row["id"]), "path": str(path),
@@ -398,6 +409,7 @@ class AppController(QObject):
             "frameRate": float(row["frame_rate"]),
             "thumbnailUrl": QUrl.fromLocalFile(thumb).toString() if thumb and Path(thumb).is_file() else "",
             "previewUrl": QUrl.fromLocalFile(preview).toString() if preview and Path(preview).is_file() else "",
+            "timelineUrl": QUrl.fromLocalFile(timeline).toString() if timeline and Path(timeline).is_file() else "",
             "postedCount": int(row["posted_count"]), "seen": bool(row["seen"]),
         }
 
@@ -408,6 +420,8 @@ class AppController(QObject):
     ) -> None:
         previous_id = self._selected_id
         self._selected_id = int(row["id"]) if row else 0
+        if self._selected_id != previous_id:
+            self._cancel_timeline_generation()
         self._selected = self._map_selected(row)
         self._selected_checking = (
             bool(checking)
@@ -653,6 +667,7 @@ class AppController(QObject):
         for task in self._preview_jobs.values():
             task.cancel()
         self._preview_jobs.clear()
+        self._cancel_timeline_generation()
         if self._load_more_task:
             self._load_more_task.cancel()
             self._load_more_task = None
@@ -858,6 +873,7 @@ class AppController(QObject):
             asyncio.create_task(self._verify_selection_async(media_id))
         elif row:
             self.ensureThumbnail(media_id)
+            self.ensureTimeline(media_id)
 
     @Slot(int)
     def navigateSelection(self, direction: int) -> None:
@@ -1028,6 +1044,7 @@ class AppController(QObject):
                 )
             else:
                 self.ensureThumbnail(media_id)
+                self.ensureTimeline(media_id)
         except Exception as exc:
             LOGGER.exception("Cached random selection failed")
             self.toast.emit("error", str(exc))
@@ -1057,6 +1074,8 @@ class AppController(QObject):
             if media_id == self._selected_id:
                 self._set_selected(row, checking=False)
             self.ensureThumbnail(media_id)
+            if media_id == self._selected_id:
+                self.ensureTimeline(media_id)
         except Exception as exc:
             LOGGER.debug("Selected video validation failed for %s: %s", media_id, exc)
             if discard_random_on_failure:
@@ -1114,6 +1133,101 @@ class AppController(QObject):
             LOGGER.debug("Thumbnail generation failed for %s: %s", media_id, exc)
             self.database.clear_media_asset(media_id, "thumbnail_path")
             self.library_model.clear_thumbnail(media_id, "failed")
+
+    def _cancel_timeline_generation(self) -> None:
+        self._timeline_generation += 1
+        if self._timeline_task:
+            self._timeline_task.cancel()
+            self._timeline_task = None
+        self._timeline_media_id = 0
+        if self._timeline_loading:
+            self._timeline_loading = False
+            self.timelineStateChanged.emit()
+
+    @Slot(int)
+    def ensureTimeline(self, media_id: int) -> None:
+        if media_id <= 0 or self._shutting_down:
+            return
+        media = self.database.get_media(media_id)
+        existing = (media or {}).get("timeline_path")
+        if existing and Path(str(existing)).is_file():
+            if media_id == self._selected_id:
+                self._set_selected(media)
+            return
+        if (
+            self._timeline_task
+            and self._timeline_media_id == media_id
+        ):
+            return
+        self._cancel_timeline_generation()
+        self._timeline_generation += 1
+        generation = self._timeline_generation
+        self._timeline_media_id = media_id
+        self._timeline_loading = True
+        self.timelineStateChanged.emit()
+        task = asyncio.create_task(
+            self._ensure_timeline_async(media_id, generation)
+        )
+        self._timeline_task = task
+        task.add_done_callback(
+            lambda completed, selected_id=media_id, request=generation:
+                self._timeline_job_done(
+                    selected_id,
+                    request,
+                    completed,
+                )
+        )
+
+    def _timeline_job_done(
+        self,
+        media_id: int,
+        generation: int,
+        task: asyncio.Task,
+    ) -> None:
+        if self._timeline_task is task:
+            self._timeline_task = None
+            self._timeline_media_id = 0
+            self._timeline_loading = False
+            self.timelineStateChanged.emit()
+        if not task.cancelled() and (error := task.exception()):
+            LOGGER.debug(
+                "Timeline generation failed for %s (%s): %s",
+                media_id,
+                generation,
+                error,
+            )
+
+    async def _ensure_timeline_async(
+        self,
+        media_id: int,
+        generation: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(0.16)
+            async with self._timeline_semaphore:
+                if (
+                    self._shutting_down
+                    or generation != self._timeline_generation
+                ):
+                    return
+                path = await asyncio.to_thread(
+                    self.indexer.ensure_timeline,
+                    media_id,
+                )
+            if (
+                path
+                and generation == self._timeline_generation
+                and media_id == self._selected_id
+            ):
+                self._set_selected(self.database.get_media(media_id))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.debug(
+                "Timeline generation failed for %s: %s",
+                media_id,
+                exc,
+            )
 
     @Slot()
     def resetShuffle(self) -> None:
