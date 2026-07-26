@@ -23,8 +23,8 @@ release.
 
 ### Fixed
 
-- Restored dependable title-surface dragging and native edge and corner
-  resizing for the extended macOS window chrome.
+- Restored dependable dragging across both the visible macOS title strip and
+  app header surfaces, plus native edge and corner resizing.
 - Made shared dropdown triggers close an open menu instead of immediately
   reopening it.
 - Added faster eased mouse-wheel momentum throughout the app while preserving

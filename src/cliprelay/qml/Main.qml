@@ -12,7 +12,6 @@ ApplicationWindow {
     visible: true
     title: "ClipRelay"
     flags: Qt.Window
-        | Qt.ExpandedClientAreaHint
         | Qt.NoTitleBarBackgroundHint
     color: Theme.ink
     palette.window: Theme.surface

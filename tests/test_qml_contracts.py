@@ -90,9 +90,11 @@ def test_settings_exposes_maximum_mode_and_live_performance_diagnostics() -> Non
 def test_header_background_starts_native_move_without_blocking_controls() -> None:
     main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
 
+    assert "Qt.NoTitleBarBackgroundHint" in main
+    assert "Qt.ExpandedClientAreaHint" not in main
     assert "height: 82" in main
     assert "z: -1" in main
-    assert "mouse.accepted = window.startSystemMove()" in main
+    assert main.count("mouse.accepted = window.startSystemMove()") == 1
     assert "startSystemResize" not in main
 
 
