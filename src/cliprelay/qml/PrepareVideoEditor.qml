@@ -30,6 +30,14 @@ ColumnLayout {
         previewPlayer.stop()
         previewPlayer.position = 0
         editCanvas.reset()
+        Qt.callLater(root.startAutoplay)
+    }
+
+    function startAutoplay() {
+        if (String(previewPlayer.source).length === 0)
+            return
+        previewPlayer.position = Math.max(0, root.trimStart) * 1000
+        previewPlayer.play()
     }
 
     function editSpec() {
@@ -62,11 +70,17 @@ ColumnLayout {
         MediaPlayer {
             id: previewPlayer
             source: controller.selectedMedia.mediaUrl || ""
+            autoPlay: true
+            loops: MediaPlayer.Infinite
             videoOutput: previewOutput
             audioOutput: AudioOutput { volume: 0.65 }
-            onPositionChanged: {
+            onPositionChanged: function(position) {
                 if (root.trimEnd > 0 && position / 1000 >= root.trimEnd)
-                    position = root.trimStart * 1000
+                    previewPlayer.position = root.trimStart * 1000
+            }
+            onMediaStatusChanged: {
+                if (mediaStatus === MediaPlayer.EndOfMedia)
+                    root.startAutoplay()
             }
         }
 
