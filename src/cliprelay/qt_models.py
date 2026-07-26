@@ -120,11 +120,53 @@ class LibraryModel(DictListModel):
         )
         return rows[:limit], len(rows) > limit
 
-    def refresh(self, preserve_loaded: bool = False) -> None:
+    def refresh_request(
+        self,
+        preserve_loaded: bool = False,
+    ) -> tuple[int, str, str, str, int]:
         self.generation += 1
-        limit = max(self.page_size, len(self.rows)) if preserve_loaded else self.page_size
-        rows, self.has_more = self._page(0, limit)
+        limit = (
+            max(self.page_size, len(self.rows))
+            if preserve_loaded
+            else self.page_size
+        )
+        return (
+            self.generation,
+            self.search,
+            self.folder,
+            self.sort_mode,
+            limit,
+        )
+
+    def fetch_refresh(
+        self,
+        request: tuple[int, str, str, str, int],
+    ) -> tuple[int, list[dict[str, Any]], bool]:
+        generation, search, folder, sort_mode, limit = request
+        rows = self.database.list_media(
+            search,
+            folder,
+            sort_mode,
+            limit + 1,
+            0,
+        )
+        return generation, rows[:limit], len(rows) > limit
+
+    def apply_refresh(
+        self,
+        payload: tuple[int, list[dict[str, Any]], bool],
+    ) -> bool:
+        generation, rows, has_more = payload
+        if generation != self.generation:
+            return False
+        self.has_more = has_more
         self.replace([self._map(row) for row in rows])
+        return True
+
+    def refresh(self, preserve_loaded: bool = False) -> None:
+        self.apply_refresh(
+            self.fetch_refresh(self.refresh_request(preserve_loaded))
+        )
 
     def page_request(self) -> tuple[int, int, str, str, str, int] | None:
         if not self.has_more:
@@ -292,9 +334,8 @@ class FolderModel(DictListModel):
         self.replace(self._visible_rows())
         self.summaryChanged.emit()
 
-    def refresh(self) -> None:
-        previous_paths = set(self._nodes)
-        self._media_count = self.database.counts()["media"]
+    def fetch_refresh(self) -> tuple[int, dict[str, dict[str, Any]], dict[str, list[str]]]:
+        media_count = self.database.counts()["media"]
         nodes: dict[str, dict[str, Any]] = {}
         children: dict[str, list[str]] = {}
         for row in self.database.list_random_folders():
@@ -314,7 +355,15 @@ class FolderModel(DictListModel):
 
         for paths in children.values():
             paths.sort(key=lambda path: nodes[path]["folderName"].casefold())
+        return media_count, nodes, children
 
+    def apply_refresh(
+        self,
+        payload: tuple[int, dict[str, dict[str, Any]], dict[str, list[str]]],
+    ) -> None:
+        media_count, nodes, children = payload
+        previous_paths = set(self._nodes)
+        self._media_count = media_count
         self._nodes = nodes
         self._children = children
         self._expanded.intersection_update(nodes)
@@ -323,12 +372,20 @@ class FolderModel(DictListModel):
             for path in children.get("", [])
             if children.get(path)
         }
+        auto_expand = (
+            top_level_branches
+            if len(top_level_branches) <= 32
+            else set()
+        )
         if not self._initialized:
-            self._expanded.update(top_level_branches)
+            self._expanded.update(auto_expand)
             self._initialized = True
         else:
-            self._expanded.update(top_level_branches - previous_paths)
+            self._expanded.update(auto_expand - previous_paths)
         self._rebuild_visible()
+
+    def refresh(self) -> None:
+        self.apply_refresh(self.fetch_refresh())
 
     def _index_without_expanding(self, folder: str) -> int:
         return next(
@@ -580,6 +637,7 @@ class HistoryModel(DictListModel):
         self.search = ""
         self.page_size = 200
         self.has_more = False
+        self.generation = 0
 
     def _map(self, row: dict[str, Any]) -> dict[str, Any]:
         telegram = row["telegram_status"]
@@ -607,14 +665,83 @@ class HistoryModel(DictListModel):
             "edited": edited,
         }
 
-    def refresh(self) -> None:
+    def refresh_request(self) -> tuple[int, str, int]:
+        self.generation += 1
+        return self.generation, self.search, self.page_size
+
+    def fetch_refresh(
+        self,
+        request: tuple[int, str, int],
+    ) -> tuple[int, list[dict[str, Any]], bool]:
+        generation, search, page_size = request
         rows = self.database.list_history(
-            self.search,
-            self.page_size + 1,
+            search,
+            page_size + 1,
             0,
         )
-        self.has_more = len(rows) > self.page_size
-        self.replace([self._map(row) for row in rows[:self.page_size]])
+        return generation, rows[:page_size], len(rows) > page_size
+
+    def apply_refresh(
+        self,
+        payload: tuple[int, list[dict[str, Any]], bool],
+    ) -> bool:
+        generation, rows, has_more = payload
+        if generation != self.generation:
+            return False
+        self.has_more = has_more
+        self.replace([self._map(row) for row in rows])
+        return True
+
+    def refresh(self) -> None:
+        self.apply_refresh(self.fetch_refresh(self.refresh_request()))
+
+    def page_request(self) -> tuple[int, int, str, int] | None:
+        if not self.has_more:
+            return None
+        return (
+            self.generation,
+            len(self.rows),
+            self.search,
+            self.page_size,
+        )
+
+    def fetch_page(
+        self,
+        request: tuple[int, int, str, int],
+    ) -> tuple[int, int, list[dict[str, Any]], bool]:
+        generation, offset, search, page_size = request
+        rows = self.database.list_history(
+            search,
+            page_size + 1,
+            offset,
+        )
+        return (
+            generation,
+            offset,
+            rows[:page_size],
+            len(rows) > page_size,
+        )
+
+    def append_fetched(
+        self,
+        payload: tuple[int, int, list[dict[str, Any]], bool],
+    ) -> bool:
+        generation, offset, rows, has_more = payload
+        if generation != self.generation or offset != len(self.rows):
+            return False
+        self.has_more = has_more
+        if not rows:
+            return False
+        mapped = [self._map(row) for row in rows]
+        first = len(self.rows)
+        self.beginInsertRows(
+            QModelIndex(),
+            first,
+            first + len(mapped) - 1,
+        )
+        self.rows.extend(mapped)
+        self.endInsertRows()
+        return True
 
     def load_more(self) -> bool:
         if not self.has_more:

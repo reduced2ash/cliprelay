@@ -16,9 +16,9 @@ from PySide6.QtCore import (
     Qt,
     QUrl,
 )
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QGuiApplication, QIcon, QSurfaceFormat
 from PySide6.QtQml import QQmlApplicationEngine, QQmlEngine
-from PySide6.QtQuick import QQuickItem
+from PySide6.QtQuick import QQuickItem, QQuickWindow, QSGRendererInterface
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -26,6 +26,7 @@ from . import __version__
 from .controller import AppController
 from .database import Database
 from .paths import database_path, log_dir
+from .performance import PerformanceMonitor
 from .qt_models import FolderModel, HistoryModel, LibraryModel
 from .secrets import SecretStore
 from .settings import Settings
@@ -81,6 +82,23 @@ def _apply_color_scheme(app: QApplication, theme_mode: str) -> None:
         hints.setColorScheme(scheme)
 
 
+def _configure_rendering(performance_mode: str) -> None:
+    surface_format = QSurfaceFormat.defaultFormat()
+    surface_format.setSwapInterval(1)
+    QSurfaceFormat.setDefaultFormat(surface_format)
+    if performance_mode != "maximum":
+        return
+    os.environ.setdefault("QSG_RENDER_LOOP", "threaded")
+    if sys.platform == "darwin":
+        QQuickWindow.setGraphicsApi(
+            QSGRendererInterface.GraphicsApi.Metal
+        )
+        os.environ.setdefault(
+            "QT_FFMPEG_DECODING_HW_DEVICE_TYPES",
+            "videotoolbox",
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
@@ -89,23 +107,29 @@ def main(argv: list[str] | None = None) -> int:
     QGuiApplication.setDesktopFileName("cliprelay")
     _configure_logging(args.log_level)
 
+    db_file = (args.data_dir / "cliprelay.sqlite3") if args.data_dir else database_path()
+    database = Database(db_file)
+    settings = Settings(database)
+    if args.library:
+        settings.set("library_root", str(args.library))
+    _configure_rendering(str(settings.get("performance_mode", "automatic")))
+
     app = QApplication(sys.argv[:1])
     app.setApplicationDisplayName("ClipRelay")
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "cliprelay.svg")))
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    db_file = (args.data_dir / "cliprelay.sqlite3") if args.data_dir else database_path()
-    database = Database(db_file)
-    settings = Settings(database)
-    if args.library:
-        settings.set("library_root", str(args.library))
     _apply_color_scheme(app, str(settings.get("theme_mode", "relay")))
     secrets = SecretStore(args.data_dir if args.data_dir else None)
     library_model = LibraryModel(database)
     folder_model = FolderModel(database)
     history_model = HistoryModel(database)
     controller = AppController(database, settings, secrets, library_model, folder_model, history_model)
+    performance_monitor = PerformanceMonitor(
+        controller.processor,
+        lambda: controller.settings,
+    )
     controller.settingsChanged.connect(
         lambda: _apply_color_scheme(
             app, str(controller.settings.get("theme_mode", "relay"))
@@ -123,18 +147,25 @@ def main(argv: list[str] | None = None) -> int:
         controller.random_folder_model,
     )
     context.setContextProperty("historyModel", history_model)
+    context.setContextProperty("performanceMonitor", performance_monitor)
     qml_file = Path(__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
     if not engine.rootObjects():
         controller.shutdown()
         return 1
     root_window = engine.rootObjects()[0]
+    if isinstance(root_window, QQuickWindow):
+        root_window.setPersistentGraphics(True)
+        root_window.setPersistentSceneGraph(True)
+        performance_monitor.attach_window(root_window)
+    controller.settingsChanged.connect(performance_monitor.settingsChanged)
     if args.window_width:
         root_window.setProperty("width", max(940, args.window_width))
     if args.window_height:
         root_window.setProperty("height", max(660, args.window_height))
 
     app.aboutToQuit.connect(controller.shutdown)
+    app.aboutToQuit.connect(performance_monitor.shutdown)
     app.aboutToQuit.connect(loop.stop)
     if args.screenshot:
         async def capture() -> None:
@@ -217,12 +248,17 @@ def main(argv: list[str] | None = None) -> int:
                         int(frame.height()),
                     )
                 image.save(str(args.screenshot))
+            controller.shutdown()
+            performance_monitor.shutdown()
+            await asyncio.sleep(0)
             loop.stop()
 
         asyncio.ensure_future(capture())
 
     with loop:
         loop.run_forever()
+    controller.shutdown()
+    performance_monitor.shutdown()
     for root_object in engine.rootObjects():
         root_object.deleteLater()
     engine.deleteLater()

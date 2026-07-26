@@ -952,7 +952,10 @@ Rectangle {
                             220,
                             Math.ceil(tilePosterHeight + tileChromeHeight)
                         )
-                        cacheBuffer: cellHeight * 2
+                        cacheBuffer: cellHeight * (
+                            controller.settings.performance_mode === "maximum"
+                                ? 4 : 2
+                        )
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
                         onAtYEndChanged: {

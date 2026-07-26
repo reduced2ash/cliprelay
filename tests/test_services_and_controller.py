@@ -292,6 +292,71 @@ async def test_library_page_fetch_runs_off_ui_thread(
 
 
 @pytest.mark.asyncio
+async def test_filtered_library_refresh_runs_off_ui_thread(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        Settings(database),
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    controller._runtime_model_workers = True
+    main_thread = threading.get_ident()
+    queried = False
+
+    def list_media(*_args, **_kwargs):
+        nonlocal queried
+        queried = True
+        assert threading.get_ident() != main_thread
+        return []
+
+    monkeypatch.setattr(database, "list_media", list_media)
+    controller.setSearch("large library query")
+    for _ in range(100):
+        if controller._library_model_refresh_task is None:
+            break
+        await asyncio.sleep(0.01)
+
+    assert queried
+    assert controller._library_model_refresh_task is None
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_maximum_performance_prefers_hardware_export(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    settings = Settings(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    assert controller.processor.encoder_mode == "software"
+    controller.setSetting("performance_mode", "maximum")
+    assert controller.processor.encoder_mode == "hardware"
+    assert controller._thumbnail_semaphore._value == 4
+    assert controller._preview_semaphore._value == 2
+
+    controller.setSetting("export_encoder", "software")
+    assert controller.processor.encoder_mode == "software"
+    controller.setSetting("export_encoder", "hardware")
+    assert controller.processor.encoder_mode == "hardware"
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_random_folder_filter_uses_selected_subtree(
     monkeypatch, tmp_path: Path
 ) -> None:

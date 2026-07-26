@@ -122,3 +122,19 @@ Visible thumbnails use a bounded background queue. Hover previews are also
 generated in the background and may be disabled.
 
 Interface scale presets provide 80, 90, and 100 percent workspace density.
+
+**Maximum performance** keeps VSync enabled at the active display refresh
+rate, keeps Qt graphics resources resident when the window is hidden, preloads
+adjacent clips, and raises safe thumbnail and hover-preview concurrency. A
+restart applies the renderer and decoder preference; preloading changes apply
+immediately.
+
+The export-encoder setting offers Automatic, Prefer hardware, and Software
+only. Automatic uses hardware in Maximum mode and the quality-focused software
+path otherwise. Hardware export uses VideoToolbox on supported Macs, or NVENC,
+Quick Sync, or AMF on supported Windows systems. Every hardware job has an
+automatic software fallback.
+
+Settings also shows live renderer, GPU, display refresh, decoder, export
+encoder, frame-pacing, and frame-spike diagnostics. Frame sampling only runs
+while the diagnostics page is visible.

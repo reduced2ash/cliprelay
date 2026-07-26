@@ -21,6 +21,8 @@ DEFAULTS: dict[str, Any] = {
     "random_folders": [],
     "ui_scale": 1.0,
     "theme_mode": "relay",
+    "performance_mode": "automatic",
+    "export_encoder": "auto",
     "sidebar_collapsed": False,
     "prepare_expanded": False,
     "sort_mode": "newest",
@@ -53,6 +55,14 @@ class Settings:
             value = str(value)
             if value not in {"all", "selected"}:
                 value = "all"
+        if key == "performance_mode":
+            value = str(value)
+            if value not in {"automatic", "maximum"}:
+                value = "automatic"
+        if key == "export_encoder":
+            value = str(value)
+            if value not in {"auto", "hardware", "software"}:
+                value = "auto"
         if key in {"library_root", "export_dir"} and value:
             value = str(Path(str(value)).expanduser().resolve())
             if key == "export_dir":

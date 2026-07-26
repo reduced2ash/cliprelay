@@ -91,6 +91,7 @@ class AppController(QObject):
         self.random_folder_model = RandomFolderModel()
         self.indexer = MediaIndexer(database, self._settings_cache["export_dir"])
         self.processor = MediaProcessor(self._settings_cache["export_dir"])
+        self.processor.set_encoder_mode(self._effective_export_encoder())
         self.bot = TelegramBotService(secrets)
         self.personal = TelegramPersonalService(secrets)
         self.x_assistant = XAssistant()
@@ -131,20 +132,45 @@ class AppController(QObject):
         self._pending_index = False
         self._shutting_down = False
         self._thumbnail_jobs: dict[int, asyncio.Task] = {}
-        self._thumbnail_semaphore = asyncio.Semaphore(2)
+        maximum_performance = self._maximum_performance()
+        self._thumbnail_semaphore = asyncio.Semaphore(
+            4 if maximum_performance else 2
+        )
         self._preview_jobs: dict[int, asyncio.Task] = {}
-        self._preview_semaphore = asyncio.Semaphore(1)
+        self._preview_semaphore = asyncio.Semaphore(
+            2 if maximum_performance else 1
+        )
         self._timeline_task: asyncio.Task | None = None
         self._timeline_media_id = 0
         self._timeline_generation = 0
         self._timeline_loading = False
         self._timeline_semaphore = asyncio.Semaphore(1)
         self._load_more_task: asyncio.Task | None = None
+        self._library_scan_task: asyncio.Task | None = None
+        self._full_refresh_task: asyncio.Task | None = None
+        self._library_model_refresh_task: asyncio.Task | None = None
+        self._history_model_refresh_task: asyncio.Task | None = None
+        self._counts_refresh_task: asyncio.Task | None = None
+        self._shuffle_reset_task: asyncio.Task | None = None
+        self._root_activation_task: asyncio.Task | None = None
+        self._full_refresh_generation = 0
+        self._root_activation_generation = 0
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # The packaged app constructs its controller before qasync starts.
+            # Defer all startup SQLite/model queries until the event loop can
+            # run them in worker threads. Unit embedders that construct the
+            # controller inside a running loop retain immediate initialization.
+            self._runtime_model_workers = True
+        else:
+            self._runtime_model_workers = False
         self._counts_cache: dict[str, int] = {"media": 0, "posts": 0, "unseen": 0}
         self._scan_progress = 0.0
         self._scan_message = ""
         self._publish_state: dict[str, Any] = {
-            "active": False, "progress": 0.0, "stage": "", "postId": 0, "error": "",
+            "active": False, "progress": 0.0, "stage": "", "postId": 0,
+            "error": "", "outputEncoder": "", "hardwareAccelerated": False,
         }
         self._telegram_state: dict[str, Any] = {
             "bot": "configured" if self._bot_configured else "not configured",
@@ -179,8 +205,14 @@ class AppController(QObject):
         self._manifestProgress.connect(self._on_manifest_progress)
         self._mediaIndexed.connect(self._on_media_indexed)
         root = self._setting("library_root")
-        self.database.activate_root(root if root and Path(root).is_dir() else None)
-        self.refresh_all()
+        active_root = root if root and Path(root).is_dir() else None
+        if self._runtime_model_workers:
+            self.database.set_active_root(active_root)
+            self.library_model.sort_mode = self._setting("sort_mode")
+            QTimer.singleShot(0, self._start_initial_model_refresh)
+        else:
+            self.database.activate_root(active_root)
+            self.refresh_all()
         if root and Path(root).is_dir():
             self._watcher_timer.start()
             self._startup_refresh_timer.start()
@@ -199,6 +231,17 @@ class AppController(QObject):
 
     def _setting(self, key: str, default: Any = None) -> Any:
         return self._settings_cache.get(key, default)
+
+    def _maximum_performance(self) -> bool:
+        return self._setting("performance_mode") == "maximum"
+
+    def _effective_export_encoder(self) -> str:
+        preference = str(self._setting("export_encoder", "auto"))
+        if preference == "hardware":
+            return "hardware"
+        if preference == "software":
+            return "software"
+        return "hardware" if self._maximum_performance() else "software"
 
     def _store_setting(self, key: str, value: Any) -> None:
         self.settings_store.set(key, value)
@@ -362,23 +405,239 @@ class AppController(QObject):
     def telegramDialogs(self) -> list[dict[str, Any]]:
         return self._telegram_dialogs
 
+    @Slot()
+    def _start_initial_model_refresh(self) -> None:
+        if self._can_use_model_workers():
+            self._queue_root_activation(
+                self._setting("library_root") or None
+            )
+        else:
+            self.refresh_all()
+
+    def _queue_root_activation(
+        self,
+        root: str | Path | None,
+    ) -> None:
+        self._root_activation_generation += 1
+        generation = self._root_activation_generation
+        if self._root_activation_task:
+            self._root_activation_task.cancel()
+        task = asyncio.create_task(
+            self._activate_root_async(root, generation)
+        )
+        self._root_activation_task = task
+        task.add_done_callback(
+            lambda completed: self._simple_task_done(
+                "_root_activation_task",
+                completed,
+            )
+        )
+
+    async def _activate_root_async(
+        self,
+        root: str | Path | None,
+        generation: int,
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                self.database.activate_root,
+                root,
+            )
+            if (
+                self._shutting_down
+                or generation != self._root_activation_generation
+            ):
+                return
+            self.refresh_all()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Could not activate library root: %s", exc)
+            self.toast.emit("error", "The library database could not be updated.")
+
+    def _can_use_model_workers(self) -> bool:
+        if not self._runtime_model_workers or self._shutting_down:
+            return False
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+
     def refresh_all(self) -> None:
         self.library_model.sort_mode = self._setting("sort_mode")
+        if self._can_use_model_workers():
+            self._queue_full_model_refresh()
+            return
         self.library_model.refresh()
         self.folder_model.refresh()
         self.history_model.refresh()
         self._refresh_counts()
         self._invalidate_random_folder_options()
 
+    def _queue_full_model_refresh(self) -> None:
+        self._full_refresh_generation += 1
+        generation = self._full_refresh_generation
+        if self._full_refresh_task:
+            self._full_refresh_task.cancel()
+        library_request = self.library_model.refresh_request()
+        history_request = self.history_model.refresh_request()
+        task = asyncio.create_task(
+            self._refresh_all_models_async(
+                generation,
+                library_request,
+                history_request,
+            )
+        )
+        self._full_refresh_task = task
+        task.add_done_callback(
+            lambda completed, request=generation:
+                self._model_refresh_done(
+                    "_full_refresh_task",
+                    request,
+                    completed,
+                )
+        )
+
+    async def _refresh_all_models_async(
+        self,
+        generation: int,
+        library_request: tuple[int, str, str, str, int],
+        history_request: tuple[int, str, int],
+    ) -> None:
+        try:
+            library_payload, folder_payload, history_payload, counts = (
+                await asyncio.gather(
+                    asyncio.to_thread(
+                        self.library_model.fetch_refresh,
+                        library_request,
+                    ),
+                    asyncio.to_thread(self.folder_model.fetch_refresh),
+                    asyncio.to_thread(
+                        self.history_model.fetch_refresh,
+                        history_request,
+                    ),
+                    asyncio.to_thread(self.database.counts),
+                )
+            )
+            if (
+                self._shutting_down
+                or generation != self._full_refresh_generation
+            ):
+                return
+            self.library_model.apply_refresh(library_payload)
+            self.folder_model.apply_refresh(folder_payload)
+            self.history_model.apply_refresh(history_payload)
+            self._counts_cache = counts
+            self.countsChanged.emit()
+            self._invalidate_random_folder_options()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Background model refresh failed: %s", exc)
+
+    def _model_refresh_done(
+        self,
+        attribute: str,
+        _generation: int,
+        task: asyncio.Task,
+    ) -> None:
+        if getattr(self, attribute, None) is task:
+            setattr(self, attribute, None)
+        if not task.cancelled() and (error := task.exception()):
+            LOGGER.debug("Model refresh task failed: %s", error)
+
     def _refresh_counts(self) -> None:
+        if self._can_use_model_workers():
+            if self._counts_refresh_task:
+                self._counts_refresh_task.cancel()
+            task = asyncio.create_task(self._refresh_counts_async())
+            self._counts_refresh_task = task
+            task.add_done_callback(
+                lambda completed: self._simple_task_done(
+                    "_counts_refresh_task",
+                    completed,
+                )
+            )
+            return
         self._counts_cache = self.database.counts()
         self.countsChanged.emit()
 
+    async def _refresh_counts_async(self) -> None:
+        counts = await asyncio.to_thread(self.database.counts)
+        if self._shutting_down:
+            return
+        self._counts_cache = counts
+        self.countsChanged.emit()
+
+    def _simple_task_done(
+        self,
+        attribute: str,
+        task: asyncio.Task,
+    ) -> None:
+        if getattr(self, attribute, None) is task:
+            setattr(self, attribute, None)
+        if not task.cancelled() and (error := task.exception()):
+            LOGGER.debug("%s failed: %s", attribute, error)
+
     def _refresh_library_state(self, preserve_loaded: bool = True) -> None:
+        if self._can_use_model_workers():
+            self._queue_library_state_refresh(preserve_loaded)
+            return
         self.library_model.refresh(preserve_loaded=preserve_loaded)
         self.folder_model.refresh()
         self._refresh_counts()
         self._invalidate_random_folder_options()
+
+    def _queue_library_state_refresh(self, preserve_loaded: bool) -> None:
+        self._full_refresh_generation += 1
+        generation = self._full_refresh_generation
+        if self._full_refresh_task:
+            self._full_refresh_task.cancel()
+        if self._library_model_refresh_task:
+            self._library_model_refresh_task.cancel()
+        request = self.library_model.refresh_request(preserve_loaded)
+        task = asyncio.create_task(
+            self._refresh_library_state_async(generation, request)
+        )
+        self._full_refresh_task = task
+        task.add_done_callback(
+            lambda completed, request_generation=generation:
+                self._model_refresh_done(
+                    "_full_refresh_task",
+                    request_generation,
+                    completed,
+                )
+        )
+
+    async def _refresh_library_state_async(
+        self,
+        generation: int,
+        request: tuple[int, str, str, str, int],
+    ) -> None:
+        try:
+            library_payload, folder_payload, counts = await asyncio.gather(
+                asyncio.to_thread(
+                    self.library_model.fetch_refresh,
+                    request,
+                ),
+                asyncio.to_thread(self.folder_model.fetch_refresh),
+                asyncio.to_thread(self.database.counts),
+            )
+            if (
+                self._shutting_down
+                or generation != self._full_refresh_generation
+            ):
+                return
+            self.library_model.apply_refresh(library_payload)
+            self.folder_model.apply_refresh(folder_payload)
+            self._counts_cache = counts
+            self.countsChanged.emit()
+            self._invalidate_random_folder_options()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Background library refresh failed: %s", exc)
 
     def _invalidate_random_folder_options(self, clear: bool = False) -> None:
         self._random_folder_generation += 1
@@ -531,6 +790,20 @@ class AppController(QObject):
         self._selection_previous_id = int(result.get("previousId") or 0)
         self._selection_next_id = int(result.get("nextId") or 0)
         self.selectionNavigationChanged.emit()
+        self._preload_selection_neighbors()
+
+    def _preload_selection_neighbors(self) -> None:
+        if not self._maximum_performance() or self._shutting_down:
+            return
+        for media_id in (
+            self._selection_previous_id,
+            self._selection_next_id,
+        ):
+            if media_id <= 0:
+                continue
+            self.ensureThumbnail(media_id)
+            if bool(self._setting("hover_previews")):
+                self.ensurePreview(media_id)
 
     async def _load_selection_neighbors_async(
         self,
@@ -677,7 +950,95 @@ class AppController(QObject):
         if self._random_folder_task:
             self._random_folder_task.cancel()
             self._random_folder_task = None
+        for attribute in (
+            "_full_refresh_task",
+            "_library_model_refresh_task",
+            "_history_model_refresh_task",
+            "_counts_refresh_task",
+            "_shuffle_reset_task",
+            "_root_activation_task",
+            "_library_scan_task",
+        ):
+            task = getattr(self, attribute, None)
+            if task:
+                task.cancel()
+                setattr(self, attribute, None)
         self.processor.cancel()
+
+    def _refresh_library_model_only(
+        self,
+        preserve_loaded: bool = False,
+    ) -> None:
+        if not self._can_use_model_workers():
+            self.library_model.refresh(preserve_loaded=preserve_loaded)
+            return
+        if self._library_model_refresh_task:
+            self._library_model_refresh_task.cancel()
+        request = self.library_model.refresh_request(preserve_loaded)
+        task = asyncio.create_task(
+            self._refresh_library_model_async(request)
+        )
+        self._library_model_refresh_task = task
+        task.add_done_callback(
+            lambda completed, generation=request[0]:
+                self._model_refresh_done(
+                    "_library_model_refresh_task",
+                    generation,
+                    completed,
+                )
+        )
+
+    async def _refresh_library_model_async(
+        self,
+        request: tuple[int, str, str, str, int],
+    ) -> None:
+        try:
+            payload = await asyncio.to_thread(
+                self.library_model.fetch_refresh,
+                request,
+            )
+            if not self._shutting_down:
+                self.library_model.apply_refresh(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Background library query failed: %s", exc)
+
+    def _refresh_history_model(self) -> None:
+        if not self._can_use_model_workers():
+            self.history_model.refresh()
+            return
+        if self._history_model_refresh_task:
+            self._history_model_refresh_task.cancel()
+        request = self.history_model.refresh_request()
+        task = asyncio.create_task(
+            self._refresh_history_model_async(request)
+        )
+        self._history_model_refresh_task = task
+        task.add_done_callback(
+            lambda completed, generation=request[0]:
+                self._model_refresh_done(
+                    "_history_model_refresh_task",
+                    generation,
+                    completed,
+                )
+        )
+
+    async def _refresh_history_model_async(
+        self,
+        request: tuple[int, str, int],
+    ) -> None:
+        try:
+            payload = await asyncio.to_thread(
+                self.history_model.fetch_refresh,
+                request,
+            )
+            if not self._shutting_down:
+                self.history_model.apply_refresh(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Background history query failed: %s", exc)
 
     @Slot(str, "QVariant")
     def setSetting(self, key: str, value: Any) -> None:
@@ -696,10 +1057,20 @@ class AppController(QObject):
                     self._store_setting("random_folders", [])
                     self._invalidate_random_folder_options(clear=True)
                     self._clear_random_history()
-                self.database.activate_root(root if root and Path(root).is_dir() else None)
+                active_root = (
+                    root
+                    if root and Path(root).is_dir()
+                    else None
+                )
+                if self._can_use_model_workers():
+                    self.database.set_active_root(active_root)
+                    self._queue_root_activation(active_root)
+                else:
+                    self.database.activate_root(active_root)
                 self._set_selected(None)
                 self.library_model.folder = ""
-                self.refresh_all()
+                if not self._can_use_model_workers():
+                    self.refresh_all()
                 self._stop_watcher(wait=False)
                 self._watcher_timer.start()
                 self._auto_scan_timer.start()
@@ -711,10 +1082,28 @@ class AppController(QObject):
             if key == "auto_index":
                 if bool(value) and self._setting("library_root"):
                     self._auto_scan_timer.start()
+            if key in {"performance_mode", "export_encoder"}:
+                self.processor.set_encoder_mode(
+                    self._effective_export_encoder()
+                )
+                if key == "performance_mode":
+                    maximum = self._maximum_performance()
+                    self._thumbnail_semaphore = asyncio.Semaphore(
+                        4 if maximum else 2
+                    )
+                    self._preview_semaphore = asyncio.Semaphore(
+                        2 if maximum else 1
+                    )
+                    if maximum and self._selected_id > 0:
+                        self.ensureThumbnail(self._selected_id)
+                        self.ensureTimeline(self._selected_id)
+                        if bool(self._setting("hover_previews")):
+                            self.ensurePreview(self._selected_id)
+                        self._preload_selection_neighbors()
             if key == "sort_mode":
                 self._cancel_load_more()
                 self.library_model.sort_mode = str(value)
-                self.library_model.refresh()
+                self._refresh_library_model_only()
                 self._queue_selection_neighbors()
             self.settingsChanged.emit()
         except Exception as exc:
@@ -724,14 +1113,14 @@ class AppController(QObject):
     def setSearch(self, value: str) -> None:
         self._cancel_load_more()
         self.library_model.search = value
-        self.library_model.refresh()
+        self._refresh_library_model_only()
         self._queue_selection_neighbors()
 
     @Slot(str)
     def setFolder(self, value: str) -> None:
         self._cancel_load_more()
         self.library_model.folder = value
-        self.library_model.refresh()
+        self._refresh_library_model_only()
         self._queue_selection_neighbors()
 
     @Slot(str, bool)
@@ -859,11 +1248,46 @@ class AppController(QObject):
     @Slot(str)
     def setHistorySearch(self, value: str) -> None:
         self.history_model.search = value
-        self.history_model.refresh()
+        self._refresh_history_model()
 
     @Slot()
     def loadMoreHistory(self) -> None:
-        self.history_model.load_more()
+        if not self._can_use_model_workers():
+            self.history_model.load_more()
+            return
+        if self._history_model_refresh_task:
+            return
+        request = self.history_model.page_request()
+        if not request:
+            return
+        task = asyncio.create_task(
+            self._load_more_history_async(request)
+        )
+        self._history_model_refresh_task = task
+        task.add_done_callback(
+            lambda completed, generation=request[0]:
+                self._model_refresh_done(
+                    "_history_model_refresh_task",
+                    generation,
+                    completed,
+                )
+        )
+
+    async def _load_more_history_async(
+        self,
+        request: tuple[int, int, str, int],
+    ) -> None:
+        try:
+            payload = await asyncio.to_thread(
+                self.history_model.fetch_page,
+                request,
+            )
+            if not self._shutting_down:
+                self.history_model.append_fetched(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Background history page failed: %s", exc)
 
     @Slot(int)
     def selectMedia(self, media_id: int) -> None:
@@ -874,6 +1298,11 @@ class AppController(QObject):
         elif row:
             self.ensureThumbnail(media_id)
             self.ensureTimeline(media_id)
+            if (
+                self._maximum_performance()
+                and bool(self._setting("hover_previews"))
+            ):
+                self.ensurePreview(media_id)
 
     @Slot(int)
     def navigateSelection(self, direction: int) -> None:
@@ -1076,6 +1505,11 @@ class AppController(QObject):
             self.ensureThumbnail(media_id)
             if media_id == self._selected_id:
                 self.ensureTimeline(media_id)
+                if (
+                    self._maximum_performance()
+                    and bool(self._setting("hover_previews"))
+                ):
+                    self.ensurePreview(media_id)
         except Exception as exc:
             LOGGER.debug("Selected video validation failed for %s: %s", media_id, exc)
             if discard_random_on_failure:
@@ -1121,17 +1555,33 @@ class AppController(QObject):
             if path:
                 self.library_model.update_asset(media_id, "thumbnailUrl", str(path))
                 if media_id == self._selected_id:
-                    self._set_selected(self.database.get_media(media_id))
+                    row = await asyncio.to_thread(
+                        self.database.get_media,
+                        media_id,
+                    )
+                    self._set_selected(row)
             else:
-                self.database.clear_media_asset(media_id, "thumbnail_path")
+                await asyncio.to_thread(
+                    self.database.clear_media_asset,
+                    media_id,
+                    "thumbnail_path",
+                )
                 self.library_model.clear_thumbnail(media_id, "failed")
                 if media_id == self._selected_id:
-                    self._set_selected(self.database.get_media(media_id))
+                    row = await asyncio.to_thread(
+                        self.database.get_media,
+                        media_id,
+                    )
+                    self._set_selected(row)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             LOGGER.debug("Thumbnail generation failed for %s: %s", media_id, exc)
-            self.database.clear_media_asset(media_id, "thumbnail_path")
+            await asyncio.to_thread(
+                self.database.clear_media_asset,
+                media_id,
+                "thumbnail_path",
+            )
             self.library_model.clear_thumbnail(media_id, "failed")
 
     def _cancel_timeline_generation(self) -> None:
@@ -1219,7 +1669,11 @@ class AppController(QObject):
                 and generation == self._timeline_generation
                 and media_id == self._selected_id
             ):
-                self._set_selected(self.database.get_media(media_id))
+                row = await asyncio.to_thread(
+                    self.database.get_media,
+                    media_id,
+                )
+                self._set_selected(row)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1234,10 +1688,39 @@ class AppController(QObject):
         if not self.hasRandomFolderSelection:
             self.toast.emit("info", "Select at least one random source folder.")
             return
+        if self._can_use_model_workers():
+            if self._shuffle_reset_task:
+                return
+            task = asyncio.create_task(self._reset_shuffle_async())
+            self._shuffle_reset_task = task
+            task.add_done_callback(
+                lambda completed: self._simple_task_done(
+                    "_shuffle_reset_task",
+                    completed,
+                )
+            )
+            return
+        self._reset_shuffle_now()
+
+    def _reset_shuffle_now(self) -> None:
         self.database.reset_shuffle(
             self._setting("library_root") or None,
             folders=self._random_folders(),
         )
+        self._finish_shuffle_reset()
+
+    async def _reset_shuffle_async(self) -> None:
+        root = self._setting("library_root") or None
+        folders = list(self._random_folders())
+        await asyncio.to_thread(
+            self.database.reset_shuffle,
+            root,
+            folders=folders,
+        )
+        if not self._shutting_down:
+            self._finish_shuffle_reset()
+
+    def _finish_shuffle_reset(self) -> None:
         self._clear_random_history()
         self._refresh_counts()
         message = (
@@ -1261,7 +1744,16 @@ class AppController(QObject):
             self._pending_refresh = True
             self._pending_index = self._pending_index or include_index
             return
-        asyncio.create_task(self._refresh_library_async(str(root), include_index))
+        task = asyncio.create_task(
+            self._refresh_library_async(str(root), include_index)
+        )
+        self._library_scan_task = task
+        task.add_done_callback(
+            lambda completed: self._simple_task_done(
+                "_library_scan_task",
+                completed,
+            )
+        )
 
     async def _refresh_library_async(self, root: str, include_index: bool) -> None:
         self._set_scan(
@@ -1339,6 +1831,10 @@ class AppController(QObject):
             self._set_scan(message="Scan failed")
         finally:
             self._set_scan(active=False)
+            if self._shutting_down:
+                self._pending_refresh = False
+                self._pending_index = False
+                return
             current_root = self._setting("library_root")
             root_changed = bool(current_root) and (
                 Path(str(current_root)).expanduser().resolve()
@@ -1393,7 +1889,11 @@ class AppController(QObject):
             if path:
                 self.library_model.update_asset(media_id, "previewUrl", str(path))
                 if media_id == self._selected_id:
-                    self._set_selected(self.database.get_media(media_id))
+                    row = await asyncio.to_thread(
+                        self.database.get_media,
+                        media_id,
+                    )
+                    self._set_selected(row)
         except Exception as exc:
             LOGGER.debug("Preview generation failed for %s: %s", media_id, exc)
 
@@ -1503,7 +2003,15 @@ class AppController(QObject):
             "telegram_destination": str(payload.get("telegramDestination", "")),
             "cleanup_policy": str(payload.get("cleanupPolicy", self._setting("cleanup_policy"))),
         })
-        self._set_publish(active=True, progress=0.0, stage="Preparing video", postId=post_id, error="")
+        self._set_publish(
+            active=True,
+            progress=0.0,
+            stage="Preparing video",
+            postId=post_id,
+            error="",
+            outputEncoder="",
+            hardwareAccelerated=False,
+        )
 
         def progress(value: float, stage: str) -> None:
             self._set_publish(progress=value * 0.65, stage=stage)
@@ -1533,7 +2041,12 @@ class AppController(QObject):
                 "edit_spec": edit_spec,
             })
             self.database.update_post(post_id, export_id=export_id)
-            self._set_publish(outputPath=str(result.path), outputSize=format_bytes(result.size_bytes))
+            self._set_publish(
+                outputPath=str(result.path),
+                outputSize=format_bytes(result.size_bytes),
+                outputEncoder=result.encoder,
+                hardwareAccelerated=result.hardware_accelerated,
+            )
 
             delivery_errors: list[str] = []
             completed_any = False
@@ -1609,8 +2122,8 @@ class AppController(QObject):
             self._set_publish(error=str(exc), stage="Could not complete")
             self.toast.emit("error", str(exc))
         finally:
-            self.history_model.refresh()
-            self.library_model.refresh(preserve_loaded=True)
+            self._refresh_history_model()
+            self._refresh_library_model_only(preserve_loaded=True)
             self._refresh_counts()
             await asyncio.sleep(0.25)
             self._set_publish(active=False)
@@ -1638,7 +2151,7 @@ class AppController(QObject):
         self.database.update_post(post_id, x_status="posted", x_url=url.strip())
         self.database.add_attempt(post_id, "x", "posted", "Confirmed by user", url.strip())
         asyncio.create_task(self._apply_cleanup(post_id))
-        self.history_model.refresh()
+        self._refresh_history_model()
         self.toast.emit("success", "X post marked as posted.")
 
     @Slot(int)
@@ -1650,7 +2163,7 @@ class AppController(QObject):
         if path and Path(path).is_file():
             self.x_assistant.prepare(path, post.get("x_caption", ""))
             self.database.update_post(post_id, x_status="prepared")
-            self.history_model.refresh()
+            self._refresh_history_model()
         else:
             self.toast.emit("error", "The video used for this post is no longer available.")
 
@@ -1688,7 +2201,7 @@ class AppController(QObject):
             self.database.add_attempt(post_id, "telegram", "failed", str(exc))
             self.toast.emit("error", str(exc))
         finally:
-            self.history_model.refresh()
+            self._refresh_history_model()
             self._set_publish(active=False)
 
     @Slot(int)
@@ -1701,7 +2214,7 @@ class AppController(QObject):
                 post["export_path"], self._setting("export_dir"), bool(post["is_generated"])
             )
             self.database.mark_export_cleanup(int(post["export_id"]), "trashed")
-            self.history_model.refresh()
+            self._refresh_history_model()
             self.toast.emit("success", "Generated video moved to Trash.")
         except CleanupError as exc:
             self.toast.emit("error", str(exc))

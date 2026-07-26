@@ -69,3 +69,19 @@ def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> Non
     assert 'root.folderExpanded ? "chevronDown" : "chevronRight"' in row
     assert "Keys.onRightPressed" in row
     assert "Keys.onLeftPressed" in row
+
+
+def test_settings_exposes_maximum_mode_and_live_performance_diagnostics() -> None:
+    settings = (QML_DIR / "SettingsPage.qml").read_text(encoding="utf-8")
+    library = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+
+    assert 'text: "PERFORMANCE"' in settings
+    assert '"Maximum performance"' in settings
+    assert '"Prefer hardware"' in settings
+    assert "performanceMonitor.setActive(visible)" in settings
+    assert "FrameAnimation {" in settings
+    assert "performanceMonitor.recordFrameBatch" in settings
+    assert "root.performanceState.renderer" in settings
+    assert "root.performanceState.framePacing" in settings
+    assert "root.performanceState.frameSpikes" in settings
+    assert 'controller.settings.performance_mode === "maximum"' in library

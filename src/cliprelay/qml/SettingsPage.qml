@@ -8,9 +8,30 @@ Rectangle {
     id: root
     color: Theme.ink
     property var diagnosticState: controller.diagnostics()
+    property var performanceState: performanceMonitor.state
+    property var frameSamples: []
     property string selectedTheme: String(
         controller.settings.theme_mode || "relay"
     )
+    Component.onCompleted: performanceMonitor.setActive(visible)
+    Component.onDestruction: performanceMonitor.setActive(false)
+    onVisibleChanged: {
+        performanceMonitor.setActive(visible)
+        if (!visible)
+            frameSamples = []
+    }
+
+    FrameAnimation {
+        running: root.visible
+        onTriggered: {
+            if (frameTime > 0 && frameTime < 0.1)
+                root.frameSamples.push(frameTime * 1000)
+            if (root.frameSamples.length >= 30) {
+                performanceMonitor.recordFrameBatch(root.frameSamples)
+                root.frameSamples = []
+            }
+        }
+    }
 
     FolderDialog {
         id: libraryDialog
@@ -147,6 +168,157 @@ Rectangle {
                     text: "Standard preserves the current size. Compact provides the widest working view."
                     color: Theme.muted; font.pixelSize: Theme.textXs; wrapMode: Text.Wrap
                     Layout.fillWidth: true; Layout.topMargin: 4
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 28; Layout.bottomMargin: 28 }
+                Text { text: "PERFORMANCE"; color: Theme.accentText; font.pixelSize: Theme.textXs; font.letterSpacing: 1.3 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 5
+                    spacing: 10
+                    Text {
+                        text: "Rendering and media"
+                        color: Theme.text
+                        font.pixelSize: Theme.textSection
+                        font.weight: Font.DemiBold
+                        Layout.fillWidth: true
+                    }
+                    StatusPill {
+                        text: controller.settings.performance_mode === "maximum"
+                            ? "MAXIMUM" : "AUTOMATIC"
+                        status: controller.settings.performance_mode === "maximum"
+                            ? "success" : "neutral"
+                    }
+                }
+                Text {
+                    text: "VSync stays enabled. Maximum mode keeps graphics resources resident, preloads adjacent media, raises safe thumbnail concurrency, and prefers hardware export."
+                    color: Theme.muted
+                    font.pixelSize: Theme.textSm
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.topMargin: 3
+                    Layout.bottomMargin: 14
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 14
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+                        Text {
+                            text: "Performance mode"
+                            color: Theme.text
+                            font.pixelSize: Theme.textSm
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            text: "Maximum takes full effect after restarting ClipRelay."
+                            color: Theme.muted
+                            font.pixelSize: Theme.textXs
+                        }
+                    }
+                    AppComboBox {
+                        Layout.preferredWidth: 220
+                        model: ["Automatic", "Maximum performance"]
+                        currentIndex: controller.settings.performance_mode === "maximum" ? 1 : 0
+                        onActivated: controller.setSetting(
+                            "performance_mode",
+                            currentIndex === 1 ? "maximum" : "automatic"
+                        )
+                        Accessible.name: "Performance mode"
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 14
+                    spacing: 14
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+                        Text {
+                            text: "Export encoder"
+                            color: Theme.text
+                            font.pixelSize: Theme.textSm
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            text: "Hardware always falls back to software if the device or upload limit requires it."
+                            color: Theme.muted
+                            font.pixelSize: Theme.textXs
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                    AppComboBox {
+                        Layout.preferredWidth: 220
+                        model: [
+                            "Automatic",
+                            "Prefer hardware",
+                            "Software only"
+                        ]
+                        currentIndex: {
+                            var mode = String(
+                                controller.settings.export_encoder || "auto"
+                            )
+                            return mode === "hardware" ? 1
+                                : mode === "software" ? 2 : 0
+                        }
+                        onActivated: controller.setSetting(
+                            "export_encoder",
+                            ["auto", "hardware", "software"][currentIndex]
+                        )
+                        Accessible.name: "Export encoder"
+                    }
+                }
+
+                Text {
+                    text: "LIVE DIAGNOSTICS"
+                    color: Theme.muted
+                    font.pixelSize: Theme.textXs
+                    font.letterSpacing: 1.2
+                    Layout.topMargin: 24
+                    Layout.bottomMargin: 8
+                }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: 22
+                    rowSpacing: 8
+
+                    Text { text: "Renderer"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.renderer || "Detecting"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "GPU"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.gpu || "Detecting"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Display"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.display || "Detecting"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Video decoder"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.decoder || "Automatic"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Export"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.exportEncoder || "Detecting"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Frame pacing"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.framePacing || "Sampling"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Frame spikes"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    Text { text: root.performanceState.frameSpikes || "—"; color: Theme.text; font.pixelSize: Theme.textXs; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Resources"; color: Theme.muted; font.pixelSize: Theme.textSm }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            text: root.performanceState.resourcePolicy
+                                || "Resident on hide / restore"
+                            color: Theme.text
+                            font.pixelSize: Theme.textXs
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        AppButton {
+                            text: "Refresh"
+                            iconName: "refresh"
+                            kind: "ghost"
+                            compact: true
+                            onClicked: performanceMonitor.refresh()
+                        }
+                    }
                 }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 28; Layout.bottomMargin: 28 }

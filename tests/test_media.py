@@ -9,7 +9,12 @@ import pytest
 from PIL import Image
 
 from cliprelay.database import Database
-from cliprelay.media import MediaIndexer, MediaProcessor, normalize_edit_spec
+from cliprelay.media import (
+    MediaError,
+    MediaIndexer,
+    MediaProcessor,
+    normalize_edit_spec,
+)
 
 
 pytestmark = pytest.mark.skipif(
@@ -31,6 +36,94 @@ def make_video(path: Path, duration: float = 2.0) -> None:
         check=True,
         timeout=40,
     )
+
+
+def test_hardware_encoder_probe_checks_the_device_once(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from cliprelay import media as media_module
+
+    processor = MediaProcessor(tmp_path / "exports")
+    processor.ffmpeg = Path("/test/ffmpeg")
+    monkeypatch.setattr(
+        processor,
+        "_hardware_encoder_candidates",
+        lambda: ("h264_first", "h264_second"),
+    )
+    calls: list[str] = []
+
+    class Completed:
+        def __init__(self, returncode: int) -> None:
+            self.returncode = returncode
+
+    def probe(command, **_kwargs):
+        encoder = command[command.index("-c:v") + 1]
+        calls.append(encoder)
+        return Completed(0 if encoder == "h264_second" else 1)
+
+    monkeypatch.setattr(media_module.subprocess, "run", probe)
+
+    assert processor.hardware_encoder_info() == {
+        "available": True,
+        "encoder": "h264_second",
+        "label": "Unavailable",
+    }
+    assert processor.hardware_encoder_info()["encoder"] == "h264_second"
+    assert calls == ["h264_first", "h264_second"]
+
+
+@pytest.mark.asyncio
+async def test_hardware_export_falls_back_to_software(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.mkv"
+    source.write_bytes(b"source")
+    processor = MediaProcessor(tmp_path / "exports")
+    processor.ffmpeg = Path("/test/ffmpeg")
+    processor.set_encoder_mode("hardware")
+    monkeypatch.setattr(
+        processor,
+        "_detect_hardware_encoder",
+        lambda: "h264_videotoolbox",
+    )
+    commands: list[list[str]] = []
+
+    async def run_ffmpeg(command, _duration, progress):
+        commands.append(command)
+        encoder = command[command.index("-c:v") + 1]
+        if encoder == "h264_videotoolbox":
+            raise MediaError("device busy")
+        Path(command[-1]).write_bytes(b"encoded")
+        if progress:
+            progress(1.0, "Encoding video")
+
+    monkeypatch.setattr(processor, "_run_ffmpeg", run_ffmpeg)
+    stages: list[str] = []
+    result = await processor.export(
+        {
+            "path": str(source),
+            "duration": 4,
+            "height": 720,
+            "size_bytes": 4_000_000,
+            "video_codec": "hevc",
+            "audio_codec": "aac",
+        },
+        0,
+        4,
+        "balanced",
+        0,
+        progress=lambda _value, stage: stages.append(stage),
+    )
+
+    assert [
+        command[command.index("-c:v") + 1]
+        for command in commands
+    ] == ["h264_videotoolbox", "libx264"]
+    assert result.hardware_accelerated is False
+    assert result.encoder == "libx264"
+    assert any("retrying with software" in stage for stage in stages)
 
 
 def test_recursive_index_thumbnail_preview_and_cache(tmp_path: Path) -> None:

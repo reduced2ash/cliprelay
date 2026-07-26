@@ -318,17 +318,30 @@ class Database:
         return {str(row["path"]): dict(row) for row in rows}
 
     def activate_root(self, root_path: str | Path | None) -> None:
-        self._active_root = str(Path(root_path).expanduser().resolve()) if root_path else None
-        with self.connection() as connection:
-            if self._active_root is None:
-                connection.execute("UPDATE media_files SET active=0 WHERE active!=0")
-            else:
-                connection.execute(
-                    """UPDATE media_files
-                       SET active=CASE WHEN root_path=? THEN 1 ELSE 0 END
-                       WHERE active!=CASE WHEN root_path=? THEN 1 ELSE 0 END""",
-                    (self._active_root, self._active_root),
-                )
+        with self._lock:
+            self.set_active_root(root_path)
+            self.reconcile_active_root()
+
+    def set_active_root(self, root_path: str | Path | None) -> None:
+        with self._lock:
+            self._active_root = (
+                str(Path(root_path).expanduser().resolve())
+                if root_path
+                else None
+            )
+
+    def reconcile_active_root(self) -> None:
+        with self._lock:
+            with self.connection() as connection:
+                if self._active_root is None:
+                    connection.execute("UPDATE media_files SET active=0 WHERE active!=0")
+                else:
+                    connection.execute(
+                        """UPDATE media_files
+                           SET active=CASE WHEN root_path=? THEN 1 ELSE 0 END
+                           WHERE active!=CASE WHEN root_path=? THEN 1 ELSE 0 END""",
+                        (self._active_root, self._active_root),
+                    )
 
     def invalidate_missing(self, root_path: str, existing_paths: Iterable[str]) -> None:
         paths = list(existing_paths)

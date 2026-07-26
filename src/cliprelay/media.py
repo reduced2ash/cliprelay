@@ -94,6 +94,8 @@ class ExportResult:
     duration: float
     generated: bool
     preset: str
+    encoder: str = "stream copy"
+    hardware_accelerated: bool = False
 
 
 def normalize_edit_spec(value: Any) -> dict[str, Any]:
@@ -755,6 +757,94 @@ class MediaProcessor:
         self.ffmpeg = ffmpeg_path()
         self._active: set[asyncio.subprocess.Process] = set()
         self._cancel_requested = False
+        self._encoder_mode = "software"
+        self._hardware_encoder_checked = False
+        self._hardware_encoder: str | None = None
+        self._hardware_encoder_lock = threading.Lock()
+
+    @property
+    def encoder_mode(self) -> str:
+        return self._encoder_mode
+
+    def set_encoder_mode(self, mode: str) -> None:
+        self._encoder_mode = (
+            str(mode)
+            if str(mode) in {"hardware", "software"}
+            else "software"
+        )
+
+    @staticmethod
+    def _hardware_encoder_candidates() -> tuple[str, ...]:
+        if sys.platform == "darwin":
+            return ("h264_videotoolbox",)
+        if sys.platform == "win32":
+            # Probe the device, not just FFmpeg's compiled encoder list. A
+            # bundled FFmpeg can expose all four while only one is usable.
+            return ("h264_nvenc", "h264_qsv", "h264_amf")
+        return ()
+
+    @staticmethod
+    def _encoder_label(encoder: str | None) -> str:
+        return {
+            "h264_videotoolbox": "VideoToolbox H.264",
+            "h264_nvenc": "NVIDIA NVENC H.264",
+            "h264_qsv": "Intel Quick Sync H.264",
+            "h264_amf": "AMD AMF H.264",
+            "libx264": "libx264",
+        }.get(str(encoder or ""), "Unavailable")
+
+    def hardware_encoder_info(self) -> dict[str, Any]:
+        encoder = self._detect_hardware_encoder()
+        return {
+            "available": bool(encoder),
+            "encoder": encoder or "",
+            "label": self._encoder_label(encoder),
+        }
+
+    def _detect_hardware_encoder(self) -> str | None:
+        if self._hardware_encoder_checked:
+            return self._hardware_encoder
+        with self._hardware_encoder_lock:
+            if self._hardware_encoder_checked:
+                return self._hardware_encoder
+            selected: str | None = None
+            if self.ffmpeg:
+                for encoder in self._hardware_encoder_candidates():
+                    command = [
+                        str(self.ffmpeg),
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "color=c=black:s=64x64:r=1:d=0.1",
+                        "-frames:v",
+                        "1",
+                        "-an",
+                        "-c:v",
+                        encoder,
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-f",
+                        "null",
+                        "-",
+                    ]
+                    try:
+                        completed = subprocess.run(
+                            command,
+                            capture_output=True,
+                            timeout=12,
+                            check=False,
+                        )
+                    except (OSError, subprocess.TimeoutExpired):
+                        continue
+                    if completed.returncode == 0:
+                        selected = encoder
+                        break
+            self._hardware_encoder = selected
+            self._hardware_encoder_checked = True
+            return selected
 
     def set_export_dir(self, export_dir: str | Path) -> None:
         self.export_dir = Path(export_dir).expanduser().resolve()
@@ -848,6 +938,101 @@ class MediaProcessor:
         )
         return ",".join(filters)
 
+    @staticmethod
+    def _hardware_profile(
+        media: dict[str, Any],
+        preset: str,
+        duration: float,
+        target_mb: float,
+    ) -> tuple[int, int, int]:
+        if preset in {"fit_bot", "fit_x", "fit_both", "custom"} and target_mb > 0:
+            audio_kbps = 96 if target_mb < 100 else 128
+            total_kbps = target_mb * 1024 * 1024 * 8 * 0.955 / duration / 1000
+            video_kbps = max(120, int(total_kbps - audio_kbps))
+            height = 1080 if video_kbps >= 1800 else 720 if video_kbps >= 700 else 480
+            return video_kbps, height, audio_kbps
+
+        source_duration = max(0.05, float(media.get("duration") or duration))
+        source_kbps = max(
+            500,
+            int(float(media.get("size_bytes") or 0) * 8 / source_duration / 1000) - 128,
+        )
+        if preset == "smallest":
+            return max(350, min(1600, int(source_kbps * 0.42))), 720, 64
+        if preset == "original":
+            return (
+                max(1200, min(24000, int(source_kbps * 1.02))),
+                max(1080, int(media.get("height") or 1080)),
+                160,
+            )
+        return max(700, min(6500, int(source_kbps * 0.72))), 1080, 128
+
+    async def _export_hardware(
+        self,
+        common: list[str],
+        partial: Path,
+        media: dict[str, Any],
+        duration: float,
+        preset: str,
+        target_mb: float,
+        edit_spec: dict[str, Any],
+        encoder: str,
+        progress_args: list[str],
+        progress: Callable[[float, str], None] | None,
+    ) -> None:
+        video_kbps, height, audio_kbps = self._hardware_profile(
+            media,
+            preset,
+            duration,
+            target_mb,
+        )
+        label = self._encoder_label(encoder)
+        command = [
+            *common,
+            "-vf",
+            self._filter(height, edit_spec),
+            "-c:v",
+            encoder,
+            "-b:v",
+            f"{video_kbps}k",
+            "-maxrate",
+            f"{int(video_kbps * 1.15)}k",
+            "-bufsize",
+            f"{int(video_kbps * 2)}k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            f"{audio_kbps}k",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            *progress_args,
+            str(partial),
+        ]
+        if progress:
+            progress(0.01, f"Encoding with {label}")
+        await self._run_ffmpeg(
+            command,
+            duration,
+            (
+                lambda value, _stage: progress(
+                    value,
+                    f"Encoding with {label}",
+                )
+                if progress
+                else None
+            ),
+        )
+        if (
+            target_mb > 0
+            and partial.is_file()
+            and partial.stat().st_size > target_mb * 1024 * 1024 * 1.015
+        ):
+            raise MediaError(
+                "The hardware pass exceeded the requested file limit."
+            )
+
     async def export(
         self,
         media: dict[str, Any],
@@ -901,53 +1086,113 @@ class MediaProcessor:
         progress_args = ["-progress", "pipe:1", "-nostats"]
 
         try:
-            if preset in {"fit_bot", "fit_x", "fit_both", "custom"} and target_mb > 0:
-                audio_kbps = 96 if target_mb < 100 else 128
-                total_kbps = target_mb * 1024 * 1024 * 8 * 0.965 / duration / 1000
-                video_kbps = max(120, int(total_kbps - audio_kbps))
-                height = 1080 if video_kbps >= 1800 else 720 if video_kbps >= 700 else 480
-                with tempfile.TemporaryDirectory(prefix="cliprelay-pass-") as temporary:
-                    passlog = str(Path(temporary) / "passlog")
-                    null_output = "NUL" if sys.platform == "win32" else "/dev/null"
-                    first = [
-                        *common, "-vf", self._filter(height, edit_spec), "-c:v", "libx264", "-preset", "medium",
-                        "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.15)}k",
-                        "-bufsize", f"{int(video_kbps * 2)}k", "-pass", "1",
-                        "-passlogfile", passlog, "-an", *progress_args, "-f", "null", null_output,
-                    ]
+            hardware_encoder: str | None = None
+            hardware_used = False
+            if self._encoder_mode == "hardware":
+                hardware_encoder = await asyncio.to_thread(
+                    self._detect_hardware_encoder
+                )
+                if hardware_encoder:
+                    try:
+                        await self._export_hardware(
+                            common,
+                            partial,
+                            media,
+                            duration,
+                            preset,
+                            target_mb,
+                            edit_spec,
+                            hardware_encoder,
+                            progress_args,
+                            progress,
+                        )
+                        hardware_used = True
+                    except ProcessingCancelled:
+                        raise
+                    except MediaError:
+                        partial.unlink(missing_ok=True)
+                        if progress:
+                            progress(
+                                0.01,
+                                "Hardware export unavailable · retrying with software",
+                            )
+                else:
                     if progress:
-                        progress(0.01, "Measuring target size")
-                    await self._run_ffmpeg(first, duration, lambda p, s: progress(p * 0.45, s) if progress else None)
-                    second = [
+                        progress(
+                            0.01,
+                            "No compatible hardware encoder · using software",
+                        )
+
+            if not hardware_used:
+                if preset in {"fit_bot", "fit_x", "fit_both", "custom"} and target_mb > 0:
+                    audio_kbps = 96 if target_mb < 100 else 128
+                    total_kbps = target_mb * 1024 * 1024 * 8 * 0.965 / duration / 1000
+                    video_kbps = max(120, int(total_kbps - audio_kbps))
+                    height = 1080 if video_kbps >= 1800 else 720 if video_kbps >= 700 else 480
+                    with tempfile.TemporaryDirectory(prefix="cliprelay-pass-") as temporary:
+                        passlog = str(Path(temporary) / "passlog")
+                        null_output = "NUL" if sys.platform == "win32" else "/dev/null"
+                        first = [
+                            *common, "-vf", self._filter(height, edit_spec), "-c:v", "libx264", "-preset", "medium",
+                            "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.15)}k",
+                            "-bufsize", f"{int(video_kbps * 2)}k", "-pass", "1",
+                            "-passlogfile", passlog, "-an", *progress_args, "-f", "null", null_output,
+                        ]
+                        if progress:
+                            progress(0.01, "Measuring target size")
+                        await self._run_ffmpeg(
+                            first,
+                            duration,
+                            lambda p, s: progress(p * 0.45, s) if progress else None,
+                        )
+                        second = [
+                            *common, "-vf", self._filter(height, edit_spec), "-c:v", "libx264", "-preset", "medium",
+                            "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.15)}k",
+                            "-bufsize", f"{int(video_kbps * 2)}k", "-pass", "2",
+                            "-passlogfile", passlog, "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+                            "-pix_fmt", "yuv420p", "-movflags", "+faststart", *progress_args, str(partial),
+                        ]
+                        await self._run_ffmpeg(
+                            second,
+                            duration,
+                            lambda p, s: progress(0.45 + p * 0.55, s) if progress else None,
+                        )
+                else:
+                    if preset == "smallest":
+                        crf, height, audio = 30, 720, 64
+                    elif preset == "original":
+                        crf, height, audio = (
+                            20,
+                            max(1080, int(media.get("height") or 1080)),
+                            160,
+                        )
+                    else:
+                        crf, height, audio = 23, 1080, 128
+                    command = [
                         *common, "-vf", self._filter(height, edit_spec), "-c:v", "libx264", "-preset", "medium",
-                        "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.15)}k",
-                        "-bufsize", f"{int(video_kbps * 2)}k", "-pass", "2",
-                        "-passlogfile", passlog, "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+                        "-crf", str(crf), "-c:a", "aac", "-b:a", f"{audio}k",
                         "-pix_fmt", "yuv420p", "-movflags", "+faststart", *progress_args, str(partial),
                     ]
-                    await self._run_ffmpeg(
-                        second, duration,
-                        lambda p, s: progress(0.45 + p * 0.55, s) if progress else None,
-                    )
-            else:
-                if preset == "smallest":
-                    crf, height, audio = 30, 720, 64
-                elif preset == "original":
-                    crf, height, audio = 20, max(1080, int(media.get("height") or 1080)), 160
-                else:
-                    crf, height, audio = 23, 1080, 128
-                command = [
-                    *common, "-vf", self._filter(height, edit_spec), "-c:v", "libx264", "-preset", "medium",
-                    "-crf", str(crf), "-c:a", "aac", "-b:a", f"{audio}k",
-                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", *progress_args, str(partial),
-                ]
-                await self._run_ffmpeg(command, duration, progress)
+                    await self._run_ffmpeg(command, duration, progress)
             if not partial.is_file() or partial.stat().st_size == 0:
                 raise MediaError("The export completed without producing a usable file.")
             partial.replace(output)
             if progress:
                 progress(1.0, "Export ready")
-            return ExportResult(output, output.stat().st_size, duration, True, preset)
+            used_encoder = (
+                hardware_encoder
+                if hardware_used and hardware_encoder
+                else "libx264"
+            )
+            return ExportResult(
+                output,
+                output.stat().st_size,
+                duration,
+                True,
+                preset,
+                self._encoder_label(used_encoder),
+                hardware_used,
+            )
         except Exception:
             partial.unlink(missing_ok=True)
             raise

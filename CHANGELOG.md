@@ -6,6 +6,21 @@ release.
 
 ## [Unreleased]
 
+### Added
+
+- Optional Maximum performance mode with persistent graphics resources,
+  adjacent-media preloading, and higher bounded thumbnail concurrency.
+- Live renderer, GPU, refresh-rate, decoder, export-encoder, and frame-pacing
+  diagnostics.
+- Hardware H.264 export through VideoToolbox on macOS and compatible Windows
+  encoders, with automatic libx264 fallback.
+
+### Changed
+
+- Moved startup root activation, filtered library and history queries, folder
+  aggregation, count refreshes, and thumbnail asset bookkeeping off the UI
+  thread.
+
 ## [0.1.0-beta.2] - 2026-07-26
 
 ### Added

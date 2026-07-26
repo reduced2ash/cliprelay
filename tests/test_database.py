@@ -8,6 +8,25 @@ from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel, RandomF
 from cliprelay.settings import Settings
 
 
+def test_performance_settings_validate_and_default_safely(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(Database(tmp_path / "settings.sqlite3"))
+
+    assert settings.get("performance_mode") == "automatic"
+    assert settings.get("export_encoder") == "auto"
+
+    settings.set("performance_mode", "maximum")
+    settings.set("export_encoder", "hardware")
+    assert settings.as_dict()["performance_mode"] == "maximum"
+    assert settings.as_dict()["export_encoder"] == "hardware"
+
+    settings.set("performance_mode", "turbo")
+    settings.set("export_encoder", "mystery")
+    assert settings.get("performance_mode") == "automatic"
+    assert settings.get("export_encoder") == "auto"
+
+
 def media_payload(path: Path, root: Path, name: str = "sample.mp4") -> dict:
     return {
         "root_path": str(root),
