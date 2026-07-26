@@ -363,7 +363,26 @@ async def test_random_folder_filter_uses_selected_subtree(
 
     assert controller.selectedMediaId == chosen_id
     controller.clearRandomFolders()
+    assert controller.randomFolderSummary == "No folders"
+    assert controller.randomFolderSelectionCount == 0
+    assert controller.hasRandomFolderSelection is False
+    assert all(
+        row["selected"] is False
+        for row in controller.randomFolderOptions
+    )
+
+    controller.selectAllRandomFolders()
     assert controller.randomFolderSummary == "All folders"
+    assert controller.allRandomFoldersSelected is True
+    assert controller.randomFolderSelectionCount == len(
+        controller.randomFolderOptions
+    )
+    assert all(
+        row["selected"] is True
+        for row in controller.randomFolderOptions
+    )
+    assert settings.get("random_folder_mode") == "all"
+    assert settings.get("random_folders") == []
     controller.shutdown()
 
 

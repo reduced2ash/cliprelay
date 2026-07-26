@@ -7,7 +7,15 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QTimer, Qt, QUrl
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QMetaObject,
+    QObject,
+    QTimer,
+    Qt,
+    QUrl,
+)
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine, QQmlEngine
 from PySide6.QtWidgets import QApplication
@@ -37,6 +45,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-width", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--window-height", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--scroll-end", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--random-sources",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--prepare-fullscreen", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--prepare-tab",
@@ -133,6 +146,13 @@ def main(argv: list[str] | None = None) -> int:
             root_window.setProperty(
                 "currentPage", {"library": 0, "history": 1, "settings": 2}[args.page]
             )
+            if args.random_sources and args.page == "library":
+                random_sources = root_window.findChild(
+                    QObject,
+                    "randomSourcePopup",
+                )
+                if random_sources:
+                    QMetaObject.invokeMethod(random_sources, "open")
             if args.prepare_fullscreen and args.page == "library":
                 library_page = root_window.findChild(QObject, "libraryPage")
                 if library_page:

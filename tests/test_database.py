@@ -283,6 +283,7 @@ def test_large_library_safe_defaults(tmp_path: Path) -> None:
     assert settings.get("thumbnails_during_index") is False
     assert settings.get("ui_scale") == 1.0
     assert settings.get("theme_mode") == "relay"
+    assert settings.get("random_folder_mode") == "all"
 
 
 def test_theme_setting_is_persistent_and_rejects_unknown_modes(tmp_path: Path) -> None:
@@ -296,3 +297,13 @@ def test_theme_setting_is_persistent_and_rejects_unknown_modes(tmp_path: Path) -
 
     settings.set("theme_mode", "surprise_me")
     assert settings.get("theme_mode") == "relay"
+
+
+def test_random_folder_mode_rejects_unknown_values(tmp_path: Path) -> None:
+    settings = Settings(Database(tmp_path / "db.sqlite3"))
+
+    settings.set("random_folder_mode", "selected")
+    assert settings.get("random_folder_mode") == "selected"
+
+    settings.set("random_folder_mode", "surprise")
+    assert settings.get("random_folder_mode") == "all"

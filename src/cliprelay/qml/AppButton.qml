@@ -29,6 +29,7 @@ Button {
     contentItem: RowLayout {
         id: contentRow
         spacing: 7
+        clip: true
         Item { Layout.fillWidth: true; visible: control.iconOnly }
         AppIcon {
             visible: control.iconName.length > 0
@@ -60,7 +61,12 @@ Button {
             font.pixelSize: Theme.textSm
             font.weight: Font.DemiBold
             elide: Text.ElideRight
+            clip: true
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.alignment: Qt.AlignVCenter
+            horizontalAlignment: control.iconName.length > 0
+                ? Text.AlignLeft : Text.AlignHCenter
         }
         Item { Layout.fillWidth: true; visible: control.iconOnly }
     }

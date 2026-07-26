@@ -236,7 +236,7 @@ class AppController(QObject):
             or self._random_history_index > 0
         )
 
-    def _random_folders(self) -> list[str]:
+    def _stored_random_folders(self) -> list[str]:
         value = self._setting("random_folders", [])
         if not isinstance(value, list):
             return []
@@ -248,9 +248,32 @@ class AppController(QObject):
             )
         )
 
+    def _random_folder_mode(self) -> str:
+        return (
+            "selected"
+            if self._setting("random_folder_mode", "all") == "selected"
+            else "all"
+        )
+
+    def _all_random_folder_paths(self) -> list[str]:
+        return [
+            str(row.get("folder") or "")
+            for row in self._random_folder_options_cache
+        ]
+
+    def _selected_random_folders(self) -> list[str]:
+        if self._random_folder_mode() == "all":
+            return self._all_random_folder_paths()
+        return self._stored_random_folders()
+
+    def _random_folders(self) -> list[str]:
+        if self._random_folder_mode() == "all":
+            return []
+        return self._stored_random_folders()
+
     @Property("QVariantList", notify=randomFoldersChanged)
     def randomFolderOptions(self) -> list[dict[str, Any]]:
-        selected = set(self._random_folders())
+        selected = set(self._selected_random_folders())
         return [
             {
                 "folderPath": str(row["folder"]),
@@ -271,8 +294,13 @@ class AppController(QObject):
 
     @Property(str, notify=randomFoldersChanged)
     def randomFolderSummary(self) -> str:
-        folders = self._random_folders()
+        if self._random_folder_mode() == "all":
+            return "All folders"
+        folders = self._stored_random_folders()
         if not folders:
+            return "No folders"
+        all_paths = set(self._all_random_folder_paths())
+        if all_paths and all_paths.issubset(folders):
             return "All folders"
         if len(folders) > 1:
             return f"{len(folders)} folders"
@@ -282,7 +310,23 @@ class AppController(QObject):
 
     @Property(int, notify=randomFoldersChanged)
     def randomFolderSelectionCount(self) -> int:
-        return len(self._random_folders())
+        return len(self._selected_random_folders())
+
+    @Property(bool, notify=randomFoldersChanged)
+    def allRandomFoldersSelected(self) -> bool:
+        if self._random_folder_mode() == "all":
+            return True
+        all_paths = set(self._all_random_folder_paths())
+        return bool(all_paths) and all_paths.issubset(
+            self._stored_random_folders()
+        )
+
+    @Property(bool, notify=randomFoldersChanged)
+    def hasRandomFolderSelection(self) -> bool:
+        return (
+            self._random_folder_mode() == "all"
+            or bool(self._stored_random_folders())
+        )
 
     @Property(float, notify=scanStateChanged)
     def scanProgress(self) -> float:
@@ -633,6 +677,7 @@ class AppController(QObject):
             if key == "library_root":
                 root = str(value)
                 if str(previous_value or "") != root:
+                    self._store_setting("random_folder_mode", "all")
                     self._store_setting("random_folders", [])
                     self._invalidate_random_folder_options(clear=True)
                     self._clear_random_history()
@@ -676,22 +721,47 @@ class AppController(QObject):
 
     @Slot(str, bool)
     def setRandomFolderEnabled(self, folder: str, enabled: bool) -> None:
-        folders = self._random_folders()
+        folders = self._selected_random_folders()
         if enabled and folder not in folders:
             folders.append(folder)
         elif not enabled and folder in folders:
             folders.remove(folder)
-        self._store_setting("random_folders", folders)
+        all_paths = self._all_random_folder_paths()
+        if all_paths and set(all_paths).issubset(folders):
+            self._store_setting("random_folder_mode", "all")
+            self._store_setting("random_folders", [])
+        else:
+            self._store_setting("random_folder_mode", "selected")
+            self._store_setting("random_folders", folders)
         self.random_folder_model.set_selected(folder, enabled)
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
 
     @Slot()
     def clearRandomFolders(self) -> None:
-        if not self._random_folders():
+        if (
+            self._random_folder_mode() == "selected"
+            and not self._stored_random_folders()
+        ):
             return
+        self._store_setting("random_folder_mode", "selected")
         self._store_setting("random_folders", [])
         self.random_folder_model.sync_selected(set())
+        self.settingsChanged.emit()
+        self.randomFoldersChanged.emit()
+
+    @Slot()
+    def selectAllRandomFolders(self) -> None:
+        if self._random_folder_mode() == "all":
+            self.random_folder_model.sync_selected(
+                set(self._all_random_folder_paths())
+            )
+            return
+        self._store_setting("random_folder_mode", "all")
+        self._store_setting("random_folders", [])
+        self.random_folder_model.sync_selected(
+            set(self._all_random_folder_paths())
+        )
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
 
@@ -717,7 +787,7 @@ class AppController(QObject):
                 self._random_folder_options_dirty = False
                 self.random_folder_model.set_rows(
                     rows,
-                    set(self._random_folders()),
+                    set(self._selected_random_folders()),
                 )
         except asyncio.CancelledError:
             raise
@@ -865,6 +935,9 @@ class AppController(QObject):
         if not self._setting("library_root"):
             self.toast.emit("info", "Choose a library folder before picking a video.")
             return
+        if not self.hasRandomFolderSelection:
+            self.toast.emit("info", "Select at least one random source folder.")
+            return
         asyncio.create_task(self._pick_random_cached_async())
 
     @Slot()
@@ -897,6 +970,9 @@ class AppController(QObject):
         self._clear_random_history()
 
     async def _pick_random_cached_async(self) -> None:
+        if not self.hasRandomFolderSelection:
+            self.toast.emit("info", "Select at least one random source folder.")
+            return
         self._random_picking = True
         self.randomStateChanged.emit()
         try:
@@ -1041,6 +1117,9 @@ class AppController(QObject):
 
     @Slot()
     def resetShuffle(self) -> None:
+        if not self.hasRandomFolderSelection:
+            self.toast.emit("info", "Select at least one random source folder.")
+            return
         self.database.reset_shuffle(
             self._setting("library_root") or None,
             folders=self._random_folders(),

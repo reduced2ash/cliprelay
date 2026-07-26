@@ -169,12 +169,22 @@ Rectangle {
                                 iconName: "more"
                                 kind: "ghost"
                                 Layout.fillWidth: true
-                                onClicked: actionMenu.open()
+                                onClicked: {
+                                    if (actionMenu.opened) {
+                                        actionMenu.close()
+                                    } else if (
+                                        Date.now() - actionMenu.lastClosedAt >= 180
+                                    ) {
+                                        actionMenu.open()
+                                    }
+                                }
                             }
                             Menu {
                                 id: actionMenu
+                                property double lastClosedAt: 0
                                 width: 224
                                 padding: 5
+                                onClosed: lastClosedAt = Date.now()
                                 background: Rectangle {
                                     radius: Theme.radiusMd
                                     color: Theme.surfaceSoft

@@ -17,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "hover_previews": True,
     "deep_scan": False,
     "avoid_repeats": True,
+    "random_folder_mode": "all",
     "random_folders": [],
     "ui_scale": 1.0,
     "theme_mode": "relay",
@@ -48,6 +49,10 @@ class Settings:
             value = str(value)
             if value not in {"relay", "pitch_black", "full_white"}:
                 value = "relay"
+        if key == "random_folder_mode":
+            value = str(value)
+            if value not in {"all", "selected"}:
+                value = "all"
         if key in {"library_root", "export_dir"} and value:
             value = str(Path(str(value)).expanduser().resolve())
             if key == "export_dir":
