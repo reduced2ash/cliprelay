@@ -37,6 +37,27 @@ Rectangle {
         controller.navigateSelection(direction)
     }
 
+    function focusFolderIndex(targetIndex) {
+        if (folderList.count <= 0)
+            return
+        var clampedIndex = Math.max(
+            0,
+            Math.min(folderList.count - 1, targetIndex)
+        )
+        folderList.currentIndex = clampedIndex
+        folderList.positionViewAtIndex(clampedIndex, ListView.Contain)
+        Qt.callLater(function() {
+            var item = folderList.itemAtIndex(clampedIndex)
+            if (item)
+                item.forceActiveFocus()
+        })
+    }
+
+    function toggleFolderBranch(folderPath) {
+        var folderIndex = folderModel.toggleExpanded(folderPath)
+        root.focusFolderIndex(folderIndex)
+    }
+
     function toggleRandomSourcePopup() {
         if (randomSourcePopup.opened) {
             randomSourcePopup.close()
@@ -669,69 +690,149 @@ Rectangle {
             Rectangle {
                 visible: root.showFolders && controller.settings.library_root
                 Layout.fillHeight: true
-                Layout.preferredWidth: 210
-                color: Theme.surface
+                Layout.preferredWidth: 204
+                color: Theme.surfaceSoft
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 8
-                    Text { text: "FOLDERS"; color: Theme.muted; font.pixelSize: Theme.textXs; font.letterSpacing: 1.2; Layout.leftMargin: 6; Layout.topMargin: 5 }
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 42
+                        color: "transparent"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 5
+                            spacing: 7
+
+                            AppIcon {
+                                Layout.preferredWidth: 15
+                                Layout.preferredHeight: 15
+                                name: "folders"
+                                strokeWidth: 1.75
+                                iconColor: Theme.muted
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "EXPLORER"
+                                color: Theme.textSoft
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                                font.letterSpacing: 0.8
+                            }
+                            Text {
+                                text: folderModel.totalCount.toLocaleString()
+                                color: Theme.mutedSoft
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                            }
+                            AppButton {
+                                text: "Collapse all folders"
+                                iconName: "chevronUp"
+                                toolTipText: text
+                                kind: "ghost"
+                                compact: true
+                                Layout.minimumWidth: 40
+                                Layout.preferredWidth: 40
+                                Layout.maximumWidth: 40
+                                Layout.preferredHeight: 40
+                                onClicked: folderModel.collapseAll()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.border
+                    }
+
                     ListView {
                         id: folderList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 3
+                        Layout.leftMargin: 4
+                        Layout.rightMargin: 4
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 4
+                        spacing: 0
                         clip: true
+                        reuseItems: true
+                        boundsBehavior: Flickable.StopAtBounds
                         model: folderModel
-                        delegate: Rectangle {
+                        delegate: FolderTreeRow {
                             id: folderRow
-                            required property string folderPath
-                            required property string folderName
-                            required property int videoCount
-                            width: ListView.view.width
-                            height: 42
-                            activeFocusOnTab: true
-                            Accessible.role: Accessible.ListItem
-                            Accessible.name: folderName + ", " + videoCount + " videos"
-                            radius: Theme.radiusSm
-                            color: root.currentFolder === folderPath ? Theme.active : (folderHover.hovered || activeFocus ? Theme.raised : "transparent")
-                            border.width: activeFocus ? 2 : 0
-                            border.color: Theme.accent
+                            selected: root.currentFolder === folderPath
+
                             function chooseFolder() {
+                                folderList.currentIndex = folderRow.index
                                 root.currentFolder = folderRow.folderPath
                                 controller.setFolder(folderRow.folderPath)
                             }
-                            RowLayout {
-                                anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 9
-                                AppIcon {
-                                    Layout.preferredWidth: 16
-                                    Layout.preferredHeight: 16
-                                    name: "folder"
-                                    strokeWidth: 1.7
-                                    iconColor: root.currentFolder === folderRow.folderPath
-                                        ? Theme.accent : Theme.muted
-                                }
-                                Text { text: folderRow.folderName; color: Theme.text; font.pixelSize: Theme.textSm; elide: Text.ElideMiddle; Layout.fillWidth: true }
-                                Text { text: folderRow.videoCount; color: Theme.muted; font.pixelSize: Theme.textXs }
+
+                            onActivated: chooseFolder()
+                            onToggleRequested: {
+                                root.toggleFolderBranch(folderRow.folderPath)
                             }
-                            HoverHandler { id: folderHover }
-                            TapHandler {
-                                onTapped: {
-                                    folderRow.forceActiveFocus()
-                                    folderRow.chooseFolder()
-                                }
+                            onMoveFocusRequested: function(delta) {
+                                root.focusFolderIndex(folderRow.index + delta)
                             }
-                            Keys.onSpacePressed: folderRow.chooseFolder()
-                            Keys.onReturnPressed: folderRow.chooseFolder()
+                            onParentFocusRequested: {
+                                root.focusFolderIndex(
+                                    folderModel.parentIndex(folderRow.folderPath)
+                                )
+                            }
                         }
+
+                        ScrollBar.vertical: AppScrollBar { }
                     }
-                    AppButton {
-                        text: "Reset shuffle"
-                        iconName: "refresh"
-                        kind: "ghost"
+
+                    Rectangle {
                         Layout.fillWidth: true
-                        onClicked: controller.resetShuffle()
+                        Layout.preferredHeight: 40
+                        color: "transparent"
+                        border.width: 0
+
+                        Rectangle {
+                            anchors.top: parent.top
+                            width: parent.width
+                            height: 1
+                            color: Theme.border
+                        }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 5
+                            spacing: 6
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: folderModel.visibleCount.toLocaleString()
+                                    + " / "
+                                    + folderModel.totalCount.toLocaleString()
+                                    + " VISIBLE"
+                                color: Theme.mutedSoft
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                font.letterSpacing: 0.45
+                            }
+                            AppButton {
+                                text: "Reset shuffle history"
+                                iconName: "refresh"
+                                toolTipText: text
+                                kind: "ghost"
+                                compact: true
+                                Layout.minimumWidth: 40
+                                Layout.preferredWidth: 40
+                                Layout.maximumWidth: 40
+                                Layout.preferredHeight: 40
+                                onClicked: controller.resetShuffle()
+                            }
+                        }
                     }
                 }
             }

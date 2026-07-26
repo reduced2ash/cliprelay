@@ -424,8 +424,13 @@ class Database:
             term = f"%{search.strip()}%"
             values.extend([term, term])
         if folder:
-            clauses.append("folder=?")
-            values.append(folder)
+            escaped = (
+                folder.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            clauses.append("(folder=? OR folder LIKE ? ESCAPE '\\')")
+            values.extend([folder, f"{escaped}/%"])
         return clauses, values
 
     def list_media(

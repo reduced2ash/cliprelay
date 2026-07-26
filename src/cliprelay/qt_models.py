@@ -219,25 +219,118 @@ class FolderModel(DictListModel):
     PathRole = Qt.ItemDataRole.UserRole + 1
     NameRole = PathRole + 1
     CountRole = PathRole + 2
-    ROLE_NAMES = {PathRole: b"folderPath", NameRole: b"folderName", CountRole: b"videoCount"}
+    FullPathRole = PathRole + 3
+    DepthRole = PathRole + 4
+    HasChildrenRole = PathRole + 5
+    ExpandedRole = PathRole + 6
+    KindRole = PathRole + 7
+    ParentRole = PathRole + 8
+    ROLE_NAMES = {
+        PathRole: b"folderPath",
+        NameRole: b"folderName",
+        CountRole: b"videoCount",
+        FullPathRole: b"folderFullPath",
+        DepthRole: b"folderDepth",
+        HasChildrenRole: b"folderHasChildren",
+        ExpandedRole: b"folderExpanded",
+        KindRole: b"folderKind",
+        ParentRole: b"folderParent",
+    }
+
+    summaryChanged = Signal()
 
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
+        self._nodes: dict[str, dict[str, Any]] = {}
+        self._children: dict[str, list[str]] = {}
+        self._expanded: set[str] = set()
+        self._initialized = False
+        self._media_count = 0
+
+    @Property(int, notify=summaryChanged)
+    def totalCount(self) -> int:
+        return len(self._nodes)
+
+    @Property(int, notify=summaryChanged)
+    def visibleCount(self) -> int:
+        return max(0, len(self.rows) - 1)
+
+    @staticmethod
+    def _parent(path: str) -> str:
+        return path.rpartition("/")[0]
+
+    def _visible_rows(self) -> list[dict[str, Any]]:
+        rows = [{
+            "folderPath": "",
+            "folderName": "All videos",
+            "videoCount": self._media_count,
+            "folderFullPath": "Entire library",
+            "folderDepth": 0,
+            "folderHasChildren": False,
+            "folderExpanded": False,
+            "folderKind": "all",
+            "folderParent": "",
+        }]
+
+        def append_branch(parent: str, depth: int) -> None:
+            for path in self._children.get(parent, []):
+                node = self._nodes[path]
+                rows.append({
+                    **node,
+                    "folderDepth": depth,
+                    "folderHasChildren": bool(self._children.get(path)),
+                    "folderExpanded": path in self._expanded,
+                })
+                if path in self._expanded:
+                    append_branch(path, depth + 1)
+
+        append_branch("", 0)
+        return rows
+
+    def _rebuild_visible(self) -> None:
+        self.replace(self._visible_rows())
+        self.summaryChanged.emit()
 
     def refresh(self) -> None:
-        folders = [{"folderPath": "", "folderName": "All folders", "videoCount": self.database.counts()["media"]}]
-        folders.extend(
-            {
-                "folderPath": row["folder"],
-                "folderName": row["folder"].replace("/", "  /  ") if row["folder"] else "Library root",
+        previous_paths = set(self._nodes)
+        self._media_count = self.database.counts()["media"]
+        nodes: dict[str, dict[str, Any]] = {}
+        children: dict[str, list[str]] = {}
+        for row in self.database.list_random_folders():
+            path = str(row["folder"])
+            if not path:
+                continue
+            parent = self._parent(path)
+            nodes[path] = {
+                "folderPath": path,
+                "folderName": path.rpartition("/")[2],
                 "videoCount": int(row["count"]),
+                "folderFullPath": path,
+                "folderKind": "folder",
+                "folderParent": parent,
             }
-            for row in self.database.list_folders()
-        )
-        self.replace(folders)
+            children.setdefault(parent, []).append(path)
 
-    def find_index(self, folder: str) -> int:
+        for paths in children.values():
+            paths.sort(key=lambda path: nodes[path]["folderName"].casefold())
+
+        self._nodes = nodes
+        self._children = children
+        self._expanded.intersection_update(nodes)
+        top_level_branches = {
+            path
+            for path in children.get("", [])
+            if children.get(path)
+        }
+        if not self._initialized:
+            self._expanded.update(top_level_branches)
+            self._initialized = True
+        else:
+            self._expanded.update(top_level_branches - previous_paths)
+        self._rebuild_visible()
+
+    def _index_without_expanding(self, folder: str) -> int:
         return next(
             (
                 index
@@ -246,6 +339,48 @@ class FolderModel(DictListModel):
             ),
             -1,
         )
+
+    @Slot(str, result=int)
+    def toggleExpanded(self, folder: str) -> int:
+        if not self._children.get(folder):
+            return self._index_without_expanding(folder)
+        if folder in self._expanded:
+            self._expanded.remove(folder)
+        else:
+            self._expanded.add(folder)
+        self._rebuild_visible()
+        return self._index_without_expanding(folder)
+
+    @Slot()
+    def collapseAll(self) -> None:
+        if not self._expanded:
+            return
+        self._expanded.clear()
+        self._rebuild_visible()
+
+    @Slot(str, result=int)
+    def expandTo(self, folder: str) -> int:
+        ancestors: set[str] = set()
+        parent = self._parent(folder)
+        while parent:
+            ancestors.add(parent)
+            parent = self._parent(parent)
+        if not ancestors.issubset(self._expanded):
+            self._expanded.update(ancestors)
+            self._rebuild_visible()
+        return self._index_without_expanding(folder)
+
+    @Slot(str, result=int)
+    def indexOf(self, folder: str) -> int:
+        return self._index_without_expanding(folder)
+
+    @Slot(str, result=int)
+    def parentIndex(self, folder: str) -> int:
+        parent = self._parent(folder)
+        return self._index_without_expanding(parent) if parent else 0
+
+    def find_index(self, folder: str) -> int:
+        return self.expandTo(folder)
 
 
 class RandomFolderModel(DictListModel):

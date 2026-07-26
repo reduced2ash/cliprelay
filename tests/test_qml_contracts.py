@@ -48,3 +48,24 @@ def test_library_grid_height_tracks_responsive_tile_width() -> None:
     assert "cellHeight: 220" not in source
     assert "height: libraryGrid.cellHeight" in source
     assert "clip: true" in source
+
+
+def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> None:
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    row = (QML_DIR / "FolderTreeRow.qml").read_text(encoding="utf-8")
+
+    assert 'text: "EXPLORER"' in page
+    assert "Layout.preferredWidth: 204" in page
+    assert "delegate: FolderTreeRow {" in page
+    assert "folderModel.toggleExpanded(folderPath)" in page
+    assert "folderModel.collapseAll()" in page
+    assert "folderModel.parentIndex(folderRow.folderPath)" in page
+    assert "reuseItems: true" in page
+
+    assert "height: 34" in row
+    assert "required property int folderDepth" in row
+    assert "readonly property int visualDepth: Math.min(folderDepth, 6)" in row
+    assert "model: Math.max(0, root.visualDepth)" in row
+    assert 'root.folderExpanded ? "chevronDown" : "chevronRight"' in row
+    assert "Keys.onRightPressed" in row
+    assert "Keys.onLeftPressed" in row

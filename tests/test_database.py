@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from cliprelay.database import Database
-from cliprelay.qt_models import HistoryModel, LibraryModel, RandomFolderModel
+from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel, RandomFolderModel
 from cliprelay.settings import Settings
 
 
@@ -122,6 +122,79 @@ def test_random_media_can_be_limited_to_folder_subtrees(tmp_path: Path) -> None:
     assert database.random_media(True, folders=["group"])["id"] in subtree_picks
     assert database.get_media(outside_id)["seen"] == 1
     assert database.random_media(False, folders=[""])["id"] == root_id
+
+
+def test_folder_model_builds_a_compact_expandable_tree(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+
+    def add_video(relative_path: str) -> None:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative_path.encode())
+        payload = media_payload(path, root, path.name)
+        payload.update(
+            relative_path=relative_path,
+            folder=path.parent.relative_to(root).as_posix(),
+        )
+        database.upsert_media(payload)
+
+    add_video("studio/direct.mp4")
+    add_video("studio/shoots/day-one/first.mp4")
+    add_video("studio/shoots/day-two/second.mp4")
+    add_video("exports/final.mp4")
+
+    assert {
+        row["name"]
+        for row in database.list_media(folder="studio")
+    } == {"direct.mp4", "first.mp4", "second.mp4"}
+
+    model = FolderModel(database)
+    reset_events: list[bool] = []
+    model.modelReset.connect(lambda: reset_events.append(True))
+    model.refresh()
+
+    assert model.totalCount == 5
+    assert model.visibleCount == 3
+    assert [row["folderPath"] for row in model.rows] == [
+        "",
+        "exports",
+        "studio",
+        "studio/shoots",
+    ]
+    studio = model.rows[2]
+    assert studio["folderName"] == "studio"
+    assert studio["videoCount"] == 3
+    assert studio["folderDepth"] == 0
+    assert studio["folderHasChildren"] is True
+    assert studio["folderExpanded"] is True
+    shoots = model.rows[3]
+    assert shoots["folderDepth"] == 1
+    assert shoots["folderHasChildren"] is True
+    assert shoots["folderExpanded"] is False
+
+    reset_count = len(reset_events)
+    model.toggleExpanded("studio/shoots")
+    assert len(reset_events) == reset_count + 1
+    assert model.visibleCount == 5
+    assert model.rows[4]["folderPath"] == "studio/shoots/day-one"
+    assert model.rows[4]["folderDepth"] == 2
+
+    model.toggleExpanded("studio")
+    assert model.visibleCount == 2
+    assert model.find_index("studio/shoots/day-two") >= 0
+    assert "studio/shoots/day-two" in {
+        row["folderPath"] for row in model.rows
+    }
+
+    model.collapseAll()
+    assert model.visibleCount == 2
+    assert [row["folderPath"] for row in model.rows] == [
+        "",
+        "exports",
+        "studio",
+    ]
 
 
 def test_invalidate_missing_preserves_present_files(tmp_path: Path) -> None:

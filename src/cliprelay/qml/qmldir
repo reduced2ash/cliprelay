@@ -15,6 +15,7 @@ ThemeChoice 1.0 ThemeChoice.qml
 StatusPill 1.0 StatusPill.qml
 NavButton 1.0 NavButton.qml
 MediaTile 1.0 MediaTile.qml
+FolderTreeRow 1.0 FolderTreeRow.qml
 PreparePanel 1.0 PreparePanel.qml
 PrepareVideoEditor 1.0 PrepareVideoEditor.qml
 VideoTimeline 1.0 VideoTimeline.qml
