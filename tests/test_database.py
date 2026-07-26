@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from cliprelay.database import Database
+from cliprelay.qt_models import HistoryModel, LibraryModel
+from cliprelay.settings import Settings
+
+
+def media_payload(path: Path, root: Path, name: str = "sample.mp4") -> dict:
+    return {
+        "root_path": str(root),
+        "path": str(path),
+        "name": name,
+        "relative_path": name,
+        "folder": "",
+        "duration": 12.5,
+        "width": 1280,
+        "height": 720,
+        "size_bytes": 1234,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "frame_rate": 30,
+        "mtime": 100,
+    }
+
+
+def test_settings_media_shuffle_and_history(tmp_path: Path) -> None:
+    database = Database(tmp_path / "cliprelay.sqlite3")
+    database.set_setting("sort_mode", "name")
+    assert database.get_setting("sort_mode") == "name"
+
+    root = tmp_path / "library"
+    root.mkdir()
+    first = root / "sample.mp4"
+    second = root / "second.mp4"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+    first_id = database.upsert_media(media_payload(first, root))
+    second_id = database.upsert_media(media_payload(second, root, "second.mp4"))
+    assert database.counts() == {"media": 2, "posts": 0, "unseen": 2}
+
+    picks = {database.random_media(True)["id"], database.random_media(True)["id"]}
+    assert picks == {first_id, second_id}
+    assert database.counts()["unseen"] == 0
+    assert database.random_media(True) is not None
+
+    export = tmp_path / "exports" / "prepared.mp4"
+    export.parent.mkdir()
+    export.write_bytes(b"prepared")
+    export_id = database.create_export({
+        "media_id": first_id,
+        "path": export,
+        "trim_start": 1,
+        "trim_end": 4,
+        "preset": "balanced",
+        "size_bytes": export.stat().st_size,
+        "duration": 3,
+        "is_generated": True,
+        "edit_spec": {
+            "crop": {"x": 0.1, "y": 0, "width": 0.8, "height": 1},
+            "overlays": [],
+        },
+    })
+    post_id = database.create_post({
+        "media_id": first_id,
+        "telegram_enabled": True,
+        "x_enabled": True,
+        "telegram_caption": "telegram words",
+        "x_caption": "x words",
+        "telegram_destination": "@example",
+    })
+    database.update_post(post_id, export_id=export_id, telegram_status="sent", x_status="prepared")
+    database.add_attempt(post_id, "telegram", "sent", "ok", "42")
+    post = database.get_post(post_id)
+    assert post and post["export_path"] == str(export)
+    assert json.loads(post["edit_spec"])["crop"]["width"] == 0.8
+    assert post["telegram_status"] == "sent"
+    assert len(database.list_history("telegram")) == 1
+    history_model = HistoryModel(database)
+    history_model.refresh()
+    assert history_model.rows[0]["edited"] is True
+    assert database.counts()["posts"] == 1
+
+
+def test_random_media_can_be_limited_to_folder_subtrees(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+
+    def add_video(relative_path: str) -> int:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative_path.encode())
+        payload = media_payload(path, root, path.name)
+        payload["relative_path"] = relative_path
+        payload["folder"] = (
+            "" if path.parent == root else path.parent.relative_to(root).as_posix()
+        )
+        return database.upsert_media(payload)
+
+    root_id = add_video("root.mp4")
+    direct_id = add_video("group/direct.mp4")
+    nested_id = add_video("group/deeper/nested.mp4")
+    outside_id = add_video("other/outside.mp4")
+
+    assert database.list_random_folders() == [
+        {"folder": "", "count": 1},
+        {"folder": "group", "count": 2},
+        {"folder": "group/deeper", "count": 1},
+        {"folder": "other", "count": 1},
+    ]
+
+    subtree_picks = {
+        database.random_media(True, folders=["group"])["id"]
+        for _ in range(2)
+    }
+    assert subtree_picks == {direct_id, nested_id}
+
+    database.mark_seen(outside_id)
+    assert database.random_media(True, folders=["group"])["id"] in subtree_picks
+    assert database.get_media(outside_id)["seen"] == 1
+    assert database.random_media(False, folders=[""])["id"] == root_id
+
+
+def test_invalidate_missing_preserves_present_files(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+    keep = root / "keep.mp4"
+    gone = root / "gone.mp4"
+    keep.write_bytes(b"1")
+    gone.write_bytes(b"2")
+    database.upsert_media(media_payload(keep, root, "keep.mp4"))
+    database.upsert_media(media_payload(gone, root, "gone.mp4"))
+    database.invalidate_missing(str(root), [str(keep)])
+    rows = database.list_media()
+    assert [row["name"] for row in rows] == ["keep.mp4"]
+
+
+def test_active_library_is_immediate_and_preserves_other_roots(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first = first_root / "first.mp4"
+    second = second_root / "second.mp4"
+    first.write_bytes(b"1")
+    second.write_bytes(b"2")
+    database.upsert_media(media_payload(first, first_root, first.name))
+    database.upsert_media(media_payload(second, second_root, second.name))
+
+    database.activate_root(first_root)
+    assert [row["name"] for row in database.list_media()] == ["first.mp4"]
+    database.activate_root(second_root)
+    assert [row["name"] for row in database.list_media()] == ["second.mp4"]
+    database.activate_root(first_root)
+    assert [row["name"] for row in database.list_media()] == ["first.mp4"]
+
+
+def test_lightweight_rows_require_probe_only_when_requested(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+    video = root / "unchecked.mp4"
+    video.write_bytes(b"video")
+    stat = video.stat()
+    payload = media_payload(video, root, video.name)
+    payload.update(duration=0, width=0, height=0, size_bytes=stat.st_size, mtime=stat.st_mtime)
+    database.upsert_media(payload)
+
+    assert not database.media_needs_probe(
+        str(video), stat.st_size, stat.st_mtime, require_probe=False
+    )
+    assert database.media_needs_probe(
+        str(video), stat.st_size, stat.st_mtime, require_probe=True
+    )
+
+
+def test_large_library_model_is_paginated_without_filesystem_access(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    database.activate_root(root)
+    entries = [
+        {
+            "root_path": str(root),
+            "path": str(root / f"folder-{index // 100}" / f"clip-{index:04}.mp4"),
+            "name": f"clip-{index:04}.mp4",
+            "relative_path": f"folder-{index // 100}/clip-{index:04}.mp4",
+            "folder": f"folder-{index // 100}",
+            "size_bytes": 1000 + index,
+            "mtime": float(index),
+        }
+        for index in range(1000)
+    ]
+    assert database.upsert_manifest_batch(entries) == 1000
+    model = LibraryModel(database)
+
+    model.refresh()
+    assert len(model.rows) == 240
+    assert model.has_more
+    assert model.rows[0]["mediaUrl"].startswith("file:")
+    assert model.load_more()
+    assert len(model.rows) == 480
+
+
+def test_large_library_safe_defaults(tmp_path: Path) -> None:
+    settings = Settings(Database(tmp_path / "db.sqlite3"))
+    assert settings.get("auto_index") is False
+    assert settings.get("thumbnails_during_index") is False
+    assert settings.get("ui_scale") == 1.0
+    assert settings.get("theme_mode") == "relay"
+
+
+def test_theme_setting_is_persistent_and_rejects_unknown_modes(tmp_path: Path) -> None:
+    settings = Settings(Database(tmp_path / "db.sqlite3"))
+
+    settings.set("theme_mode", "pitch_black")
+    assert settings.get("theme_mode") == "pitch_black"
+
+    settings.set("theme_mode", "full_white")
+    assert settings.get("theme_mode") == "full_white"
+
+    settings.set("theme_mode", "surprise_me")
+    assert settings.get("theme_mode") == "relay"

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible ClipRelay problem.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve ClipRelay. Remove personal paths, captions,
+        phone numbers, API credentials, and video content from logs or images.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple silicon
+        - macOS Intel
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ClipRelay version
+      placeholder: "For example: 0.1.0-beta.1"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the result and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open…
+        2. Select…
+        3. Click…
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Relevant diagnostics
+      description: Include only the smallest useful log excerpt. Do not include secrets or private media.
+      render: shell

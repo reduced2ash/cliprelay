@@ -1,0 +1,380 @@
+import QtQuick
+import "."
+
+Canvas {
+    id: root
+    property string name: ""
+    property color iconColor: Theme.muted
+    property real strokeWidth: 1.8
+
+    implicitWidth: 24
+    implicitHeight: 24
+    antialiasing: true
+
+    onNameChanged: requestPaint()
+    onIconColorChanged: requestPaint()
+    onStrokeWidthChanged: requestPaint()
+    onWidthChanged: requestPaint()
+    onHeightChanged: requestPaint()
+
+    onPaint: {
+        var context = getContext("2d")
+        var scaleX = width / 24
+        var scaleY = height / 24
+        context.clearRect(0, 0, width, height)
+        context.save()
+        context.scale(scaleX, scaleY)
+        context.strokeStyle = root.iconColor
+        context.fillStyle = root.iconColor
+        context.lineWidth = root.strokeWidth
+        context.lineCap = "round"
+        context.lineJoin = "round"
+
+        if (root.name === "relay") {
+            context.beginPath()
+            context.moveTo(6.5, 17.5)
+            context.lineTo(17.5, 6.5)
+            context.moveTo(10, 6.5)
+            context.lineTo(17.5, 6.5)
+            context.lineTo(17.5, 14)
+            context.stroke()
+        } else if (root.name === "library") {
+            context.strokeRect(4.5, 4.5, 6, 6)
+            context.strokeRect(13.5, 4.5, 6, 6)
+            context.strokeRect(4.5, 13.5, 6, 6)
+            context.strokeRect(13.5, 13.5, 6, 6)
+        } else if (root.name === "history") {
+            context.beginPath()
+            context.arc(12, 12, 7.25, -1.15, 4.15, false)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(4.15, 7.2)
+            context.lineTo(4.65, 12)
+            context.lineTo(8.9, 9.8)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(12, 8)
+            context.lineTo(12, 12)
+            context.lineTo(15, 13.8)
+            context.stroke()
+        } else if (root.name === "settings") {
+            context.beginPath()
+            context.arc(12, 12, 6.2, 0, Math.PI * 2)
+            context.stroke()
+            context.beginPath()
+            context.arc(12, 12, 2.25, 0, Math.PI * 2)
+            context.stroke()
+            for (var index = 0; index < 8; ++index) {
+                var angle = index * Math.PI / 4
+                context.beginPath()
+                context.moveTo(
+                    12 + Math.cos(angle) * 7.2,
+                    12 + Math.sin(angle) * 7.2
+                )
+                context.lineTo(
+                    12 + Math.cos(angle) * 9.1,
+                    12 + Math.sin(angle) * 9.1
+                )
+                context.stroke()
+            }
+        } else if (root.name === "chevronLeft") {
+            context.beginPath()
+            context.moveTo(14.5, 6.5)
+            context.lineTo(9, 12)
+            context.lineTo(14.5, 17.5)
+            context.stroke()
+        } else if (root.name === "chevronRight") {
+            context.beginPath()
+            context.moveTo(9.5, 6.5)
+            context.lineTo(15, 12)
+            context.lineTo(9.5, 17.5)
+            context.stroke()
+        } else if (root.name === "media") {
+            context.beginPath()
+            context.rect(3.5, 5, 17, 14)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(10, 9)
+            context.lineTo(15.5, 12)
+            context.lineTo(10, 15)
+            context.closePath()
+            context.fill()
+        } else if (root.name === "folder") {
+            context.beginPath()
+            context.moveTo(3.5, 7.5)
+            context.lineTo(9.2, 7.5)
+            context.lineTo(11.1, 9.5)
+            context.lineTo(20.5, 9.5)
+            context.lineTo(19.4, 18.5)
+            context.lineTo(4.6, 18.5)
+            context.closePath()
+            context.stroke()
+            context.beginPath()
+            context.moveTo(4.2, 9.4)
+            context.lineTo(4.2, 6)
+            context.lineTo(9.3, 6)
+            context.lineTo(11, 7.8)
+            context.stroke()
+        } else if (root.name === "folders") {
+            context.beginPath()
+            context.moveTo(5, 8)
+            context.lineTo(10, 8)
+            context.lineTo(11.7, 9.8)
+            context.lineTo(20, 9.8)
+            context.lineTo(19, 17.8)
+            context.lineTo(5.8, 17.8)
+            context.closePath()
+            context.stroke()
+            context.beginPath()
+            context.moveTo(4, 15.7)
+            context.lineTo(3.3, 6.2)
+            context.lineTo(8.2, 6.2)
+            context.lineTo(10, 8)
+            context.stroke()
+        } else if (root.name === "grid") {
+            context.strokeRect(4.2, 4.2, 6.1, 6.1)
+            context.strokeRect(13.7, 4.2, 6.1, 6.1)
+            context.strokeRect(4.2, 13.7, 6.1, 6.1)
+            context.strokeRect(13.7, 13.7, 6.1, 6.1)
+        } else if (root.name === "list") {
+            for (var listIndex = 0; listIndex < 3; ++listIndex) {
+                var listY = 6.5 + listIndex * 5.5
+                context.beginPath()
+                context.moveTo(5, listY)
+                context.lineTo(6.4, listY)
+                context.moveTo(9.2, listY)
+                context.lineTo(19, listY)
+                context.stroke()
+            }
+        } else if (root.name === "search") {
+            context.beginPath()
+            context.arc(10.5, 10.5, 5.7, 0, Math.PI * 2)
+            context.moveTo(14.7, 14.7)
+            context.lineTo(19.5, 19.5)
+            context.stroke()
+        } else if (root.name === "refresh") {
+            context.beginPath()
+            context.arc(12, 12, 7.2, -0.8, 3.8, false)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(4.3, 8)
+            context.lineTo(4.7, 12.2)
+            context.lineTo(8.6, 10.3)
+            context.stroke()
+            context.beginPath()
+            context.arc(12, 12, 7.2, 2.35, 6.3, false)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(19.7, 16)
+            context.lineTo(19.3, 11.8)
+            context.lineTo(15.4, 13.7)
+            context.stroke()
+        } else if (root.name === "shuffle") {
+            context.beginPath()
+            context.moveTo(4, 7)
+            context.lineTo(7.2, 7)
+            context.bezierCurveTo(11.1, 7, 12.6, 17, 16.8, 17)
+            context.lineTo(20, 17)
+            context.moveTo(17.2, 14.2)
+            context.lineTo(20, 17)
+            context.lineTo(17.2, 19.8)
+            context.moveTo(4, 17)
+            context.lineTo(7.2, 17)
+            context.bezierCurveTo(11.2, 17, 12.6, 7, 16.8, 7)
+            context.lineTo(20, 7)
+            context.moveTo(17.2, 4.2)
+            context.lineTo(20, 7)
+            context.lineTo(17.2, 9.8)
+            context.stroke()
+        } else if (root.name === "chevronDown") {
+            context.beginPath()
+            context.moveTo(6.5, 9)
+            context.lineTo(12, 14.5)
+            context.lineTo(17.5, 9)
+            context.stroke()
+        } else if (root.name === "chevronUp") {
+            context.beginPath()
+            context.moveTo(6.5, 15)
+            context.lineTo(12, 9.5)
+            context.lineTo(17.5, 15)
+            context.stroke()
+        } else if (root.name === "play") {
+            context.beginPath()
+            context.moveTo(8.2, 5.8)
+            context.lineTo(18.1, 12)
+            context.lineTo(8.2, 18.2)
+            context.closePath()
+            context.fill()
+        } else if (root.name === "pause") {
+            context.fillRect(7.2, 5.5, 3.2, 13)
+            context.fillRect(13.6, 5.5, 3.2, 13)
+        } else if (root.name === "external") {
+            context.beginPath()
+            context.rect(4.5, 7.5, 12, 12)
+            context.moveTo(11, 5)
+            context.lineTo(19, 5)
+            context.lineTo(19, 13)
+            context.moveTo(18.5, 5.5)
+            context.lineTo(10, 14)
+            context.stroke()
+        } else if (root.name === "expand") {
+            context.beginPath()
+            context.moveTo(9.5, 4.5)
+            context.lineTo(4.5, 4.5)
+            context.lineTo(4.5, 9.5)
+            context.moveTo(14.5, 4.5)
+            context.lineTo(19.5, 4.5)
+            context.lineTo(19.5, 9.5)
+            context.moveTo(4.5, 14.5)
+            context.lineTo(4.5, 19.5)
+            context.lineTo(9.5, 19.5)
+            context.moveTo(19.5, 14.5)
+            context.lineTo(19.5, 19.5)
+            context.lineTo(14.5, 19.5)
+            context.stroke()
+        } else if (root.name === "contract") {
+            context.beginPath()
+            context.moveTo(9.5, 4.5)
+            context.lineTo(9.5, 9.5)
+            context.lineTo(4.5, 9.5)
+            context.moveTo(14.5, 4.5)
+            context.lineTo(14.5, 9.5)
+            context.lineTo(19.5, 9.5)
+            context.moveTo(4.5, 14.5)
+            context.lineTo(9.5, 14.5)
+            context.lineTo(9.5, 19.5)
+            context.moveTo(19.5, 14.5)
+            context.lineTo(14.5, 14.5)
+            context.lineTo(14.5, 19.5)
+            context.stroke()
+        } else if (root.name === "maximize") {
+            context.beginPath()
+            context.rect(3.7, 4.7, 16.6, 14.6)
+            context.moveTo(9, 15)
+            context.lineTo(15.8, 8.2)
+            context.moveTo(11.5, 8.2)
+            context.lineTo(15.8, 8.2)
+            context.lineTo(15.8, 12.5)
+            context.stroke()
+        } else if (root.name === "close") {
+            context.beginPath()
+            context.moveTo(6.5, 6.5)
+            context.lineTo(17.5, 17.5)
+            context.moveTo(17.5, 6.5)
+            context.lineTo(6.5, 17.5)
+            context.stroke()
+        } else if (root.name === "target") {
+            context.beginPath()
+            context.arc(12, 12, 6.8, 0, Math.PI * 2)
+            context.moveTo(12, 2.8)
+            context.lineTo(12, 7)
+            context.moveTo(12, 17)
+            context.lineTo(12, 21.2)
+            context.moveTo(2.8, 12)
+            context.lineTo(7, 12)
+            context.moveTo(17, 12)
+            context.lineTo(21.2, 12)
+            context.stroke()
+            context.beginPath()
+            context.arc(12, 12, 1.3, 0, Math.PI * 2)
+            context.fill()
+        } else if (root.name === "check") {
+            context.beginPath()
+            context.moveTo(5.5, 12.2)
+            context.lineTo(10, 16.5)
+            context.lineTo(18.8, 7.5)
+            context.stroke()
+        } else if (root.name === "warning") {
+            context.beginPath()
+            context.moveTo(12, 3.8)
+            context.lineTo(21, 19.3)
+            context.lineTo(3, 19.3)
+            context.closePath()
+            context.stroke()
+            context.beginPath()
+            context.moveTo(12, 9)
+            context.lineTo(12, 13.7)
+            context.stroke()
+            context.beginPath()
+            context.arc(12, 16.5, 0.8, 0, Math.PI * 2)
+            context.fill()
+        } else if (root.name === "info") {
+            context.beginPath()
+            context.arc(12, 12, 8.2, 0, Math.PI * 2)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(12, 10.3)
+            context.lineTo(12, 16.4)
+            context.stroke()
+            context.beginPath()
+            context.arc(12, 7.3, 0.9, 0, Math.PI * 2)
+            context.fill()
+        } else if (root.name === "trash") {
+            context.beginPath()
+            context.moveTo(6.5, 7.5)
+            context.lineTo(17.5, 7.5)
+            context.lineTo(16.6, 19)
+            context.lineTo(7.4, 19)
+            context.closePath()
+            context.moveTo(5, 7.5)
+            context.lineTo(19, 7.5)
+            context.moveTo(9, 5)
+            context.lineTo(15, 5)
+            context.moveTo(10, 10.5)
+            context.lineTo(10, 16)
+            context.moveTo(14, 10.5)
+            context.lineTo(14, 16)
+            context.stroke()
+        } else if (root.name === "more") {
+            for (var dotIndex = 0; dotIndex < 3; ++dotIndex) {
+                context.beginPath()
+                context.arc(6 + dotIndex * 6, 12, 1.25, 0, Math.PI * 2)
+                context.fill()
+            }
+        } else if (root.name === "copy") {
+            context.strokeRect(8, 7, 11.5, 12)
+            context.beginPath()
+            context.moveTo(6, 16.5)
+            context.lineTo(4.5, 16.5)
+            context.lineTo(4.5, 4.5)
+            context.lineTo(16, 4.5)
+            context.lineTo(16, 6)
+            context.stroke()
+        } else if (root.name === "crop") {
+            context.beginPath()
+            context.moveTo(7, 3.8)
+            context.lineTo(7, 17)
+            context.lineTo(20.2, 17)
+            context.moveTo(3.8, 7)
+            context.lineTo(17, 7)
+            context.lineTo(17, 20.2)
+            context.stroke()
+        } else if (root.name === "rectangle") {
+            context.strokeRect(3.8, 7, 16.4, 10)
+        } else if (root.name === "square") {
+            context.strokeRect(5.5, 5.5, 13, 13)
+        } else if (root.name === "send") {
+            context.beginPath()
+            context.moveTo(3.5, 11.3)
+            context.lineTo(20.5, 4.5)
+            context.lineTo(15.8, 20)
+            context.lineTo(11, 13)
+            context.closePath()
+            context.stroke()
+            context.beginPath()
+            context.moveTo(11, 13)
+            context.lineTo(20.1, 4.9)
+            context.stroke()
+        } else if (root.name === "x") {
+            context.beginPath()
+            context.moveTo(6, 5)
+            context.lineTo(18, 19)
+            context.moveTo(18, 5)
+            context.lineTo(6, 19)
+            context.stroke()
+        }
+        context.restore()
+    }
+
+    Component.onCompleted: requestPaint()
+}

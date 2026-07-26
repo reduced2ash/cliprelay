@@ -1,0 +1,106 @@
+# User guide
+
+## Library
+
+Choose one top-level folder. ClipRelay searches every nested folder for video
+files while omitting hidden folders, source-control metadata, exports, and
+known non-video files.
+
+The library can display:
+
+- folders and their direct contents
+- every video at one level
+
+Search matches filenames and relative folder paths. Sort by newest, oldest,
+name, duration, or size.
+
+## Random selection
+
+**Pick random** uses the local filename manifest instead of walking the folder
+tree for every click. The **From** control can limit random selection to one or
+more folders, including their descendants.
+
+When repeat avoidance is enabled, a selected video is removed from the current
+random pool. The pool resets after all eligible videos have been seen. Use
+**Reset shuffle** to reset it earlier.
+
+A newly discovered video is validated after selection. Preparation controls
+remain unavailable if the file is unreadable or while that single-file check
+is still running.
+
+## Prepare and edit
+
+Prepare always works from the source video and writes a generated copy only
+when required.
+
+Available adjustments:
+
+- exact cut start and end
+- compression preset or target size
+- free crop and common aspect-ratio crops
+- multiple movable and resizable black rectangle or square masks
+
+The regular Prepare panel can be widened. Full-screen Prepare keeps the same
+live playback and editing state while providing a larger editor.
+
+## Telegram
+
+### Bot mode
+
+Bot mode is the simplest option for a channel:
+
+1. Create a bot with `@BotFather`.
+2. Add the bot to the channel and grant permission to post.
+3. Paste the token under Settings and validate it.
+4. Enter the channel username or numeric chat ID and validate it.
+
+### Personal-account mode
+
+1. Create an API application at
+   [my.telegram.org](https://my.telegram.org/).
+2. Enter the API ID, API hash, and phone number.
+3. Request and enter the Telegram sign-in code.
+4. Enter the two-step-verification password if required.
+5. Load chats or enter a destination directly.
+
+Telegram credentials and sessions are stored locally.
+
+## X handoff
+
+ClipRelay does not silently post to X.
+
+When preparing for X, ClipRelay:
+
+1. opens X's official web composer with the caption prefilled
+2. copies the prepared video as a local file where the operating system
+   supports it
+3. keeps Copy video, Drag video, and Show in folder actions available
+4. records the handoff in History
+
+After posting in X, use **Mark X posted** in History. A post URL can be stored
+when available.
+
+## History
+
+History records Telegram and X independently. A combined action can therefore
+show Telegram as sent while X is still prepared.
+
+Available actions include:
+
+- reopen the video in Prepare and reveal it in the library
+- retry a failed Telegram delivery
+- prepare the X handoff again
+- open a recorded Telegram or X post
+- reveal the source or generated file
+- move an eligible generated copy to Trash
+
+## Performance settings
+
+Fast Random is on by default. Full media verification, deep detection, and
+eager thumbnail generation are optional because each can be expensive for a
+large or remote library.
+
+Visible thumbnails use a bounded background queue. Hover previews are also
+generated in the background and may be disabled.
+
+Interface scale presets provide 80, 90, and 100 percent workspace density.
