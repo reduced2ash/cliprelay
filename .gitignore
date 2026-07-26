@@ -1,0 +1,35 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+artifacts/
+*.spec.bak
+*.log
+*.partial
+*.ffpass*
+
+# Local application state and credentials
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+secrets.json
+.env
+.env.*
+
+# Signing credentials must only live in GitHub Actions secrets or a keychain.
+*.cer
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision

@@ -1,0 +1,23 @@
+singleton Theme 1.0 Theme.qml
+AppButton 1.0 AppButton.qml
+AppField 1.0 AppField.qml
+AppIcon 1.0 AppIcon.qml
+AppCheckBox 1.0 AppCheckBox.qml
+AppComboBox 1.0 AppComboBox.qml
+AppEmptyState 1.0 AppEmptyState.qml
+AppMenuItem 1.0 AppMenuItem.qml
+AppProgressBar 1.0 AppProgressBar.qml
+AppRangeSlider 1.0 AppRangeSlider.qml
+AppScrollBar 1.0 AppScrollBar.qml
+AppSlider 1.0 AppSlider.qml
+AppTextArea 1.0 AppTextArea.qml
+ThemeChoice 1.0 ThemeChoice.qml
+StatusPill 1.0 StatusPill.qml
+NavButton 1.0 NavButton.qml
+MediaTile 1.0 MediaTile.qml
+PreparePanel 1.0 PreparePanel.qml
+PrepareVideoEditor 1.0 PrepareVideoEditor.qml
+VideoEditCanvas 1.0 VideoEditCanvas.qml
+LibraryPage 1.0 LibraryPage.qml
+HistoryPage 1.0 HistoryPage.qml
+SettingsPage 1.0 SettingsPage.qml

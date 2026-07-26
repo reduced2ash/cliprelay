@@ -1,0 +1,392 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: src
+  UV_VERSION: "0.9.26"
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate version and signing policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(uv run --no-sync python -c 'from cliprelay import __version__; print(__version__)')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$tag_version" != "$app_version" && "$tag_version" != "$app_version"-* ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match application version $app_version."
+            exit 1
+          fi
+          if [[ "$tag_version" != *-* ]]; then
+            if [[ -z "$MACOS_CERTIFICATE_P12" || -z "$MACOS_CERTIFICATE_PASSWORD" \
+              || -z "$MACOS_SIGN_IDENTITY" || -z "$APPLE_ID" \
+              || -z "$APPLE_APP_PASSWORD" || -z "$APPLE_TEAM_ID" ]]; then
+              echo "::error::Stable tags require complete macOS signing and notarization secrets."
+              exit 1
+            fi
+            if [[ -z "$WINDOWS_CERTIFICATE_PFX" || -z "$WINDOWS_CERTIFICATE_PASSWORD" ]]; then
+              echo "::error::Stable tags require complete Windows signing secrets."
+              exit 1
+            fi
+          fi
+          echo "CLIPRELAY_VERSION=$app_version" >> "$GITHUB_ENV"
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Build source distributions
+        run: uv build
+
+      - name: Export locked runtime dependency manifest
+        run: uv export --frozen --no-dev --format requirements-txt --output-file dist/python-dependencies.txt
+
+      - name: Upload distribution metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distribution-metadata
+          path: |
+            dist/cliprelay-*.whl
+            dist/cliprelay-*.tar.gz
+            dist/python-dependencies.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CLIPRELAY_REQUIRE_FFMPEG: "1"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install FFmpeg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install ffmpeg
+          echo "CLIPRELAY_FFMPEG_DIR=$(dirname "$(command -v ffmpeg)")" >> "$GITHUB_ENV"
+
+      - name: Read application version
+        run: |
+          echo "CLIPRELAY_VERSION=$(uv run --no-sync python -c 'from cliprelay import __version__; print(__version__)')" >> "$GITHUB_ENV"
+
+      - name: Import Apple signing certificate
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$MACOS_CERTIFICATE_PASSWORD" || -z "$MACOS_SIGN_IDENTITY" ]]; then
+            echo "::error::The macOS signing certificate, password, and identity must be configured together."
+            exit 1
+          fi
+          certificate_path="$RUNNER_TEMP/cliprelay-signing.p12"
+          keychain_path="$RUNNER_TEMP/cliprelay-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychain -d user -s "$keychain_path" login.keychain-db
+          rm -f "$certificate_path"
+          echo "CLIPRELAY_CODESIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
+          echo "CLIPRELAY_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+
+      - name: Build native macOS packages
+        run: packaging/build-macos.sh
+
+      - name: Inspect packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "dist/ClipRelay-macOS-${{ matrix.arch }}.zip"
+          test -s "dist/ClipRelay-macOS-${{ matrix.arch }}.dmg"
+          test -s "dist/FFmpeg-build-info-macOS-${{ matrix.arch }}.txt"
+          unzip -l "dist/ClipRelay-macOS-${{ matrix.arch }}.zip" | grep -q 'bin/ffmpeg'
+          unzip -l "dist/ClipRelay-macOS-${{ matrix.arch }}.zip" | grep -q 'bin/ffprobe'
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/ClipRelay-macOS-${{ matrix.arch }}.zip
+            dist/ClipRelay-macOS-${{ matrix.arch }}.dmg
+            dist/FFmpeg-build-info-macOS-${{ matrix.arch }}.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Remove temporary signing keychain
+        if: ${{ always() && env.CLIPRELAY_SIGNING_KEYCHAIN != '' }}
+        shell: bash
+        run: security delete-keychain "$CLIPRELAY_SIGNING_KEYCHAIN" || true
+
+  build-windows:
+    name: Build Windows (x64)
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      CLIPRELAY_REQUIRE_FFMPEG: "1"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install packaging dependencies
+        shell: pwsh
+        run: |
+          choco install ffmpeg innosetup --yes --no-progress
+          $ffmpeg = Get-ChildItem "$env:ChocolateyInstall\lib" -Recurse -Filter "ffmpeg.exe" |
+            Where-Object { Test-Path (Join-Path $_.DirectoryName "ffprobe.exe") } |
+            Select-Object -First 1
+          if (-not $ffmpeg) {
+            throw "Chocolatey installed FFmpeg, but its real binary directory was not found."
+          }
+          "CLIPRELAY_FFMPEG_DIR=$($ffmpeg.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $version = uv run --no-sync python -c "from cliprelay import __version__; print(__version__)"
+          "CLIPRELAY_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows application
+        shell: pwsh
+        run: .\packaging\build-windows.ps1 -Version $env:CLIPRELAY_VERSION
+
+      - name: Locate Windows signing tool
+        if: ${{ env.WINDOWS_CERTIFICATE_PFX != '' }}
+        shell: pwsh
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "The Windows signing certificate and password must be configured together."
+          }
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" |
+            Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) {
+            throw "signtool.exe was not found."
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "cliprelay-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX)
+          )
+          "CLIPRELAY_SIGNTOOL=$($signTool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CLIPRELAY_WINDOWS_CERTIFICATE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Sign Windows application
+        if: ${{ env.WINDOWS_CERTIFICATE_PFX != '' }}
+        shell: pwsh
+        run: |
+          & $env:CLIPRELAY_SIGNTOOL sign `
+            /fd SHA256 `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            /f $env:CLIPRELAY_WINDOWS_CERTIFICATE `
+            /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            "dist\ClipRelay\ClipRelay.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Signing ClipRelay.exe failed."
+          }
+
+      - name: Build installer and portable archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\ClipRelay" -DestinationPath "dist\ClipRelay-Windows-x64.zip"
+          .\packaging\build-windows-installer.ps1 -Version $env:CLIPRELAY_VERSION
+
+      - name: Sign Windows installer
+        if: ${{ env.WINDOWS_CERTIFICATE_PFX != '' }}
+        shell: pwsh
+        run: |
+          & $env:CLIPRELAY_SIGNTOOL sign `
+            /fd SHA256 `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            /f $env:CLIPRELAY_WINDOWS_CERTIFICATE `
+            /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            "dist\ClipRelay-Setup-Windows-x64.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Signing the Windows installer failed."
+          }
+
+      - name: Record FFmpeg build information
+        shell: pwsh
+        run: |
+          $ffmpeg = Join-Path $env:CLIPRELAY_FFMPEG_DIR "ffmpeg.exe"
+          $details = @(
+            "ClipRelay $env:CLIPRELAY_VERSION"
+            "Architecture: x64"
+            "Application signing: $(if ($env:WINDOWS_CERTIFICATE_PFX) { 'Authenticode' } else { 'unsigned beta' })"
+            ""
+          )
+          $details += & $ffmpeg -hide_banner -version 2>&1
+          $details += ""
+          $details += & $ffmpeg -hide_banner -L 2>&1
+          $details | Set-Content -Path "dist\FFmpeg-build-info-Windows-x64.txt" -Encoding utf8
+
+      - name: Inspect packages
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist\ClipRelay-Windows-x64.zip",
+            "dist\ClipRelay-Setup-Windows-x64.exe",
+            "dist\FFmpeg-build-info-Windows-x64.txt"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
+              throw "Missing or empty release file: $path"
+            }
+          }
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64
+          path: |
+            dist/ClipRelay-Windows-x64.zip
+            dist/ClipRelay-Setup-Windows-x64.exe
+            dist/FFmpeg-build-info-Windows-x64.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Remove temporary signing certificate
+        if: ${{ always() && env.CLIPRELAY_WINDOWS_CERTIFICATE != '' }}
+        shell: pwsh
+        run: Remove-Item $env:CLIPRELAY_WINDOWS_CERTIFICATE -Force -ErrorAction SilentlyContinue
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - validate
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \\./#  #' > SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_args=(
+            "$GITHUB_REF_NAME"
+            release-assets/*
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --generate-notes
+            --title "ClipRelay $GITHUB_REF_NAME"
+          )
+          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${release_args[@]}"
