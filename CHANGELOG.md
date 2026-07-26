@@ -21,6 +21,15 @@ release.
   aggregation, count refreshes, and thumbnail asset bookkeeping off the UI
   thread.
 
+### Fixed
+
+- Restored native window moving plus edge and corner resizing for the extended
+  macOS window chrome.
+- Made shared dropdown triggers close an open menu instead of immediately
+  reopening it.
+- Increased discrete mouse-wheel travel on macOS while preserving precise
+  trackpad scrolling.
+
 ## [0.1.0-beta.2] - 2026-07-26
 
 ### Added

@@ -77,7 +77,10 @@ ComboBox {
         width: control.width
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)
         padding: 4
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        // Treat the ComboBox itself as part of the popup interaction. Using
+        // CloseOnPressOutside closes on the trigger press, then ComboBox sees
+        // the release and opens it again instead of toggling it off.
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         contentItem: ListView {
             clip: true

@@ -32,6 +32,9 @@ from .secrets import SecretStore
 from .settings import Settings
 
 
+_MINIMUM_MOUSE_WHEEL_LINES = 8
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ClipRelay desktop application")
     parser.add_argument(
@@ -82,6 +85,14 @@ def _apply_color_scheme(app: QApplication, theme_mode: str) -> None:
         hints.setColorScheme(scheme)
 
 
+def _configure_mouse_wheel_scrolling(app: QApplication) -> None:
+    if sys.platform != "darwin":
+        return
+    hints = app.styleHints()
+    if hints.wheelScrollLines() < _MINIMUM_MOUSE_WHEEL_LINES:
+        hints.setWheelScrollLines(_MINIMUM_MOUSE_WHEEL_LINES)
+
+
 def _configure_rendering(performance_mode: str) -> None:
     surface_format = QSurfaceFormat.defaultFormat()
     surface_format.setSwapInterval(1)
@@ -117,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationDisplayName("ClipRelay")
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "cliprelay.svg")))
+    _configure_mouse_wheel_scrolling(app)
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 

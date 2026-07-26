@@ -380,4 +380,9 @@ ApplicationWindow {
         }
         Timer { id: toastTimer; interval: 5200; onTriggered: toast.shown = false }
     }
+
+    WindowChrome {
+        anchors.fill: parent
+        hostWindow: window
+    }
 }
