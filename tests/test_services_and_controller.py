@@ -249,7 +249,8 @@ async def test_random_uses_cached_database_without_walking_library(
         lambda url: opened.append(url.toLocalFile()) or True,
     )
     controller.openSelectedVideo()
-    assert opened == [str(source)]
+    assert len(opened) == 1
+    assert Path(opened[0]) == source
     controller.shutdown()
 
 
