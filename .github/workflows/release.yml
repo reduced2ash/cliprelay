@@ -67,9 +67,6 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --extra dev
 
-      - name: Run tests
-        run: uv run pytest
-
       - name: Build source distributions
         run: uv build
 
@@ -121,6 +118,12 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run tests
+        run: uv run pytest
 
       - name: Install FFmpeg
         env:
@@ -217,6 +220,12 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run tests
+        run: uv run pytest
 
       - name: Install packaging dependencies
         shell: pwsh
