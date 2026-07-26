@@ -6,12 +6,24 @@ release.
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] - 2026-07-26
+
 ### Added
 
 - Public macOS and Windows release automation.
 - Self-contained DMG, ZIP, Windows installer, and portable Windows packages.
 - Optional Developer ID, notarization, and Authenticode release signing.
 - Release checksums and dependency build information.
+- Previous-random navigation and previous/next video controls.
+- Keyboard shortcuts for playback, selection, random picks, search, and pages.
+
+### Changed
+
+- Rebuilt the random-source picker for large folder trees with search,
+  breadcrumbs, counts, selected-only filtering, and scroll-preserving
+  incremental selection.
+- Made adjacent-video navigation follow the visible library sort and filter
+  without blocking the interface.
 
 ## [0.1.0-beta.1] - 2026-07-26
 
@@ -33,5 +45,6 @@ release.
 - Full-frame thumbnails and Prepare previews.
 - TypeScript `.ts` and `.mts` files being mistaken for transport-stream video.
 
-[Unreleased]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.2...HEAD
+[0.1.0-beta.2]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/reduced2ash/cliprelay/releases/tag/v0.1.0-beta.1
