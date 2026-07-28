@@ -26,6 +26,10 @@ Item {
         commandCenter.focusCommands()
     }
 
+    function toggleCommands() {
+        commandCenter.toggleCommands()
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.ink
@@ -69,7 +73,7 @@ Item {
             kind: "primary"
             toolTipText: "Command palette  ·  "
                 + (root.macStyle ? "⌘⇧P" : "Ctrl+Shift+P")
-            onClicked: root.focusCommands()
+            onClicked: root.toggleCommands()
         }
 
         Item { Layout.preferredWidth: 2 }

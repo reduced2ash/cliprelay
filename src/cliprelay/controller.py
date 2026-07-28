@@ -1320,47 +1320,69 @@ class AppController(QObject):
     @Slot(str)
     def requestCommandSearch(self, value: str) -> None:
         query = value.strip()
+        if not query:
+            self._clear_command_results()
+            return
+        self._request_command_results(query)
+
+    @Slot()
+    def requestCommandOverview(self) -> None:
+        self._request_command_results(None)
+
+    def _clear_command_results(self) -> None:
+        self._command_search_generation += 1
+        if self._command_search_task:
+            self._command_search_task.cancel()
+            self._command_search_task = None
+        changed = (
+            bool(self._command_search_results)
+            or self._command_search_loading
+        )
+        self._command_search_results = []
+        self._command_search_loading = False
+        if changed:
+            self.commandSearchChanged.emit()
+
+    def _request_command_results(self, query: str | None) -> None:
         self._command_search_generation += 1
         generation = self._command_search_generation
         if self._command_search_task:
             self._command_search_task.cancel()
             self._command_search_task = None
-        if not query:
-            changed = (
-                bool(self._command_search_results)
-                or self._command_search_loading
-            )
-            self._command_search_results = []
-            self._command_search_loading = False
-            if changed:
-                self.commandSearchChanged.emit()
-            return
 
+        self._command_search_results = []
         self._command_search_loading = True
         self.commandSearchChanged.emit()
         if not self._can_use_model_workers():
-            self._command_search_results = self.database.search_suggestions(
-                query,
+            self._command_search_results = (
+                self.database.command_center_overview()
+                if query is None
+                else self.database.search_suggestions(query)
             )
             self._command_search_loading = False
             self.commandSearchChanged.emit()
             return
 
         task = asyncio.create_task(
-            self._search_command_center_async(query, generation)
+            self._load_command_center_async(query, generation)
         )
         self._command_search_task = task
 
-    async def _search_command_center_async(
+    async def _load_command_center_async(
         self,
-        query: str,
+        query: str | None,
         generation: int,
     ) -> None:
         try:
-            results = await asyncio.to_thread(
-                self.database.search_suggestions,
-                query,
-            )
+            if query is None:
+                results = await asyncio.to_thread(
+                    self.database.command_center_overview,
+                )
+            else:
+                results = await asyncio.to_thread(
+                    self.database.search_suggestions,
+                    query,
+                )
             if (
                 self._shutting_down
                 or generation != self._command_search_generation
@@ -1374,7 +1396,7 @@ class AppController(QObject):
         except Exception as exc:
             if generation != self._command_search_generation:
                 return
-            LOGGER.warning("Command-center search failed: %s", exc)
+            LOGGER.warning("Command-center query failed: %s", exc)
             self._command_search_results = []
             self._command_search_loading = False
             self.commandSearchChanged.emit()

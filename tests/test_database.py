@@ -305,11 +305,11 @@ def test_command_search_is_bounded_and_uses_indexed_media_and_folders(
     root = tmp_path / "library"
     root.mkdir()
 
-    for relative_path in (
+    for index, relative_path in enumerate((
         "Cosplay/Makima Nurse/portrait.mp4",
         "Cosplay/Makima Nurse/detail.mov",
         "Travel/alpine_route.mp4",
-    ):
+    )):
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(relative_path.encode())
@@ -317,6 +317,7 @@ def test_command_search_is_bounded_and_uses_indexed_media_and_folders(
         payload.update(
             relative_path=relative_path,
             folder=path.parent.relative_to(root).as_posix(),
+            mtime=100 + index,
         )
         database.upsert_media(payload)
 
@@ -333,6 +334,18 @@ def test_command_search_is_bounded_and_uses_indexed_media_and_folders(
     }
     assert results[-1]["folderPath"] == "Cosplay/Makima Nurse"
     assert database.search_suggestions("%", limit=4) == []
+
+    overview = database.command_center_overview(limit=5)
+    assert len(overview) == 5
+    assert [row["kind"] for row in overview] == [
+        "media",
+        "media",
+        "media",
+        "folder",
+        "folder",
+    ]
+    assert overview[0]["title"] == "alpine_route.mp4"
+    assert overview[3]["folderPath"] == "Travel"
 
     model = LibraryModel(database)
     model.search = "Makima"

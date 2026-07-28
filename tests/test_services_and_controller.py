@@ -152,6 +152,49 @@ def test_watch_handler_ignores_metadata_only_modifications(
     controller.shutdown()
 
 
+def test_command_center_loads_overview_search_and_clear_states(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    nested = library_root / "Reference"
+    nested.mkdir(parents=True)
+    source = nested / "featured-clip.mp4"
+    source.write_bytes(b"video")
+    database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(source),
+        "name": source.name,
+        "relative_path": "Reference/featured-clip.mp4",
+        "folder": "Reference",
+        "size_bytes": source.stat().st_size,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    controller.requestCommandOverview()
+    assert [row["kind"] for row in controller.commandSearchResults] == [
+        "media",
+        "folder",
+    ]
+    assert controller.commandSearchLoading is False
+
+    controller.requestCommandSearch("featured")
+    assert controller.commandSearchResults[0]["title"] == source.name
+    controller.requestCommandSearch("")
+    assert controller.commandSearchResults == []
+    controller.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_bot_validation_destination_and_send(monkeypatch, tmp_path: Path) -> None:
     from cliprelay import telegram as telegram_module

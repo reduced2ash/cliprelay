@@ -543,6 +543,57 @@ class Database:
                 break
         return results
 
+    def command_center_overview(
+        self,
+        limit: int = 9,
+    ) -> list[dict[str, Any]]:
+        """Return a compact zero-query mix of recent media and folders."""
+
+        capped_limit = max(3, min(int(limit), 12))
+        media_limit = min(6, max(1, capped_limit - 2))
+        folder_limit = capped_limit - media_limit
+        with self.connection() as connection:
+            media_rows = connection.execute(
+                "SELECT id,name,relative_path,folder FROM media_files "
+                "WHERE valid=1 AND active=1 "
+                "ORDER BY mtime DESC,id DESC LIMIT ?",
+                (media_limit,),
+            ).fetchall()
+            folder_rows = connection.execute(
+                "SELECT folder,COUNT(*) AS count,MAX(mtime) AS latest "
+                "FROM media_files "
+                "WHERE valid=1 AND active=1 AND folder != '' "
+                "GROUP BY folder "
+                "ORDER BY latest DESC,folder COLLATE NOCASE LIMIT ?",
+                (folder_limit,),
+            ).fetchall()
+
+        results = [
+            {
+                "kind": "media",
+                "mediaId": int(row["id"]),
+                "folderPath": str(row["folder"] or ""),
+                "title": str(row["name"]),
+                "detail": str(row["relative_path"] or row["name"]),
+                "icon": "media",
+                "count": 0,
+            }
+            for row in media_rows
+        ]
+        results.extend(
+            {
+                "kind": "folder",
+                "mediaId": 0,
+                "folderPath": str(row["folder"]),
+                "title": str(row["folder"]).rsplit("/", 1)[-1],
+                "detail": str(row["folder"]),
+                "icon": "folder",
+                "count": int(row["count"]),
+            }
+            for row in folder_rows
+        )
+        return results[:capped_limit]
+
     def navigation_neighbors(
         self,
         media_id: int,

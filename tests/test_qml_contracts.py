@@ -119,7 +119,7 @@ def test_frameless_window_has_custom_titlebar_and_resize_fallbacks() -> None:
     assert "randomSourceButtonItem" in titlebar
     assert 'text: "Open command palette"' in titlebar
     assert 'iconName: "command"' in titlebar
-    assert "onClicked: root.focusCommands()" in titlebar
+    assert "onClicked: root.toggleCommands()" in titlebar
     assert '"ClipRelay Library"' not in titlebar
     assert 'Accessible.name: accessibleLabel' in controls
 
@@ -162,7 +162,17 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert '"Search videos, folders, and commands"' in command
     assert "interval: 120" in command
     assert "requestCommandSearch" in command
-    assert "parent: Overlay.overlay" in command
+    assert "requestCommandOverview" in command
+    assert 'property string activeScope: "all"' in command
+    assert '{ "id": "videos", "label": "Videos" }' in command
+    assert '{ "id": "folders", "label": "Folders" }' in command
+    assert '{ "id": "commands", "label": "Commands" }' in command
+    assert "root.libraryRows.concat(root.commandRows)" in command
+    assert "root.quickCommandRows.concat(root.libraryRows)" in command
+    assert "popupType: Popup.Item" in command
+    assert "parent: root" in command
+    assert "y: root.height + 5" in command
+    assert "mapToItem" not in command
     assert '\"id\": \"pick_random\"' in actions
     assert '\"id\": \"navigate_back\"' in actions
     assert '\"id\": \"navigate_forward\"' in actions
