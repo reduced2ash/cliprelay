@@ -17,7 +17,7 @@ from watchdog.events import (
 )
 
 from cliprelay.controller import AppController, _WatchHandler
-from cliprelay.database import Database
+from cliprelay.database import Database, EXACT_FOLDER_SCOPE_PREFIX
 from cliprelay.media import ExportResult
 from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel
 from cliprelay.settings import Settings
@@ -555,7 +555,9 @@ async def test_random_folder_filter_uses_selected_subtree(
     controller.setRandomFolderEnabled("chosen", True)
     assert controller.randomFolderSummary == "chosen"
     assert controller.randomFolderSelectionCount == 1
-    assert settings.get("random_folders") == ["chosen"]
+    assert settings.get("random_folders") == [
+        f"{EXACT_FOLDER_SCOPE_PREFIX}chosen/deeper"
+    ]
     controller.loadRandomFolderOptions()
     while controller.randomFolderOptionsLoading:
         await asyncio.sleep(0.01)
@@ -579,8 +581,9 @@ async def test_random_folder_filter_uses_selected_subtree(
     controller.selectAllRandomFolders()
     assert controller.randomFolderSummary == "All folders"
     assert controller.allRandomFoldersSelected is True
-    assert controller.randomFolderSelectionCount == len(
-        controller.randomFolderOptions
+    assert controller.randomFolderSelectionCount == sum(
+        row["directVideoCount"] > 0
+        for row in controller.randomFolderOptions
     )
     assert all(
         row["selected"] is True
@@ -588,6 +591,82 @@ async def test_random_folder_filter_uses_selected_subtree(
     )
     assert settings.get("random_folder_mode") == "all"
     assert settings.get("random_folders") == []
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_random_folder_parent_selection_cascades_to_descendants(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    for relative_path in (
+        "group/direct.mp4",
+        "group/alpha/alpha.mp4",
+        "group/beta/beta.mp4",
+        "outside/outside.mp4",
+    ):
+        source = library_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(relative_path.encode())
+        database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": source.name,
+            "relative_path": relative_path,
+            "folder": source.parent.relative_to(library_root).as_posix(),
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": source.stat().st_mtime,
+        })
+
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    controller.loadRandomFolderOptions()
+    while controller.randomFolderOptionsLoading:
+        await asyncio.sleep(0.01)
+    controller.clearRandomFolders()
+    controller.setRandomFolderEnabled("group", True)
+
+    selected = {
+        row["folderPath"]: row["selectionState"]
+        for row in controller.randomFolderOptions
+    }
+    assert selected["group"] == 2
+    assert selected["group/alpha"] == 2
+    assert selected["group/beta"] == 2
+    assert selected["outside"] == 0
+    assert controller.randomFolderSelectionCount == 3
+
+    controller.setRandomFolderEnabled("group/alpha", False)
+    selected = {
+        row["folderPath"]: row["selectionState"]
+        for row in controller.randomFolderOptions
+    }
+    assert selected["group"] == 1
+    assert selected["group/alpha"] == 0
+    assert selected["group/beta"] == 2
+    assert controller.randomFolderSummary == "2 folders"
+    assert settings.get("random_folders") == [
+        f"{EXACT_FOLDER_SCOPE_PREFIX}group",
+        f"{EXACT_FOLDER_SCOPE_PREFIX}group/beta",
+    ]
     controller.shutdown()
 
 
@@ -635,6 +714,17 @@ async def test_selection_arrows_feed_unified_navigation_history(
     )
     monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
     monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    controller.selectMedia(media_ids[1])
+    controller.navigateSelection(1)
+    for _ in range(100):
+        if (
+            controller._selection_navigation_task is None
+            and controller.selectedMediaId == media_ids[2]
+        ):
+            break
+        await asyncio.sleep(0.01)
+    assert controller.selectedMediaId == media_ids[2]
 
     controller.selectMedia(media_ids[1])
     for _ in range(100):

@@ -87,7 +87,7 @@ def test_library_canvas_uses_workbench_density_and_one_hover_preview() -> None:
     ).read_text(encoding="utf-8")
 
     assert "font.family: Theme.monoFamily" not in page
-    assert "font.pixelSize: 11" in page
+    assert "font.pixelSize: Theme.textXs" in page
 
     assert 'text: "Library density"' in settings
     assert 'model: ["Default", "Compact"]' in settings
@@ -135,6 +135,45 @@ def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> Non
     assert "readonly property int visualDepth: Math.min(folderDepth, 6)" in row
     assert "model: Math.max(0, root.visualDepth)" in row
     assert 'root.folderExpanded ? "chevronDown" : "chevronRight"' in row
+    assert "Keys.onRightPressed" in row
+    assert "Keys.onLeftPressed" in row
+
+
+def test_global_media_shortcuts_and_random_source_tree_are_window_wide() -> None:
+    main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    row = (QML_DIR / "RandomSourceTreeRow.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "readonly property bool textEntryActive" in main
+    assert "item instanceof TextInput" in main
+    assert "item instanceof TextField" in main
+    for sequence in ('"R"', '"Left"', '"Right"'):
+        shortcut = main.index(f"sequence: {sequence}")
+        assert "context: Qt.WindowShortcut" in main[
+            shortcut:shortcut + 120
+        ]
+    assert "enabled: !window.textEntryActive" in main
+    assert "window.currentPage = 0" in main
+    assert "controller.pickRandom()" in main
+    assert "libraryPage.navigateSelection(-1)" in main
+    assert "libraryPage.navigateSelection(1)" in main
+    assert "event.key === Qt.Key_R" not in main
+
+    assert 'text: "RANDOM SOURCES"' in page
+    assert 'placeholderText: "Filter source tree"' in page
+    assert "delegate: RandomSourceTreeRow {" in page
+    assert "randomFolderModel.toggleExpanded(folderPath)" in page
+    assert "randomFolderModel.collapseAll()" in page
+    assert "randomFolderModel.expandAll()" in page
+    assert 'text: "Parent checks include every nested folder"' in page
+
+    assert "height: 32" in row
+    assert "required property int folderSelectionState" in row
+    assert "required property int folderDepth" in row
+    assert "readonly property bool partiallySelected" in row
+    assert "root.selectionRequested(!root.fullySelected)" in row
     assert "Keys.onRightPressed" in row
     assert "Keys.onLeftPressed" in row
 

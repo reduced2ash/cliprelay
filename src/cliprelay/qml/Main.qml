@@ -43,6 +43,21 @@ ApplicationWindow {
     property bool navCollapsed: narrowWindow || Boolean(controller.settings.sidebar_collapsed)
     readonly property int titleBarHeight: nativeWindow.fullscreen
         ? 0 : Theme.workbenchTitleHeight
+    readonly property bool textEntryActive: window.isTextEntry(
+        window.activeFocusItem
+    )
+
+    function isTextEntry(item) {
+        return Boolean(
+            item
+            && (
+                item instanceof TextInput
+                || item instanceof TextEdit
+                || item instanceof TextField
+                || item instanceof TextArea
+            )
+        )
+    }
 
     Binding {
         target: Theme
@@ -131,6 +146,38 @@ ApplicationWindow {
             controller.cycleWorkspace(-1)
         }
     }
+    Shortcut {
+        sequence: "R"
+        context: Qt.WindowShortcut
+        autoRepeat: false
+        enabled: !window.textEntryActive
+        onActivated: {
+            window.currentPage = 0
+            controller.pickRandom()
+        }
+    }
+    Shortcut {
+        sequence: "Left"
+        context: Qt.WindowShortcut
+        autoRepeat: false
+        enabled: !window.textEntryActive
+            && !libraryPage.randomSourcesOpen
+        onActivated: {
+            window.currentPage = 0
+            libraryPage.navigateSelection(-1)
+        }
+    }
+    Shortcut {
+        sequence: "Right"
+        context: Qt.WindowShortcut
+        autoRepeat: false
+        enabled: !window.textEntryActive
+            && !libraryPage.randomSourcesOpen
+        onActivated: {
+            window.currentPage = 0
+            libraryPage.navigateSelection(1)
+        }
+    }
 
     onClosing: libraryPage.captureWorkspaceDraft()
 
@@ -205,15 +252,6 @@ ApplicationWindow {
                 const noModifier = event.modifiers === Qt.NoModifier
                 if (event.key === Qt.Key_Space && noModifier) {
                     libraryPage.togglePlayback()
-                    event.accepted = true
-                } else if (event.key === Qt.Key_Left && noModifier) {
-                    libraryPage.navigateSelection(-1)
-                    event.accepted = true
-                } else if (event.key === Qt.Key_Right && noModifier) {
-                    libraryPage.navigateSelection(1)
-                    event.accepted = true
-                } else if (event.key === Qt.Key_R && noModifier) {
-                    controller.pickRandom()
                     event.accepted = true
                 }
             }

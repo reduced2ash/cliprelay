@@ -11,6 +11,9 @@ from typing import Any, Iterable, Iterator
 from .utils import utc_now
 
 
+EXACT_FOLDER_SCOPE_PREFIX = "\x1e"
+
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
@@ -728,9 +731,17 @@ class Database:
         folders: list[dict[str, Any]] = []
         root_count = direct_counts.get("", 0)
         if root_count:
-            folders.append({"folder": "", "count": root_count})
+            folders.append({
+                "folder": "",
+                "count": root_count,
+                "direct_count": root_count,
+            })
         folders.extend(
-            {"folder": folder, "count": count}
+            {
+                "folder": folder,
+                "count": count,
+                "direct_count": direct_counts.get(folder, 0),
+            }
             for folder, count in sorted(
                 subtree_counts.items(),
                 key=lambda item: item[0].casefold(),
@@ -806,6 +817,10 @@ class Database:
         clauses: list[str] = []
         values: list[str] = []
         for folder in normalized:
+            if folder.startswith(EXACT_FOLDER_SCOPE_PREFIX):
+                clauses.append("folder=?")
+                values.append(folder[len(EXACT_FOLDER_SCOPE_PREFIX):])
+                continue
             if not folder:
                 clauses.append("folder=''")
                 continue

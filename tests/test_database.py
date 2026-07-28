@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cliprelay.database import Database
+from cliprelay.database import Database, EXACT_FOLDER_SCOPE_PREFIX
 from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel, RandomFolderModel
 from cliprelay.settings import Settings
 
@@ -135,10 +135,10 @@ def test_random_media_can_be_limited_to_folder_subtrees(tmp_path: Path) -> None:
     outside_id = add_video("other/outside.mp4")
 
     assert database.list_random_folders() == [
-        {"folder": "", "count": 1},
-        {"folder": "group", "count": 2},
-        {"folder": "group/deeper", "count": 1},
-        {"folder": "other", "count": 1},
+        {"folder": "", "count": 1, "direct_count": 1},
+        {"folder": "group", "count": 2, "direct_count": 1},
+        {"folder": "group/deeper", "count": 1, "direct_count": 1},
+        {"folder": "other", "count": 1, "direct_count": 1},
     ]
 
     subtree_picks = {
@@ -151,6 +151,10 @@ def test_random_media_can_be_limited_to_folder_subtrees(tmp_path: Path) -> None:
     assert database.random_media(True, folders=["group"])["id"] in subtree_picks
     assert database.get_media(outside_id)["seen"] == 1
     assert database.random_media(False, folders=[""])["id"] == root_id
+    assert database.random_media(
+        False,
+        folders=[f"{EXACT_FOLDER_SCOPE_PREFIX}group"],
+    )["id"] == direct_id
 
 
 def test_folder_model_builds_a_compact_expandable_tree(tmp_path: Path) -> None:
@@ -538,21 +542,36 @@ def test_random_folder_model_updates_selection_without_resetting() -> None:
     reset_events: list[bool] = []
     model.modelReset.connect(lambda: reset_events.append(True))
     model.set_rows([
-        {"folder": "events/2025", "count": 8},
-        {"folder": "events/2026", "count": 11},
-        {"folder": "personal", "count": 3},
+        {"folder": "events", "count": 19, "direct_count": 0},
+        {"folder": "events/2025", "count": 8, "direct_count": 8},
+        {"folder": "events/2026", "count": 11, "direct_count": 11},
+        {"folder": "personal", "count": 3, "direct_count": 3},
     ], {"events/2025"})
     reset_count = len(reset_events)
 
     model.set_selected("events/2026", True)
 
     assert len(reset_events) == reset_count
-    assert model.rows[1]["folderSelected"] is True
+    selected_row = next(
+        row for row in model.rows
+        if row["folderPath"] == "events/2026"
+    )
+    parent_row = next(
+        row for row in model.rows
+        if row["folderPath"] == "events"
+    )
+    assert selected_row["folderSelected"] is True
+    assert parent_row["folderSelectionState"] == 2
+    assert model.parentIndex("events/2026") == model.indexOf("events")
+    assert model.parentIndex("events") == -1
     model.setFilter("2026")
-    assert model.visibleCount == 1
-    assert model.rows[0]["folderPath"] == "events/2026"
+    assert model.visibleCount == 2
+    assert [row["folderPath"] for row in model.rows] == [
+        "events",
+        "events/2026",
+    ]
     model.setSelectedOnly(True)
-    assert model.visibleCount == 1
+    assert model.visibleCount == 2
 
 
 def test_large_library_safe_defaults(tmp_path: Path) -> None:

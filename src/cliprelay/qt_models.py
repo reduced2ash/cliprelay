@@ -545,28 +545,44 @@ class RandomFolderModel(DictListModel):
     NameRole = PathRole + 1
     DetailRole = PathRole + 2
     CountRole = PathRole + 3
-    SelectedRole = PathRole + 4
+    DirectCountRole = PathRole + 4
+    SelectedRole = PathRole + 5
+    SelectionStateRole = PathRole + 6
+    DepthRole = PathRole + 7
+    HasChildrenRole = PathRole + 8
+    ExpandedRole = PathRole + 9
+    ParentRole = PathRole + 10
     ROLE_NAMES = {
         PathRole: b"folderPath",
         NameRole: b"folderName",
         DetailRole: b"folderDetail",
         CountRole: b"videoCount",
+        DirectCountRole: b"directVideoCount",
         SelectedRole: b"folderSelected",
+        SelectionStateRole: b"folderSelectionState",
+        DepthRole: b"folderDepth",
+        HasChildrenRole: b"folderHasChildren",
+        ExpandedRole: b"folderExpanded",
+        ParentRole: b"folderParent",
     }
 
     summaryChanged = Signal()
 
     def __init__(self):
         super().__init__()
-        self._all_rows: list[dict[str, Any]] = []
-        self._row_by_path: dict[str, dict[str, Any]] = {}
+        self._nodes: dict[str, dict[str, Any]] = {}
+        self._children: dict[str, list[str]] = {}
+        self._direct_descendants: dict[str, set[str]] = {}
+        self._selected_direct: set[str] = set()
         self._visible_index: dict[str, int] = {}
+        self._expanded: set[str] = set()
+        self._initialized = False
         self._filter = ""
         self._selected_only = False
 
     @Property(int, notify=summaryChanged)
     def totalCount(self) -> int:
-        return len(self._all_rows)
+        return len(self._nodes)
 
     @Property(int, notify=summaryChanged)
     def visibleCount(self) -> int:
@@ -576,16 +592,79 @@ class RandomFolderModel(DictListModel):
     def selectedOnly(self) -> bool:
         return self._selected_only
 
+    @staticmethod
+    def _parent(path: str) -> str:
+        return path.rpartition("/")[0]
+
     def _matches(self, row: dict[str, Any]) -> bool:
-        if self._selected_only and not row["folderSelected"]:
+        if (
+            self._selected_only
+            and int(row["folderSelectionState"]) <= 0
+        ):
             return False
         if not self._filter:
             return True
         return self._filter in row["_searchText"]
 
-    def _apply_filter(self) -> None:
+    def _included_paths(self) -> set[str] | None:
+        if not self._filter and not self._selected_only:
+            return None
+        included = {
+            path
+            for path, row in self._nodes.items()
+            if self._matches(row)
+        }
+        for path in tuple(included):
+            parent = self._parent(path)
+            while parent:
+                included.add(parent)
+                parent = self._parent(parent)
+        return included
+
+    def _visible_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        included = self._included_paths()
+        filtered = included is not None
+        root_row = self._nodes.get("")
+        if root_row and (included is None or "" in included):
+            rows.append({
+                **root_row,
+                "folderDepth": 0,
+                "folderHasChildren": False,
+                "folderExpanded": False,
+            })
+
+        def append_branch(parent: str, depth: int) -> None:
+            for path in self._children.get(parent, []):
+                if included is not None and path not in included:
+                    continue
+                node = self._nodes[path]
+                included_children = [
+                    child
+                    for child in self._children.get(path, [])
+                    if included is None or child in included
+                ]
+                has_children = bool(self._children.get(path))
+                expanded = (
+                    bool(included_children)
+                    if filtered
+                    else path in self._expanded
+                )
+                rows.append({
+                    **node,
+                    "folderDepth": depth,
+                    "folderHasChildren": has_children,
+                    "folderExpanded": expanded,
+                })
+                if expanded:
+                    append_branch(path, depth + 1)
+
+        append_branch("", 0)
+        return rows
+
+    def _rebuild_visible(self) -> None:
         self.beginResetModel()
-        self.rows = [row for row in self._all_rows if self._matches(row)]
+        self.rows = self._visible_rows()
         self._visible_index = {
             str(row["folderPath"]): index
             for index, row in enumerate(self.rows)
@@ -593,13 +672,49 @@ class RandomFolderModel(DictListModel):
         self.endResetModel()
         self.summaryChanged.emit()
 
+    def _selection_state(self, folder: str) -> int:
+        direct = self._direct_descendants.get(folder, set())
+        selected_count = len(direct.intersection(self._selected_direct))
+        if selected_count <= 0:
+            return 0
+        return 2 if selected_count == len(direct) else 1
+
+    def _refresh_node_states(self) -> None:
+        for path, node in self._nodes.items():
+            state = self._selection_state(path)
+            node["folderSelectionState"] = state
+            node["folderSelected"] = state == 2
+
+    def _apply_selection_change(self) -> None:
+        self._refresh_node_states()
+        if self._selected_only:
+            self._rebuild_visible()
+            return
+        changed_indexes: list[int] = []
+        for index, row in enumerate(self.rows):
+            node = self._nodes[str(row["folderPath"])]
+            next_state = int(node["folderSelectionState"])
+            if int(row["folderSelectionState"]) == next_state:
+                continue
+            row["folderSelectionState"] = next_state
+            row["folderSelected"] = next_state == 2
+            changed_indexes.append(index)
+        if changed_indexes:
+            self.dataChanged.emit(
+                self.index(changed_indexes[0], 0),
+                self.index(changed_indexes[-1], 0),
+                [self.SelectedRole, self.SelectionStateRole],
+            )
+        self.summaryChanged.emit()
+
     def set_rows(
         self,
         rows: list[dict[str, Any]],
         selected: set[str] | None = None,
     ) -> None:
-        selected_paths = selected or set()
-        mapped: list[dict[str, Any]] = []
+        previous_paths = set(self._nodes)
+        nodes: dict[str, dict[str, Any]] = {}
+        children: dict[str, list[str]] = {}
         for source in rows:
             path = str(source.get("folder") or "")
             if path:
@@ -613,26 +728,82 @@ class RandomFolderModel(DictListModel):
             else:
                 name = "Library root only"
                 detail = "Files directly inside the chosen library"
-            mapped.append({
+                parent = ""
+            nodes[path] = {
                 "folderPath": path,
                 "folderName": name,
                 "folderDetail": detail,
                 "videoCount": int(source.get("count") or 0),
-                "folderSelected": path in selected_paths,
+                "directVideoCount": int(
+                    source.get("direct_count") or 0
+                ),
+                "folderSelected": False,
+                "folderSelectionState": 0,
+                "folderParent": parent,
                 "_searchText": f"{name}\n{path}".casefold(),
-            })
-        self._all_rows = mapped
-        self._row_by_path = {
-            str(row["folderPath"]): row
-            for row in self._all_rows
+            }
+            if path:
+                children.setdefault(parent, []).append(path)
+        for paths in children.values():
+            paths.sort(
+                key=lambda value: (
+                    str(nodes[value]["folderName"]).casefold(),
+                    value.casefold(),
+                )
+            )
+
+        direct_paths = {
+            path
+            for path, node in nodes.items()
+            if int(node["directVideoCount"]) > 0
         }
-        self._apply_filter()
+        direct_descendants: dict[str, set[str]] = {
+            path: set()
+            for path in nodes
+        }
+        for direct_path in direct_paths:
+            if not direct_path:
+                direct_descendants[""].add("")
+                continue
+            parts = direct_path.split("/")
+            for depth in range(1, len(parts) + 1):
+                ancestor = "/".join(parts[:depth])
+                if ancestor in direct_descendants:
+                    direct_descendants[ancestor].add(direct_path)
+
+        self._nodes = nodes
+        self._children = children
+        self._direct_descendants = direct_descendants
+        self._selected_direct = set(selected or set()).intersection(
+            direct_paths
+        )
+        self._expanded.intersection_update(nodes)
+        top_level_branches = {
+            path
+            for path in children.get("", [])
+            if children.get(path)
+        }
+        auto_expand = (
+            top_level_branches
+            if len(top_level_branches) <= 24
+            else set()
+        )
+        if not self._initialized:
+            self._expanded.update(auto_expand)
+            self._initialized = True
+        else:
+            self._expanded.update(auto_expand - previous_paths)
+        self._refresh_node_states()
+        self._rebuild_visible()
 
     @Slot()
     def clear(self) -> None:
-        self._all_rows = []
-        self._row_by_path = {}
-        self._apply_filter()
+        self._nodes = {}
+        self._children = {}
+        self._direct_descendants = {}
+        self._selected_direct = set()
+        self._expanded = set()
+        self._rebuild_visible()
 
     @Slot(str)
     def setFilter(self, value: str) -> None:
@@ -640,7 +811,7 @@ class RandomFolderModel(DictListModel):
         if normalized == self._filter:
             return
         self._filter = normalized
-        self._apply_filter()
+        self._rebuild_visible()
 
     @Slot(bool)
     def setSelectedOnly(self, enabled: bool) -> None:
@@ -648,62 +819,74 @@ class RandomFolderModel(DictListModel):
         if enabled == self._selected_only:
             return
         self._selected_only = enabled
-        self._apply_filter()
+        self._rebuild_visible()
 
     def set_selected(self, folder: str, enabled: bool) -> None:
-        row = self._row_by_path.get(folder)
-        if not row or bool(row["folderSelected"]) == bool(enabled):
+        direct = self._direct_descendants.get(folder, set())
+        if not direct:
             return
-        row["folderSelected"] = bool(enabled)
-        if self._selected_only:
-            self._apply_filter()
-            return
-        visible_index = self._visible_index.get(folder, -1)
-        if visible_index >= 0:
-            model_index = self.index(visible_index, 0)
-            self.dataChanged.emit(
-                model_index,
-                model_index,
-                [self.SelectedRole],
-            )
+        next_selected = set(self._selected_direct)
+        if enabled:
+            next_selected.update(direct)
+        else:
+            next_selected.difference_update(direct)
+        self.sync_selected(next_selected)
 
     def sync_selected(self, selected: set[str]) -> None:
-        changed_paths: list[str] = []
-        for row in self._all_rows:
-            next_value = str(row["folderPath"]) in selected
-            if bool(row["folderSelected"]) != next_value:
-                row["folderSelected"] = next_value
-                changed_paths.append(str(row["folderPath"]))
-        if not changed_paths:
+        direct_paths = {
+            path
+            for path, node in self._nodes.items()
+            if int(node["directVideoCount"]) > 0
+        }
+        next_selected = set(selected).intersection(direct_paths)
+        if next_selected == self._selected_direct:
             return
-        if self._selected_only:
-            self._apply_filter()
+        self._selected_direct = next_selected
+        self._apply_selection_change()
+
+    def _index_without_expanding(self, folder: str) -> int:
+        return self._visible_index.get(folder, -1)
+
+    @Slot(str, result=int)
+    def toggleExpanded(self, folder: str) -> int:
+        if not self._children.get(folder):
+            return self._index_without_expanding(folder)
+        if folder in self._expanded:
+            self._expanded.remove(folder)
+        else:
+            self._expanded.add(folder)
+        self._rebuild_visible()
+        return self._index_without_expanding(folder)
+
+    @Slot()
+    def collapseAll(self) -> None:
+        if not self._expanded:
             return
-        changed_indexes = sorted(
-            self._visible_index[path]
-            for path in changed_paths
-            if path in self._visible_index
-        )
-        if not changed_indexes:
+        self._expanded.clear()
+        self._rebuild_visible()
+
+    @Slot()
+    def expandAll(self) -> None:
+        expandable = {
+            path
+            for path in self._nodes
+            if self._children.get(path)
+        }
+        if expandable == self._expanded:
             return
-        range_start = changed_indexes[0]
-        range_end = changed_indexes[0]
-        for changed_index in changed_indexes[1:]:
-            if changed_index == range_end + 1:
-                range_end = changed_index
-                continue
-            self.dataChanged.emit(
-                self.index(range_start, 0),
-                self.index(range_end, 0),
-                [self.SelectedRole],
-            )
-            range_start = changed_index
-            range_end = changed_index
-        self.dataChanged.emit(
-            self.index(range_start, 0),
-            self.index(range_end, 0),
-            [self.SelectedRole],
-        )
+        self._expanded = expandable
+        self._rebuild_visible()
+
+    @Slot(str, result=int)
+    def indexOf(self, folder: str) -> int:
+        return self._index_without_expanding(folder)
+
+    @Slot(str, result=int)
+    def parentIndex(self, folder: str) -> int:
+        if not folder or "/" not in folder:
+            return -1
+        parent = self._parent(folder)
+        return self._index_without_expanding(parent)
 
 
 class HistoryModel(DictListModel):

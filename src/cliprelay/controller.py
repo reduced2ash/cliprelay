@@ -22,7 +22,7 @@ from watchdog.events import (
 from watchdog.observers import Observer
 
 from .cleanup import CleanupError, move_generated_to_trash
-from .database import Database
+from .database import Database, EXACT_FOLDER_SCOPE_PREFIX
 from .media import (
     MediaError,
     MediaIndexer,
@@ -163,6 +163,7 @@ class AppController(QObject):
         self._selection_next_id = 0
         self._selection_navigation_generation = 0
         self._selection_navigation_task: asyncio.Task | None = None
+        self._pending_selection_direction = 0
         self._navigation_back: list[_NavigationState] = []
         self._navigation_forward: list[_NavigationState] = []
         self._navigation_restoring = False
@@ -1067,10 +1068,106 @@ class AppController(QObject):
             for row in self._random_folder_options_cache
         ]
 
+    def _all_random_direct_folder_paths(self) -> list[str]:
+        return [
+            str(row.get("folder") or "")
+            for row in self._random_folder_options_cache
+            if int(row.get("direct_count") or 0) > 0
+        ]
+
+    @staticmethod
+    def _random_folder_in_subtree(folder: str, parent: str) -> bool:
+        if not parent:
+            return folder == ""
+        return folder == parent or folder.startswith(f"{parent}/")
+
+    @staticmethod
+    def _encode_exact_random_folder(folder: str) -> str:
+        return f"{EXACT_FOLDER_SCOPE_PREFIX}{folder}"
+
+    def _selected_random_direct_folders(self) -> list[str]:
+        direct_paths = self._all_random_direct_folder_paths()
+        if self._random_folder_mode() == "all":
+            return direct_paths
+
+        stored = self._stored_random_folders()
+        if not direct_paths:
+            return list(dict.fromkeys(
+                token[len(EXACT_FOLDER_SCOPE_PREFIX):]
+                if token.startswith(EXACT_FOLDER_SCOPE_PREFIX)
+                else token
+                for token in stored
+            ))
+
+        selected: set[str] = set()
+        for token in stored:
+            if token.startswith(EXACT_FOLDER_SCOPE_PREFIX):
+                exact = token[len(EXACT_FOLDER_SCOPE_PREFIX):]
+                if exact in direct_paths:
+                    selected.add(exact)
+                continue
+            for path in direct_paths:
+                if self._random_folder_in_subtree(path, token):
+                    selected.add(path)
+        return [path for path in direct_paths if path in selected]
+
+    def _random_folder_direct_scope(self, folder: str) -> set[str]:
+        return {
+            path
+            for path in self._all_random_direct_folder_paths()
+            if self._random_folder_in_subtree(path, folder)
+        }
+
+    def _random_folder_selection_states(
+        self,
+        selected_direct: set[str],
+    ) -> dict[str, int]:
+        paths = self._all_random_folder_paths()
+        totals = {path: 0 for path in paths}
+        selected_counts = {path: 0 for path in paths}
+        for direct_path in self._all_random_direct_folder_paths():
+            ancestors = (
+                [""]
+                if not direct_path
+                else [
+                    "/".join(direct_path.split("/")[:depth])
+                    for depth in range(
+                        1,
+                        len(direct_path.split("/")) + 1,
+                    )
+                ]
+            )
+            for ancestor in ancestors:
+                if ancestor not in totals:
+                    continue
+                totals[ancestor] += 1
+                if direct_path in selected_direct:
+                    selected_counts[ancestor] += 1
+        return {
+            path: (
+                0
+                if selected_counts[path] <= 0
+                else 2
+                if selected_counts[path] == totals[path]
+                else 1
+            )
+            for path in paths
+        }
+
     def _selected_random_folders(self) -> list[str]:
         if self._random_folder_mode() == "all":
             return self._all_random_folder_paths()
-        return self._stored_random_folders()
+        selected_direct = set(self._selected_random_direct_folders())
+        if not self._random_folder_options_cache:
+            return list(selected_direct)
+        selection_states = self._random_folder_selection_states(
+            selected_direct
+        )
+        return [
+            path
+            for path in self._all_random_folder_paths()
+            if selection_states.get(path, 0) == 2
+        ]
 
     def _random_folders(self) -> list[str]:
         if self._random_folder_mode() == "all":
@@ -1079,7 +1176,10 @@ class AppController(QObject):
 
     @Property("QVariantList", notify=randomFoldersChanged)
     def randomFolderOptions(self) -> list[dict[str, Any]]:
-        selected = set(self._selected_random_folders())
+        selected_direct = set(self._selected_random_direct_folders())
+        selection_states = self._random_folder_selection_states(
+            selected_direct
+        )
         return [
             {
                 "folderPath": str(row["folder"]),
@@ -1089,7 +1189,15 @@ class AppController(QObject):
                     else "Library root only"
                 ),
                 "videoCount": int(row["count"]),
-                "selected": str(row["folder"]) in selected,
+                "directVideoCount": int(row.get("direct_count") or 0),
+                "selectionState": selection_states.get(
+                    str(row["folder"]),
+                    0,
+                ),
+                "selected": selection_states.get(
+                    str(row["folder"]),
+                    0,
+                ) == 2,
             }
             for row in self._random_folder_options_cache
         ]
@@ -1102,29 +1210,52 @@ class AppController(QObject):
     def randomFolderSummary(self) -> str:
         if self._random_folder_mode() == "all":
             return "All folders"
-        folders = self._stored_random_folders()
-        if not folders:
+        selected_direct = set(self._selected_random_direct_folders())
+        if not selected_direct:
             return "No folders"
-        all_paths = set(self._all_random_folder_paths())
-        if all_paths and all_paths.issubset(folders):
+        all_direct = set(self._all_random_direct_folder_paths())
+        if all_direct and all_direct.issubset(selected_direct):
             return "All folders"
-        if len(folders) > 1:
-            return f"{len(folders)} folders"
-        if not folders[0]:
+        fully_selected = set(self._selected_random_folders())
+        selection_roots = [
+            path
+            for path in fully_selected
+            if not any(
+                parent
+                and parent in fully_selected
+                for parent in (
+                    "/".join(path.split("/")[:depth])
+                    for depth in range(1, len(path.split("/")))
+                )
+            )
+        ]
+        if (
+            len(selection_roots) == 1
+            and self._random_folder_direct_scope(
+                selection_roots[0]
+            ) == selected_direct
+        ):
+            if not selection_roots[0]:
+                return "Library root"
+            return selection_roots[0].rsplit("/", 1)[-1]
+        if len(selected_direct) > 1:
+            return f"{len(selected_direct)} folders"
+        folder = next(iter(selected_direct))
+        if not folder:
             return "Library root"
-        return folders[0].rsplit("/", 1)[-1]
+        return folder.rsplit("/", 1)[-1]
 
     @Property(int, notify=randomFoldersChanged)
     def randomFolderSelectionCount(self) -> int:
-        return len(self._selected_random_folders())
+        return len(self._selected_random_direct_folders())
 
     @Property(bool, notify=randomFoldersChanged)
     def allRandomFoldersSelected(self) -> bool:
         if self._random_folder_mode() == "all":
             return True
-        all_paths = set(self._all_random_folder_paths())
+        all_paths = set(self._all_random_direct_folder_paths())
         return bool(all_paths) and all_paths.issubset(
-            self._stored_random_folders()
+            self._selected_random_direct_folders()
         )
 
     @Property(bool, notify=randomFoldersChanged)
@@ -1465,6 +1596,7 @@ class AppController(QObject):
         previous_id = self._selected_id
         self._selected_id = int(row["id"]) if row else 0
         if self._selected_id != previous_id:
+            self._pending_selection_direction = 0
             self._cancel_timeline_generation()
         self._selected = self._map_selected(row)
         self._selected_checking = (
@@ -1637,6 +1769,7 @@ class AppController(QObject):
         self._selection_next_id = 0
         self.selectionNavigationChanged.emit()
         if self._selected_id <= 0 or self._shutting_down:
+            self._pending_selection_direction = 0
             return
         media_id = self._selected_id
         search = self.library_model.search
@@ -1685,6 +1818,18 @@ class AppController(QObject):
         self._selection_next_id = int(result.get("nextId") or 0)
         self.selectionNavigationChanged.emit()
         self._preload_selection_neighbors()
+        pending_direction = self._pending_selection_direction
+        self._pending_selection_direction = 0
+        if pending_direction:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.navigateSelection(pending_direction)
+            else:
+                loop.call_soon(
+                    self.navigateSelection,
+                    pending_direction,
+                )
 
     def _preload_selection_neighbors(self) -> None:
         if not self._maximum_performance() or self._shutting_down:
@@ -2205,19 +2350,38 @@ class AppController(QObject):
 
     @Slot(str, bool)
     def setRandomFolderEnabled(self, folder: str, enabled: bool) -> None:
-        folders = self._selected_random_folders()
-        if enabled and folder not in folders:
-            folders.append(folder)
-        elif not enabled and folder in folders:
-            folders.remove(folder)
-        all_paths = self._all_random_folder_paths()
-        if all_paths and set(all_paths).issubset(folders):
+        if not self._random_folder_options_cache:
+            self._random_folder_options_cache = (
+                self.database.list_random_folders()
+            )
+            self._random_folder_options_dirty = False
+
+        selected_direct = (
+            set()
+            if self._random_folder_mode() == "all" and enabled
+            else set(self._selected_random_direct_folders())
+        )
+        subtree = self._random_folder_direct_scope(str(folder or ""))
+        if enabled:
+            selected_direct.update(subtree)
+        else:
+            selected_direct.difference_update(subtree)
+
+        all_direct = self._all_random_direct_folder_paths()
+        if all_direct and set(all_direct).issubset(selected_direct):
             self._store_setting("random_folder_mode", "all")
             self._store_setting("random_folders", [])
         else:
             self._store_setting("random_folder_mode", "selected")
-            self._store_setting("random_folders", folders)
-        self.random_folder_model.set_selected(folder, enabled)
+            self._store_setting(
+                "random_folders",
+                [
+                    self._encode_exact_random_folder(path)
+                    for path in all_direct
+                    if path in selected_direct
+                ],
+            )
+        self.random_folder_model.sync_selected(selected_direct)
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
         self._schedule_workspace_persist()
@@ -2240,13 +2404,13 @@ class AppController(QObject):
     def selectAllRandomFolders(self) -> None:
         if self._random_folder_mode() == "all":
             self.random_folder_model.sync_selected(
-                set(self._all_random_folder_paths())
+                set(self._all_random_direct_folder_paths())
             )
             return
         self._store_setting("random_folder_mode", "all")
         self._store_setting("random_folders", [])
         self.random_folder_model.sync_selected(
-            set(self._all_random_folder_paths())
+            set(self._all_random_direct_folder_paths())
         )
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
@@ -2274,7 +2438,7 @@ class AppController(QObject):
                 self._random_folder_options_dirty = False
                 self.random_folder_model.set_rows(
                     rows,
-                    set(self._selected_random_folders()),
+                    set(self._selected_random_direct_folders()),
                 )
         except asyncio.CancelledError:
             raise
@@ -2400,13 +2564,28 @@ class AppController(QObject):
 
     @Slot(int)
     def navigateSelection(self, direction: int) -> None:
-        target_id = (
-            self._selection_previous_id
-            if int(direction) < 0
-            else self._selection_next_id
-        )
+        normalized_direction = -1 if int(direction) < 0 else 1
+        if self._selected_id <= 0:
+            if not self.library_model.rows:
+                return
+            target_row = (
+                self.library_model.rows[-1]
+                if normalized_direction < 0
+                else self.library_model.rows[0]
+            )
+            target_id = int(target_row.get("mediaId") or 0)
+        else:
+            target_id = (
+                self._selection_previous_id
+                if normalized_direction < 0
+                else self._selection_next_id
+            )
+            if target_id <= 0 and self._selection_navigation_task:
+                self._pending_selection_direction = normalized_direction
+                return
         if target_id <= 0:
             return
+        self._pending_selection_direction = 0
         self.selectMedia(target_id)
         media_index = self.library_model.find_index(target_id)
         if media_index >= 0:
