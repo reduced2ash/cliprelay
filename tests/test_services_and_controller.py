@@ -6,8 +6,17 @@ import time
 from pathlib import Path
 
 import pytest
+from watchdog.events import (
+    FileClosedEvent,
+    FileClosedNoWriteEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
+    FileOpenedEvent,
+)
 
-from cliprelay.controller import AppController
+from cliprelay.controller import AppController, _WatchHandler
 from cliprelay.database import Database
 from cliprelay.media import ExportResult
 from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel
@@ -67,6 +76,80 @@ class FakeHttpClient:
             "ok": True,
             "result": {"message_id": 81, "chat": {"username": "test_channel"}},
         })
+
+
+def test_watch_handler_only_emits_for_mutating_file_events(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+
+    for passive_event in (
+        FileOpenedEvent(str(source)),
+        FileClosedEvent(str(source)),
+        FileClosedNoWriteEvent(str(source)),
+    ):
+        emitted: list[bool] = []
+        _WatchHandler(lambda: emitted.append(True)).on_any_event(
+            passive_event
+        )
+        assert emitted == []
+
+    for mutation_event in (
+        FileCreatedEvent(str(source)),
+        FileDeletedEvent(str(source)),
+        FileModifiedEvent(str(source)),
+        FileMovedEvent(str(source), str(tmp_path / "moved.mp4")),
+    ):
+        emitted = []
+        _WatchHandler(lambda: emitted.append(True)).on_any_event(
+            mutation_event
+        )
+        assert emitted == [True]
+
+
+def test_watch_handler_ignores_metadata_only_modifications(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    source = library_root / "video.mp4"
+    source.write_bytes(b"video")
+    database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(source),
+        "name": source.name,
+        "relative_path": source.name,
+        "folder": "",
+        "size_bytes": source.stat().st_size,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    emitted: list[bool] = []
+    handler = _WatchHandler(
+        lambda: emitted.append(True),
+        controller._watch_event_requires_refresh,
+    )
+
+    handler.on_any_event(FileModifiedEvent(str(source)))
+    assert emitted == []
+    handler.on_any_event(FileCreatedEvent(str(source)))
+    assert emitted == []
+
+    source.write_bytes(b"substantive video update")
+    handler.on_any_event(FileModifiedEvent(str(source)))
+    assert emitted == [True]
+    controller.shutdown()
 
 
 @pytest.mark.asyncio

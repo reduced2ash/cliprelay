@@ -4,11 +4,18 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import (
+    EVENT_TYPE_CREATED,
+    EVENT_TYPE_DELETED,
+    EVENT_TYPE_MODIFIED,
+    EVENT_TYPE_MOVED,
+    FileSystemEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 from .cleanup import CleanupError, move_generated_to_trash
@@ -38,16 +45,36 @@ LOGGER = logging.getLogger(__name__)
 
 
 class _WatchHandler(FileSystemEventHandler):
-    def __init__(self, callback):
+    _MUTATING_EVENT_TYPES = frozenset({
+        EVENT_TYPE_CREATED,
+        EVENT_TYPE_DELETED,
+        EVENT_TYPE_MODIFIED,
+        EVENT_TYPE_MOVED,
+    })
+
+    def __init__(
+        self,
+        callback: Callable[[], None],
+        should_refresh: Callable[[FileSystemEvent], bool] | None = None,
+    ):
         super().__init__()
         self.callback = callback
+        self.should_refresh = should_refresh
         self._last_emit = 0.0
 
-    def on_any_event(self, event):
+    def on_any_event(self, event: FileSystemEvent) -> None:
+        if (
+            event.is_directory
+            or event.event_type not in self._MUTATING_EVENT_TYPES
+        ):
+            return
         now = time.monotonic()
-        if not event.is_directory and now - self._last_emit >= 0.35:
-            self._last_emit = now
-            self.callback()
+        if now - self._last_emit < 0.35:
+            return
+        if self.should_refresh and not self.should_refresh(event):
+            return
+        self._last_emit = now
+        self.callback()
 
 
 class AppController(QObject):
@@ -931,12 +958,45 @@ class AppController(QObject):
             return
         try:
             observer = Observer()
-            observer.schedule(_WatchHandler(self._filesystemChanged.emit), root, recursive=True)
+            observer.schedule(
+                _WatchHandler(
+                    self._filesystemChanged.emit,
+                    self._watch_event_requires_refresh,
+                ),
+                root,
+                recursive=True,
+            )
             observer.daemon = True
             observer.start()
             self._observer = observer
         except Exception as exc:
             LOGGER.warning("Could not start library watcher: %s", exc)
+
+    def _watch_event_requires_refresh(
+        self,
+        event: FileSystemEvent,
+    ) -> bool:
+        # macOS FSEvents can report an extended-attribute-only update as
+        # either modified or created when event flags are coalesced. If the
+        # indexed content fingerprint is unchanged, neither event requires a
+        # library refresh.
+        if event.event_type not in {
+            EVENT_TYPE_CREATED,
+            EVENT_TYPE_MODIFIED,
+        }:
+            return True
+        path = Path(event.src_path).expanduser().resolve()
+        try:
+            stat = path.stat()
+        except OSError:
+            return True
+        indexed = self.database.get_media_by_path(path)
+        if not indexed or not bool(indexed.get("valid", True)):
+            return True
+        return (
+            int(indexed.get("size_bytes", -1)) != stat.st_size
+            or abs(float(indexed.get("mtime", -1)) - stat.st_mtime) > 0.001
+        )
 
     @Slot()
     def shutdown(self) -> None:
