@@ -8,11 +8,14 @@ Rectangle {
     required property var actionRegistry
     required property var appController
     required property var folderTreeModel
+    required property var libraryPage
     property int activityWidth: 68
     property int explorerWidth: 204
+    property real prepareWidth: 0
     property int currentPage: 0
     property bool activityCollapsed: true
     property bool showFolders: true
+    property bool showPrepare: false
     property string currentFolder: ""
     property string libraryRoot: ""
     readonly property bool libraryPageActive: currentPage === 0
@@ -28,8 +31,12 @@ Rectangle {
     readonly property bool hasLibrary: libraryRoot.length > 0
     readonly property bool showExplorer:
         libraryPageActive && hasLibrary && showFolders
-    readonly property bool compactActions: width < 1220
-    readonly property bool narrowActions: width < 1040
+    readonly property bool showPrepareContext:
+        libraryPageActive && showPrepare && prepareWidth > 0
+    readonly property bool compactActions:
+        libraryContextSlot.width < 680
+    readonly property bool narrowActions:
+        libraryContextSlot.width < 500
     readonly property string libraryName: {
         if (!libraryRoot.length)
             return "No library selected"
@@ -150,6 +157,7 @@ Rectangle {
         }
 
         Item {
+            id: libraryContextSlot
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -287,6 +295,90 @@ Rectangle {
                     color: Theme.muted
                     font.pixelSize: Theme.textWorkbench
                     elide: Text.ElideRight
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.showPrepareContext
+            Layout.fillHeight: true
+            Layout.preferredWidth: root.showPrepareContext ? 1 : 0
+            color: Theme.border
+        }
+
+        Rectangle {
+            visible: root.showPrepareContext
+            Layout.fillHeight: true
+            Layout.preferredWidth: root.showPrepareContext
+                ? root.prepareWidth : 0
+            Layout.minimumWidth: root.showPrepareContext ? 360 : 0
+            Layout.maximumWidth: 680
+            color: Theme.surface
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 7
+                spacing: 3
+
+                AppIcon {
+                    Layout.preferredWidth: 15
+                    Layout.preferredHeight: 15
+                    name: "edit"
+                    strokeWidth: 1.7
+                    iconColor: Theme.accentText
+                }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 42
+                    text: "Prepare"
+                    color: Theme.text
+                    font.pixelSize: Theme.textWorkbench
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+                WorkbenchButton {
+                    text: "Open in default player"
+                    iconName: "external"
+                    iconOnly: true
+                    toolTipText: text
+                    kind: "ghost"
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    onClicked:
+                        root.libraryPage.openSelectedInDefaultPlayer()
+                }
+                WorkbenchButton {
+                    text: root.appController.settings.prepare_expanded
+                        ? "Narrow Prepare" : "Widen Prepare"
+                    iconName: root.appController.settings.prepare_expanded
+                        ? "contract" : "expand"
+                    iconOnly: true
+                    toolTipText: text
+                    kind: "ghost"
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    onClicked: root.libraryPage.togglePrepareWidth()
+                }
+                WorkbenchButton {
+                    text: "Open full-screen editor"
+                    iconName: "maximize"
+                    iconOnly: true
+                    toolTipText: text
+                    kind: "ghost"
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    onClicked: root.libraryPage.openPrepareFullscreen()
+                }
+                WorkbenchButton {
+                    text: "Close selected video"
+                    iconName: "close"
+                    iconOnly: true
+                    toolTipText: text
+                    kind: "ghost"
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    onClicked: root.libraryPage.closePrepare()
                 }
             }
         }

@@ -238,6 +238,9 @@ ApplicationWindow {
                     actionRegistry: workbenchActions
                     appController: controller
                     folderTreeModel: folderModel
+                    libraryPage: libraryPage
+                    showPrepare: libraryPage.prepareDocked
+                    prepareWidth: libraryPage.prepareDockWidth
                 }
 
                 RowLayout {

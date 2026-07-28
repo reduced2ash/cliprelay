@@ -23,7 +23,6 @@ Rectangle {
     property bool telegramReady: telegramConnected
         && destinationField.text.trim().length > 0
 
-    signal fullScreenRequested()
     signal fullScreenExitRequested()
     signal closeRequested()
 
@@ -191,17 +190,18 @@ Rectangle {
 
     Rectangle {
         id: prepareHeader
+        visible: root.studioMode
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: root.studioMode ? 70 : 62
+        height: root.studioMode ? 70 : 0
         z: 20
-        color: root.studioMode ? Theme.surfaceSoft : Theme.surface
+        color: Theme.surfaceSoft
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: root.studioMode ? 24 : 22
-            anchors.rightMargin: root.studioMode ? 20 : 18
+            anchors.leftMargin: 24
+            anchors.rightMargin: 20
             spacing: 7
 
             ColumnLayout {
@@ -209,14 +209,13 @@ Rectangle {
                 spacing: 1
 
                 Text {
-                    text: root.studioMode ? "Full-screen editor" : "Prepare"
+                    text: "Full-screen editor"
                     color: Theme.text
                     font.pixelSize: Theme.textTitle
                     font.weight: Font.DemiBold
                     Layout.fillWidth: true
                 }
                 Text {
-                    visible: root.studioMode
                     text: controller.selectedMedia.name || ""
                     color: Theme.muted
                     font.pixelSize: Theme.textXs
@@ -226,7 +225,7 @@ Rectangle {
             }
 
             StatusPill {
-                visible: root.studioMode && videoEditor.editor.hasEdits
+                visible: videoEditor.editor.hasEdits
                 status: "accent"
                 text: "Edited copy"
             }
@@ -238,28 +237,6 @@ Rectangle {
                 onClicked: controller.openSelectedVideo()
             }
             AppButton {
-                visible: !root.studioMode
-                text: controller.settings.prepare_expanded
-                    ? "Narrow Prepare" : "Widen Prepare"
-                iconName: controller.settings.prepare_expanded
-                    ? "contract" : "expand"
-                kind: "ghost"
-                compact: true
-                onClicked: controller.setSetting(
-                    "prepare_expanded",
-                    !Boolean(controller.settings.prepare_expanded)
-                )
-            }
-            AppButton {
-                visible: !root.studioMode
-                text: "Open full-screen editor"
-                iconName: "maximize"
-                kind: "ghost"
-                compact: true
-                onClicked: root.fullScreenRequested()
-            }
-            AppButton {
-                visible: root.studioMode
                 text: "Back to library"
                 iconName: "chevronLeft"
                 kind: "secondary"
@@ -286,7 +263,7 @@ Rectangle {
     StackLayout {
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: prepareHeader.bottom
+        anchors.top: root.studioMode ? prepareHeader.bottom : parent.top
         anchors.bottom: parent.bottom
         currentIndex: root.studioMode ? 1 : 0
 

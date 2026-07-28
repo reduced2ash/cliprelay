@@ -24,6 +24,19 @@ Rectangle {
             === "compact"
     readonly property string explorerSortMode:
         String(controller.settings.folder_sort_mode || "name_asc")
+    readonly property bool prepareDocked:
+        Number(controller.selectedMediaId || 0) > 0
+            && !root.prepareFullscreen
+    readonly property real prepareDockWidth:
+        controller.settings.prepare_expanded
+            ? Math.min(
+                680,
+                Math.max(
+                    Math.min(420, Math.max(360, root.width * 0.34)),
+                    root.width - (root.showFolders ? 210 : 0) - 460
+                )
+            )
+            : Math.min(420, Math.max(360, root.width * 0.34))
     objectName: "libraryPage"
 
     signal searchFocusRequested()
@@ -136,6 +149,30 @@ Rectangle {
     function togglePlayback() {
         if (Number(controller.selectedMediaId || 0) > 0)
             preparePanel.togglePlayback()
+    }
+
+    function openSelectedInDefaultPlayer() {
+        if (Number(controller.selectedMediaId || 0) > 0)
+            controller.openSelectedVideo()
+    }
+
+    function togglePrepareWidth() {
+        if (!root.prepareDocked)
+            return
+        controller.setSetting(
+            "prepare_expanded",
+            !Boolean(controller.settings.prepare_expanded)
+        )
+    }
+
+    function openPrepareFullscreen() {
+        if (Number(controller.selectedMediaId || 0) > 0)
+            root.prepareFullscreen = true
+    }
+
+    function closePrepare() {
+        root.prepareFullscreen = false
+        controller.clearSelection()
     }
 
     function playMedia(mediaId) {
@@ -978,8 +1015,7 @@ Rectangle {
             }
 
             Rectangle {
-                visible: controller.selectedMediaId > 0
-                    && !root.prepareFullscreen
+                visible: root.prepareDocked
                 Layout.fillHeight: true
                 width: 1
                 color: Theme.border
@@ -987,18 +1023,9 @@ Rectangle {
 
             Item {
                 id: prepareSlot
-                visible: controller.selectedMediaId > 0
-                    && !root.prepareFullscreen
+                visible: root.prepareDocked
                 Layout.fillHeight: true
-                Layout.preferredWidth: controller.settings.prepare_expanded
-                    ? Math.min(
-                        680,
-                        Math.max(
-                            Math.min(420, Math.max(360, root.width * 0.34)),
-                            root.width - (root.showFolders ? 210 : 0) - 460
-                        )
-                    )
-                    : Math.min(420, Math.max(360, root.width * 0.34))
+                Layout.preferredWidth: root.prepareDockWidth
                 Layout.minimumWidth: 360
                 Layout.maximumWidth: 680
             }
@@ -1014,11 +1041,7 @@ Rectangle {
         visible: controller.selectedMediaId > 0
         z: root.prepareFullscreen ? 80 : 0
         studioMode: root.prepareFullscreen
-        onFullScreenRequested: root.prepareFullscreen = true
         onFullScreenExitRequested: root.prepareFullscreen = false
-        onCloseRequested: {
-            root.prepareFullscreen = false
-            controller.clearSelection()
-        }
+        onCloseRequested: root.closePrepare()
     }
 }

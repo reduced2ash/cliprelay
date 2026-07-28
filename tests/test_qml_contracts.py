@@ -265,6 +265,45 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert "readonly property int workbenchContextHeight: 42" in theme
 
 
+def test_docked_prepare_uses_the_shared_pane_aware_context_bar() -> None:
+    main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    context = (QML_DIR / "LibraryContextToolbar.qml").read_text(
+        encoding="utf-8"
+    )
+    panel = (QML_DIR / "PreparePanel.qml").read_text(encoding="utf-8")
+
+    assert "showPrepare: libraryPage.prepareDocked" in main
+    assert "prepareWidth: libraryPage.prepareDockWidth" in main
+    assert "libraryPage: libraryPage" in main
+
+    assert "readonly property bool prepareDocked:" in page
+    assert "readonly property real prepareDockWidth:" in page
+    assert "Layout.preferredWidth: root.prepareDockWidth" in page
+    assert "function openSelectedInDefaultPlayer()" in page
+    assert "function togglePrepareWidth()" in page
+    assert "function openPrepareFullscreen()" in page
+    assert "function closePrepare()" in page
+
+    assert "readonly property bool showPrepareContext:" in context
+    assert "libraryContextSlot.width < 680" in context
+    assert 'text: "Prepare"' in context
+    assert "root.libraryPage.openSelectedInDefaultPlayer()" in context
+    assert "root.libraryPage.togglePrepareWidth()" in context
+    assert "root.libraryPage.openPrepareFullscreen()" in context
+    assert "root.libraryPage.closePrepare()" in context
+
+    assert "visible: root.studioMode" in panel
+    assert "height: root.studioMode ? 70 : 0" in panel
+    assert (
+        "anchors.top: root.studioMode ? prepareHeader.bottom : parent.top"
+        in panel
+    )
+    assert 'text: "Full-screen editor"' in panel
+    assert 'text: "Widen Prepare"' not in panel
+    assert "signal fullScreenRequested()" not in panel
+
+
 def test_workspace_context_keeps_sidebar_geometry_stable_on_every_page() -> None:
     main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
     page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
