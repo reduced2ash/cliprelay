@@ -117,6 +117,10 @@ def test_frameless_window_has_custom_titlebar_and_resize_fallbacks() -> None:
     assert "CommandCenter {" in titlebar
     assert "WorkbenchActivityButton {" in titlebar
     assert "randomSourceButtonItem" in titlebar
+    assert 'text: "Open command palette"' in titlebar
+    assert 'iconName: "command"' in titlebar
+    assert "onClicked: root.focusCommands()" in titlebar
+    assert '"ClipRelay Library"' not in titlebar
     assert 'Accessible.name: accessibleLabel' in controls
 
     assert resize_frame.count("root.beginResize(") == 8

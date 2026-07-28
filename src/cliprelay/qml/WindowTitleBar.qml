@@ -63,12 +63,13 @@ Item {
         WorkbenchButton {
             Layout.preferredWidth: 28
             Layout.preferredHeight: 28
-            text: "ClipRelay Library"
-            iconName: "relay"
+            text: "Open command palette"
+            iconName: "command"
             iconOnly: true
             kind: "primary"
-            toolTipText: "ClipRelay  ·  Open Library"
-            onClicked: root.hostWindow.currentPage = 0
+            toolTipText: "Command palette  ·  "
+                + (root.macStyle ? "⌘⇧P" : "Ctrl+Shift+P")
+            onClicked: root.focusCommands()
         }
 
         Item { Layout.preferredWidth: 2 }
