@@ -123,7 +123,7 @@ Depth is tonal. Higher surfaces become slightly lighter and more chromatic; shad
 - **Background:** Night Ink letterbox around `PreserveAspectFit` content.
 - **State:** One-pixel Hairline Plum outline at rest, Active Surface on hover, 2px Relay Persimmon outline when selected.
 - **Preview:** Hover begins muted playback after 350ms; Space or click provides the same action.
-- **Thumbnail state:** Visible tiles enter a bounded background queue without placing loading copy over the media. A quiet progress line indicates active work, failures retain a warning glyph, and aggregate state remains available in the library footer.
+- **Thumbnail state:** Visible tiles enter a bounded background queue without placing loading copy or progress chrome over the media. Failures retain a warning glyph, and aggregate state remains available in the library footer.
 - **Density:** Default uses readable metadata and 12px gaps; Compact uses a smaller target width and 8px gaps without changing global workspace scale.
 
 ### Inputs / Fields

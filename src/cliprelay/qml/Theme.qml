@@ -102,6 +102,8 @@ QtObject {
     readonly property int libraryTileChromeCompact: 48
     readonly property int libraryTileRadius: 4
     readonly property int libraryPreviewDelay: 350
+    readonly property int libraryThumbnailDecodeWidth: 640
+    readonly property int libraryThumbnailDecodeHeight: 360
 
     readonly property string monoFamily: Qt.platform.os === "windows"
         ? "Cascadia Mono" : Qt.platform.os === "osx"

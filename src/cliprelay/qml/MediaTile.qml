@@ -92,14 +92,11 @@ Item {
             anchors.fill: parent
             anchors.margins: root.selected || root.activeFocus ? 2 : 1
             source: root.thumbnailUrl
-            sourceSize.width: Math.max(
-                1,
-                Math.ceil(width * Screen.devicePixelRatio)
-            )
-            sourceSize.height: Math.max(
-                1,
-                Math.ceil(height * Screen.devicePixelRatio)
-            )
+            // Keep the decode request independent from delegate geometry.
+            // Opening Prepare changes grid width; a geometry-bound sourceSize
+            // made every Image discard and re-decode its current texture.
+            sourceSize.width: Theme.libraryThumbnailDecodeWidth
+            sourceSize.height: Theme.libraryThumbnailDecodeHeight
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
@@ -121,21 +118,6 @@ Item {
                 name: "warning"
                 strokeWidth: 1.6
                 iconColor: Theme.warning
-            }
-
-            AppProgressBar {
-                visible: !previewLoader.active
-                    && (
-                        root.thumbnailState === "generating"
-                        || root.thumbnailState === "queued"
-                    )
-                indeterminate: true
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.leftMargin: root.compact ? 12 : 20
-                anchors.rightMargin: root.compact ? 12 : 20
-                anchors.bottomMargin: root.compact ? 8 : 12
             }
         }
 
