@@ -71,6 +71,14 @@ ApplicationWindow {
         onActivated: windowTitleBar.focusSearch()
     }
     Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+[" : "Alt+Left"
+        onActivated: workbenchActions.triggerAction("navigate_back")
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+]" : "Alt+Right"
+        onActivated: workbenchActions.triggerAction("navigate_forward")
+    }
+    Shortcut {
         sequence: Qt.platform.os === "osx"
             ? "Meta+Shift+P" : "Ctrl+Shift+P"
         onActivated: windowTitleBar.focusCommands()
@@ -162,7 +170,6 @@ ApplicationWindow {
                     return
                 }
                 const noModifier = event.modifiers === Qt.NoModifier
-                const shiftOnly = event.modifiers === Qt.ShiftModifier
                 if (event.key === Qt.Key_Space && noModifier) {
                     libraryPage.togglePlayback()
                     event.accepted = true
@@ -174,9 +181,6 @@ ApplicationWindow {
                     event.accepted = true
                 } else if (event.key === Qt.Key_R && noModifier) {
                     controller.pickRandom()
-                    event.accepted = true
-                } else if (event.key === Qt.Key_R && shiftOnly) {
-                    controller.pickPreviousRandom()
                     event.accepted = true
                 }
             }

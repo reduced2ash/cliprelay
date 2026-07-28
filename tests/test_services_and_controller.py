@@ -535,7 +535,7 @@ async def test_random_folder_filter_uses_selected_subtree(
 
 
 @pytest.mark.asyncio
-async def test_selection_navigation_and_previous_random_history(
+async def test_selection_arrows_feed_unified_navigation_history(
     monkeypatch, tmp_path: Path
 ) -> None:
     database = Database(tmp_path / "db.sqlite3")
@@ -589,6 +589,14 @@ async def test_selection_navigation_and_previous_random_history(
 
     controller.navigateSelection(-1)
     assert controller.selectedMediaId == media_ids[0]
+    assert controller.canNavigateBack
+
+    controller.navigateBack()
+    assert controller.selectedMediaId == media_ids[1]
+    assert controller.canNavigateForward
+
+    controller.navigateForward()
+    assert controller.selectedMediaId == media_ids[0]
 
     random_rows = [
         database.get_media(media_ids[1]),
@@ -602,10 +610,109 @@ async def test_selection_navigation_and_previous_random_history(
     await controller._pick_random_cached_async()
     await controller._pick_random_cached_async()
     assert controller.selectedMediaId == media_ids[2]
-    assert controller.canPickPreviousRandom
 
-    controller.pickPreviousRandom()
+    controller.navigateBack()
     assert controller.selectedMediaId == media_ids[1]
+
+    controller.selectMedia(media_ids[0])
+    assert controller.canNavigateForward is False
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_navigation_history_restores_mixed_folder_and_video_states(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    folder_a = library_root / "folder-a"
+    folder_b = library_root / "folder-b"
+    folder_a.mkdir(parents=True)
+    folder_b.mkdir()
+
+    media_ids: dict[str, int] = {}
+    for folder, name, mtime in [
+        ("folder-a", "a.mp4", 200),
+        ("folder-b", "b.mp4", 100),
+    ]:
+        source = library_root / folder / name
+        source.write_bytes(name.encode())
+        media_ids[folder] = database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": name,
+            "relative_path": f"{folder}/{name}",
+            "folder": folder,
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": mtime,
+        })
+
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    restored: list[tuple[str, str, int]] = []
+    controller.libraryNavigationRestored.connect(
+        lambda folder, search, folder_index: restored.append(
+            (folder, search, folder_index)
+        )
+    )
+
+    controller.setFolder("folder-a")
+    controller.selectMedia(media_ids["folder-a"])
+    monkeypatch.setattr(
+        database,
+        "random_media",
+        lambda *_args, **_kwargs: database.get_media(
+            media_ids["folder-b"]
+        ),
+    )
+    await controller._pick_random_cached_async()
+    controller.setFolder("folder-b")
+
+    assert library.folder == "folder-b"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+
+    controller.navigateBack()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+    assert restored[-1][0] == "folder-a"
+
+    controller.navigateBack()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-a"]
+
+    controller.navigateForward()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+
+    controller.navigateForward()
+    assert library.folder == "folder-b"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+    assert controller.canNavigateForward is False
+
+    replacement_root = tmp_path / "replacement"
+    replacement_root.mkdir()
+    controller.setSetting("library_root", str(replacement_root))
+    assert controller.canNavigateBack is False
+    assert controller.canNavigateForward is False
     controller.shutdown()
 
 

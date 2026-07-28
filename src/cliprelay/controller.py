@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,6 +43,13 @@ from .x_assist import XAssistant
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _NavigationState:
+    folder: str
+    search: str
+    media_id: int
 
 
 class _WatchHandler(FileSystemEventHandler):
@@ -85,6 +93,7 @@ class AppController(QObject):
     randomFoldersChanged = Signal()
     timelineStateChanged = Signal()
     selectionNavigationChanged = Signal()
+    navigationHistoryChanged = Signal()
     countsChanged = Signal()
     publishStateChanged = Signal()
     telegramStateChanged = Signal()
@@ -92,6 +101,7 @@ class AppController(QObject):
     commandSearchChanged = Signal()
     navigationRequested = Signal(str)
     libraryRevealRequested = Signal(str, int, int)
+    libraryNavigationRestored = Signal(str, str, int)
     librarySelectionRequested = Signal(int)
     toast = Signal(str, str)
     _filesystemChanged = Signal()
@@ -147,10 +157,12 @@ class AppController(QObject):
         self._selection_next_id = 0
         self._selection_navigation_generation = 0
         self._selection_navigation_task: asyncio.Task | None = None
+        self._navigation_back: list[_NavigationState] = []
+        self._navigation_forward: list[_NavigationState] = []
+        self._navigation_restoring = False
+        self._pending_navigation_focus_media_id = 0
         self._scanning = False
         self._random_picking = False
-        self._random_history: list[int] = []
-        self._random_history_index = -1
         self._random_folder_options_cache: list[dict[str, Any]] = []
         self._random_folder_options_dirty = True
         self._random_folder_options_loading = False
@@ -303,6 +315,14 @@ class AppController(QObject):
     def canSelectNext(self) -> bool:
         return self._selection_next_id > 0
 
+    @Property(bool, notify=navigationHistoryChanged)
+    def canNavigateBack(self) -> bool:
+        return bool(self._navigation_back)
+
+    @Property(bool, notify=navigationHistoryChanged)
+    def canNavigateForward(self) -> bool:
+        return bool(self._navigation_forward)
+
     @Property(bool, notify=scanStateChanged)
     def scanning(self) -> bool:
         return self._scanning
@@ -310,16 +330,6 @@ class AppController(QObject):
     @Property(bool, notify=randomStateChanged)
     def randomPicking(self) -> bool:
         return self._random_picking
-
-    @Property(bool, notify=randomStateChanged)
-    def canPickPreviousRandom(self) -> bool:
-        if not self._random_history or self._random_history_index < 0:
-            return False
-        current_random_id = self._random_history[self._random_history_index]
-        return (
-            self._selected_id != current_random_id
-            or self._random_history_index > 0
-        )
 
     def _stored_random_folders(self) -> list[str]:
         value = self._setting("random_folders", [])
@@ -510,6 +520,7 @@ class AppController(QObject):
             self._queue_full_model_refresh()
             return
         self.library_model.refresh()
+        self._flush_navigation_focus()
         self.folder_model.refresh()
         self.history_model.refresh()
         self._refresh_counts()
@@ -566,6 +577,7 @@ class AppController(QObject):
             ):
                 return
             self.library_model.apply_refresh(library_payload)
+            self._flush_navigation_focus()
             self.folder_model.apply_refresh(folder_payload)
             self.history_model.apply_refresh(history_payload)
             self._counts_cache = counts
@@ -625,6 +637,7 @@ class AppController(QObject):
             self._queue_library_state_refresh(preserve_loaded)
             return
         self.library_model.refresh(preserve_loaded=preserve_loaded)
+        self._flush_navigation_focus()
         self.folder_model.refresh()
         self._refresh_counts()
         self._invalidate_random_folder_options()
@@ -670,6 +683,7 @@ class AppController(QObject):
             ):
                 return
             self.library_model.apply_refresh(library_payload)
+            self._flush_navigation_focus()
             self.folder_model.apply_refresh(folder_payload)
             self._counts_cache = counts
             self.countsChanged.emit()
@@ -732,46 +746,150 @@ class AppController(QObject):
             self.randomStateChanged.emit()
             self._queue_selection_neighbors()
 
-    def _clear_random_history(self) -> None:
-        self._random_history = []
-        self._random_history_index = -1
-        self.randomStateChanged.emit()
+    def _navigation_state(self) -> _NavigationState:
+        return _NavigationState(
+            folder=str(self.library_model.folder or ""),
+            search=str(self.library_model.search or ""),
+            media_id=max(0, int(self._selected_id)),
+        )
 
-    def _record_random_selection(self, media_id: int) -> None:
+    @staticmethod
+    def _append_navigation_state(
+        stack: list[_NavigationState],
+        state: _NavigationState,
+    ) -> bool:
+        if stack and stack[-1] == state:
+            return False
+        stack.append(state)
+        if len(stack) > 200:
+            del stack[:-200]
+        return True
+
+    def _record_navigation_origin(self) -> None:
+        if self._navigation_restoring:
+            return
+        changed = self._append_navigation_state(
+            self._navigation_back,
+            self._navigation_state(),
+        )
+        if self._navigation_forward:
+            self._navigation_forward.clear()
+            changed = True
+        if changed:
+            self.navigationHistoryChanged.emit()
+
+    def _clear_navigation_history(self) -> None:
+        changed = bool(self._navigation_back or self._navigation_forward)
+        self._navigation_back.clear()
+        self._navigation_forward.clear()
+        self._pending_navigation_focus_media_id = 0
+        if changed:
+            self.navigationHistoryChanged.emit()
+
+    def _resolve_navigation_state(
+        self,
+        state: _NavigationState,
+        *,
+        skip_missing_media: bool = False,
+    ) -> _NavigationState | None:
+        root = str(self._setting("library_root") or "")
+        media_id = max(0, int(state.media_id))
+        if media_id:
+            row = self.database.get_media(media_id)
+            row_root = str(row.get("root_path") or "") if row else ""
+            available = bool(
+                row
+                and bool(row.get("active", 1))
+                and bool(row.get("valid", 1))
+                and Path(str(row.get("path") or "")).is_file()
+                and root
+                and Path(row_root).expanduser().resolve()
+                == Path(root).expanduser().resolve()
+            )
+            if not available:
+                if skip_missing_media:
+                    return None
+                media_id = 0
+
+        folder = str(state.folder or "")
+        if folder:
+            folder_path = (
+                Path(root).expanduser() / Path(folder)
+                if root
+                else Path()
+            )
+            if (
+                not root
+                or not is_within(folder_path, root)
+                or not folder_path.is_dir()
+            ):
+                folder = ""
+
+        return _NavigationState(
+            folder=folder,
+            search=str(state.search or ""),
+            media_id=media_id,
+        )
+
+    def _flush_navigation_focus(self) -> None:
+        media_id = self._pending_navigation_focus_media_id
         if media_id <= 0:
             return
-        if self._random_history_index < len(self._random_history) - 1:
-            self._random_history = self._random_history[
-                : self._random_history_index + 1
-            ]
-        if self._random_history and self._random_history[-1] == media_id:
-            self._random_history_index = len(self._random_history) - 1
-        else:
-            self._random_history.append(media_id)
-            if len(self._random_history) > 200:
-                self._random_history = self._random_history[-200:]
-            self._random_history_index = len(self._random_history) - 1
-        self.randomStateChanged.emit()
+        self._pending_navigation_focus_media_id = 0
+        media_index = self.library_model.find_index(media_id)
+        if media_index >= 0:
+            self.librarySelectionRequested.emit(media_index)
 
-    def _forget_random_selection(self, media_id: int) -> None:
-        if media_id not in self._random_history:
+    def _restore_navigation_state(
+        self,
+        state: _NavigationState,
+    ) -> None:
+        self._navigation_restoring = True
+        try:
+            self._cancel_load_more()
+            self.library_model.folder = state.folder
+            self.library_model.search = state.search
+            self._select_media(state.media_id, record_navigation=False)
+            folder_index = self.folder_model.find_index(state.folder)
+            self.navigationRequested.emit("library")
+            self.libraryNavigationRestored.emit(
+                state.folder,
+                state.search,
+                folder_index,
+            )
+            self._pending_navigation_focus_media_id = state.media_id
+            self._refresh_library_model_only()
+            self._queue_selection_neighbors()
+        finally:
+            self._navigation_restoring = False
+
+    def _navigate_history(
+        self,
+        source: list[_NavigationState],
+        destination: list[_NavigationState],
+    ) -> None:
+        current = self._resolve_navigation_state(
+            self._navigation_state()
+        )
+        if current is None:
             return
-        removed_before_or_at = sum(
-            1
-            for item in self._random_history[
-                : self._random_history_index + 1
-            ]
-            if item == media_id
-        )
-        self._random_history = [
-            item for item in self._random_history
-            if item != media_id
-        ]
-        self._random_history_index = min(
-            len(self._random_history) - 1,
-            self._random_history_index - removed_before_or_at,
-        )
-        self.randomStateChanged.emit()
+        changed = False
+        while source:
+            candidate = self._resolve_navigation_state(
+                source.pop(),
+                skip_missing_media=True,
+            )
+            changed = True
+            if candidate is None:
+                continue
+            if candidate == current:
+                continue
+            self._append_navigation_state(destination, current)
+            self._restore_navigation_state(candidate)
+            self.navigationHistoryChanged.emit()
+            return
+        if changed:
+            self.navigationHistoryChanged.emit()
 
     def _queue_selection_neighbors(self) -> None:
         self._selection_navigation_generation += 1
@@ -1047,6 +1165,7 @@ class AppController(QObject):
     ) -> None:
         if not self._can_use_model_workers():
             self.library_model.refresh(preserve_loaded=preserve_loaded)
+            self._flush_navigation_focus()
             return
         if self._library_model_refresh_task:
             self._library_model_refresh_task.cancel()
@@ -1074,7 +1193,8 @@ class AppController(QObject):
                 request,
             )
             if not self._shutting_down:
-                self.library_model.apply_refresh(payload)
+                if self.library_model.apply_refresh(payload):
+                    self._flush_navigation_focus()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1132,7 +1252,7 @@ class AppController(QObject):
                     self._store_setting("random_folder_mode", "all")
                     self._store_setting("random_folders", [])
                     self._invalidate_random_folder_options(clear=True)
-                    self._clear_random_history()
+                    self._clear_navigation_history()
                 active_root = (
                     root
                     if root and Path(root).is_dir()
@@ -1178,6 +1298,7 @@ class AppController(QObject):
                         self._preload_selection_neighbors()
             if key == "sort_mode":
                 self._cancel_load_more()
+                self._pending_navigation_focus_media_id = 0
                 self.library_model.sort_mode = str(value)
                 self._refresh_library_model_only()
                 self._queue_selection_neighbors()
@@ -1187,7 +1308,11 @@ class AppController(QObject):
 
     @Slot(str)
     def setSearch(self, value: str) -> None:
+        value = str(value or "")
+        if value == self.library_model.search:
+            return
         self._cancel_load_more()
+        self._pending_navigation_focus_media_id = 0
         self.library_model.search = value
         self._refresh_library_model_only()
         self._queue_selection_neighbors()
@@ -1259,7 +1384,12 @@ class AppController(QObject):
 
     @Slot(str)
     def setFolder(self, value: str) -> None:
+        value = str(value or "")
+        if value == self.library_model.folder:
+            return
+        self._record_navigation_origin()
         self._cancel_load_more()
+        self._pending_navigation_focus_media_id = 0
         self.library_model.folder = value
         self._refresh_library_model_only()
         self._queue_selection_neighbors()
@@ -1430,9 +1560,16 @@ class AppController(QObject):
         except Exception as exc:
             LOGGER.warning("Background history page failed: %s", exc)
 
-    @Slot(int)
-    def selectMedia(self, media_id: int) -> None:
+    def _select_media(
+        self,
+        media_id: int,
+        *,
+        record_navigation: bool,
+    ) -> None:
         row = self.database.get_media(media_id)
+        target_id = int(row["id"]) if row else 0
+        if record_navigation and target_id != self._selected_id:
+            self._record_navigation_origin()
         self._set_selected(row)
         if row and float(row.get("duration") or 0) <= 0:
             asyncio.create_task(self._verify_selection_async(media_id))
@@ -1444,6 +1581,10 @@ class AppController(QObject):
                 and bool(self._setting("hover_previews"))
             ):
                 self.ensurePreview(media_id)
+
+    @Slot(int)
+    def selectMedia(self, media_id: int) -> None:
+        self._select_media(media_id, record_navigation=True)
 
     @Slot(int)
     def navigateSelection(self, direction: int) -> None:
@@ -1460,12 +1601,40 @@ class AppController(QObject):
             self.librarySelectionRequested.emit(media_index)
 
     @Slot()
-    def revealSelectedInLibrary(self) -> None:
+    def navigateBack(self) -> None:
+        self._navigate_history(
+            self._navigation_back,
+            self._navigation_forward,
+        )
+
+    @Slot()
+    def navigateForward(self) -> None:
+        self._navigate_history(
+            self._navigation_forward,
+            self._navigation_back,
+        )
+
+    def _reveal_selected_in_library(
+        self,
+        *,
+        record_navigation: bool,
+    ) -> None:
         row = self.database.get_media(self._selected_id)
         if not row:
-            self.toast.emit("error", "The selected video is no longer in the library.")
+            self.toast.emit(
+                "error",
+                "The selected video is no longer in the library.",
+            )
             return
         folder = str(row.get("folder") or "")
+        target = _NavigationState(
+            folder=folder,
+            search="",
+            media_id=self._selected_id,
+        )
+        if record_navigation and target != self._navigation_state():
+            self._record_navigation_origin()
+        self._pending_navigation_focus_media_id = 0
         self.library_model.search = ""
         self.library_model.folder = folder
         self.library_model.refresh()
@@ -1474,13 +1643,23 @@ class AppController(QObject):
             self.library_model.load_more()
             media_index = self.library_model.find_index(self._selected_id)
         if media_index < 0:
-            self.toast.emit("error", "The selected video could not be shown in the library.")
+            self.toast.emit(
+                "error",
+                "The selected video could not be shown in the library.",
+            )
             return
+        self._queue_selection_neighbors()
         self.navigationRequested.emit("library")
         self.libraryRevealRequested.emit(
             folder,
             media_index,
             self.folder_model.find_index(folder),
+        )
+
+    @Slot()
+    def revealSelectedInLibrary(self) -> None:
+        self._reveal_selected_in_library(
+            record_navigation=True,
         )
 
     @Slot(int)
@@ -1507,11 +1686,20 @@ class AppController(QObject):
         if not bool(row.get("active", 1)) or not bool(row.get("valid", 1)):
             self.toast.emit("error", "This source video is not available in the current library.")
             return
-        self.selectMedia(media_id)
-        self.revealSelectedInLibrary()
+        target = _NavigationState(
+            folder=str(row.get("folder") or ""),
+            search="",
+            media_id=media_id,
+        )
+        if target != self._navigation_state():
+            self._record_navigation_origin()
+        self._select_media(media_id, record_navigation=False)
+        self._reveal_selected_in_library(record_navigation=False)
 
     @Slot()
     def clearSelection(self) -> None:
+        if self._selected_id > 0:
+            self._record_navigation_origin()
         self._set_selected(None)
 
     @Slot()
@@ -1525,35 +1713,6 @@ class AppController(QObject):
             self.toast.emit("info", "Select at least one random source folder.")
             return
         asyncio.create_task(self._pick_random_cached_async())
-
-    @Slot()
-    def pickPreviousRandom(self) -> None:
-        if not self.canPickPreviousRandom:
-            return
-        target_index = self._random_history_index
-        if (
-            target_index >= 0
-            and self._selected_id == self._random_history[target_index]
-        ):
-            target_index -= 1
-        while target_index >= 0:
-            media_id = self._random_history[target_index]
-            row = self.database.get_media(media_id)
-            if (
-                row
-                and bool(row.get("active", 1))
-                and bool(row.get("valid", 1))
-                and Path(str(row.get("path") or "")).is_file()
-            ):
-                self._random_history_index = target_index
-                self.selectMedia(media_id)
-                media_index = self.library_model.find_index(media_id)
-                if media_index >= 0:
-                    self.librarySelectionRequested.emit(media_index)
-                self.randomStateChanged.emit()
-                return
-            target_index -= 1
-        self._clear_random_history()
 
     async def _pick_random_cached_async(self) -> None:
         if not self.hasRandomFolderSelection:
@@ -1601,15 +1760,15 @@ class AppController(QObject):
                 self.toast.emit("warning", message)
                 return
             needs_check = float(row.get("duration") or 0) <= 0
-            self._set_selected(row, checking=needs_check)
             media_id = int(row["id"])
-            self._record_random_selection(media_id)
+            if media_id != self._selected_id:
+                self._record_navigation_origin()
+            self._set_selected(row, checking=needs_check)
             if needs_check:
                 asyncio.create_task(
                     self._verify_selection_async(
                         media_id,
                         retry_random=True,
-                        discard_random_on_failure=True,
                     )
                 )
             else:
@@ -1626,13 +1785,10 @@ class AppController(QObject):
         self,
         media_id: int,
         retry_random: bool = False,
-        discard_random_on_failure: bool = False,
     ) -> None:
         try:
             row = await asyncio.to_thread(self.indexer.ensure_metadata, media_id)
             if not row:
-                if discard_random_on_failure:
-                    self._forget_random_selection(media_id)
                 if media_id == self._selected_id:
                     self._set_selected(None)
                 self._refresh_library_state(preserve_loaded=True)
@@ -1653,8 +1809,6 @@ class AppController(QObject):
                     self.ensurePreview(media_id)
         except Exception as exc:
             LOGGER.debug("Selected video validation failed for %s: %s", media_id, exc)
-            if discard_random_on_failure:
-                self._forget_random_selection(media_id)
             if media_id == self._selected_id:
                 self._set_selected(None)
                 self.toast.emit("error", "ClipRelay could not check that video.")
@@ -1862,7 +2016,6 @@ class AppController(QObject):
             self._finish_shuffle_reset()
 
     def _finish_shuffle_reset(self) -> None:
-        self._clear_random_history()
         self._refresh_counts()
         message = (
             "Random history was reset for the selected folders."

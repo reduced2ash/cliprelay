@@ -164,6 +164,19 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert "requestCommandSearch" in command
     assert "parent: Overlay.overlay" in command
     assert '\"id\": \"pick_random\"' in actions
+    assert '\"id\": \"navigate_back\"' in actions
+    assert '\"id\": \"navigate_forward\"' in actions
+    assert '\"id\": \"previous_random\"' not in actions
+    assert '\"id\": \"previous_video\"' not in actions
+    assert '\"id\": \"next_video\"' not in actions
+    assert 'action(\"navigate_back\")' in titlebar
+    assert 'action(\"navigate_forward\")' in titlebar
+    assert 'triggerAction(\"navigate_back\")' in main
+    assert 'triggerAction(\"navigate_forward\")' in main
+    assert "libraryPage.navigateSelection(-1)" in main
+    assert "libraryPage.navigateSelection(1)" in main
+    assert "pickPreviousRandom" not in main
+    assert "onLibraryNavigationRestored" in page
     assert '\"id\": \"toggle_folders\"' in actions
     assert '\"id\": \"theme_full_white\"' in actions
     assert "readonly property int workbenchTitleHeight: 40" in theme

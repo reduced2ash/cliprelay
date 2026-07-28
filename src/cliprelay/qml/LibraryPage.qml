@@ -136,6 +136,23 @@ Rectangle {
                 libraryGrid.forceActiveFocus()
             })
         }
+        function onLibraryNavigationRestored(folder, search, folderIndex) {
+            root.syncingReveal = true
+            root.showFolders = true
+            root.currentFolder = folder
+            root.searchText = search
+            controller.requestCommandSearch("")
+            root.syncingReveal = false
+            Qt.callLater(function() {
+                if (folderIndex >= 0) {
+                    folderList.currentIndex = folderIndex
+                    folderList.positionViewAtIndex(
+                        folderIndex,
+                        ListView.Contain
+                    )
+                }
+            })
+        }
         function onSelectedMediaChanged() {
             if (Number(controller.selectedMediaId || 0) <= 0)
                 root.prepareFullscreen = false

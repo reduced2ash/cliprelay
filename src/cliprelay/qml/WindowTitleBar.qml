@@ -77,26 +77,28 @@ Item {
         WorkbenchButton {
             Layout.preferredWidth: 28
             Layout.preferredHeight: 28
-            text: root.actionRegistry.action("previous_video").label
+            text: root.actionRegistry.action("navigate_back").label
             iconName: "chevronLeft"
             iconOnly: true
-            toolTipText: "Previous video  ·  ←"
+            toolTipText: "Go back  ·  "
+                + (root.macStyle ? "⌘[" : "Alt+←")
             kind: "ghost"
-            enabled: root.actionRegistry.action("previous_video").enabled
+            enabled: root.actionRegistry.action("navigate_back").enabled
             onClicked:
-                root.actionRegistry.triggerAction("previous_video")
+                root.actionRegistry.triggerAction("navigate_back")
         }
         WorkbenchButton {
             Layout.preferredWidth: 28
             Layout.preferredHeight: 28
-            text: root.actionRegistry.action("next_video").label
+            text: root.actionRegistry.action("navigate_forward").label
             iconName: "chevronRight"
             iconOnly: true
-            toolTipText: "Next video  ·  →"
+            toolTipText: "Go forward  ·  "
+                + (root.macStyle ? "⌘]" : "Alt+→")
             kind: "ghost"
-            enabled: root.actionRegistry.action("next_video").enabled
+            enabled: root.actionRegistry.action("navigate_forward").enabled
             onClicked:
-                root.actionRegistry.triggerAction("next_video")
+                root.actionRegistry.triggerAction("navigate_forward")
         }
 
         Item {

@@ -25,16 +25,6 @@ QtObject {
                     : appController.counts.media > 0)
         },
         {
-            "id": "previous_random",
-            "label": "Previous random video",
-            "detail": "Return to the previous item in random history",
-            "category": "Library",
-            "icon": "history",
-            "shortcut": "Shift+R",
-            "keywords": "back undo random history",
-            "enabled": appController.canPickPreviousRandom
-        },
-        {
             "id": "reset_shuffle",
             "label": "Reset shuffle history",
             "detail": "Allow every active video to be picked again",
@@ -45,24 +35,24 @@ QtObject {
             "enabled": Boolean(appController.settings.library_root)
         },
         {
-            "id": "previous_video",
-            "label": "Select previous video",
-            "detail": "Move backward in the current library order",
-            "category": "Selection",
+            "id": "navigate_back",
+            "label": "Go back",
+            "detail": "Restore the previous video or folder",
+            "category": "Navigation",
             "icon": "chevronLeft",
-            "shortcut": "←",
-            "keywords": "back previous selection",
-            "enabled": appController.canSelectPrevious
+            "shortcut": Qt.platform.os === "osx" ? "⌘[" : "Alt+←",
+            "keywords": "back undo previous video folder navigation",
+            "enabled": appController.canNavigateBack
         },
         {
-            "id": "next_video",
-            "label": "Select next video",
-            "detail": "Move forward in the current library order",
-            "category": "Selection",
+            "id": "navigate_forward",
+            "label": "Go forward",
+            "detail": "Reapply the next video or folder",
+            "category": "Navigation",
             "icon": "chevronRight",
-            "shortcut": "→",
-            "keywords": "forward next selection",
-            "enabled": appController.canSelectNext
+            "shortcut": Qt.platform.os === "osx" ? "⌘]" : "Alt+→",
+            "keywords": "forward redo next video folder navigation",
+            "enabled": appController.canNavigateForward
         },
         {
             "id": "toggle_folders",
@@ -247,17 +237,14 @@ QtObject {
         if (actionId === "pick_random") {
             hostWindow.currentPage = 0
             appController.pickRandom()
-        } else if (actionId === "previous_random") {
-            hostWindow.currentPage = 0
-            appController.pickPreviousRandom()
         } else if (actionId === "reset_shuffle") {
             appController.resetShuffle()
-        } else if (actionId === "previous_video") {
+        } else if (actionId === "navigate_back") {
             hostWindow.currentPage = 0
-            appController.navigateSelection(-1)
-        } else if (actionId === "next_video") {
+            appController.navigateBack()
+        } else if (actionId === "navigate_forward") {
             hostWindow.currentPage = 0
-            appController.navigateSelection(1)
+            appController.navigateForward()
         } else if (actionId === "toggle_folders") {
             libraryPage.toggleFolders()
         } else if (actionId === "choose_folder") {
