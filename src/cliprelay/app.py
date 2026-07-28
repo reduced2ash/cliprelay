@@ -25,6 +25,7 @@ from qasync import QEventLoop
 from . import __version__
 from .controller import AppController
 from .database import Database
+from .native_window import NativeWindowController
 from .paths import database_path, log_dir
 from .performance import PerformanceMonitor
 from .qt_models import FolderModel, HistoryModel, LibraryModel
@@ -142,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         controller.processor,
         lambda: controller.settings,
     )
+    native_window = NativeWindowController(app)
     controller.settingsChanged.connect(
         lambda: _apply_color_scheme(
             app, str(controller.settings.get("theme_mode", "relay"))
@@ -160,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     context.setContextProperty("historyModel", history_model)
     context.setContextProperty("performanceMonitor", performance_monitor)
+    context.setContextProperty("nativeWindow", native_window)
     qml_file = Path(__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
     if not engine.rootObjects():
@@ -170,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         root_window.setPersistentGraphics(True)
         root_window.setPersistentSceneGraph(True)
         performance_monitor.attach_window(root_window)
+        native_window.attach_window(root_window)
     controller.settingsChanged.connect(performance_monitor.settingsChanged)
     if args.window_width:
         root_window.setProperty("width", max(940, args.window_width))
@@ -178,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
 
     app.aboutToQuit.connect(controller.shutdown)
     app.aboutToQuit.connect(performance_monitor.shutdown)
+    app.aboutToQuit.connect(native_window.shutdown)
     app.aboutToQuit.connect(loop.stop)
     if args.screenshot:
         async def capture() -> None:
@@ -271,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.run_forever()
     controller.shutdown()
     performance_monitor.shutdown()
+    native_window.shutdown()
     for root_object in engine.rootObjects():
         root_object.deleteLater()
     engine.deleteLater()

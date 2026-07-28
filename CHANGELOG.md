@@ -8,6 +8,12 @@ release.
 
 ### Added
 
+- Theme-matched frameless window chrome with platform-aware controls,
+  keyboard-accessible window actions, and a compact native-scale title bar.
+- System window movement with a direct geometry fallback, plus all eight edge
+  and corner resize zones on macOS and Windows.
+- macOS window shadows, rounded windowed corners, double-click zoom, standard
+  green-button full screen, and Option-click zoom behavior.
 - Optional Maximum performance mode with persistent graphics resources,
   adjacent-media preloading, and higher bounded thumbnail concurrency.
 - Live renderer, GPU, refresh-rate, decoder, export-encoder, and frame-pacing
@@ -23,8 +29,8 @@ release.
 
 ### Fixed
 
-- Restored dependable dragging across both the visible macOS title strip and
-  app header surfaces, plus native edge and corner resizing.
+- Made title-bar dragging and frameless resizing dependable even when the Qt
+  platform backend does not provide a native operation.
 - Made shared dropdown triggers close an open menu instead of immediately
   reopening it.
 - Added faster eased mouse-wheel momentum throughout the app while preserving

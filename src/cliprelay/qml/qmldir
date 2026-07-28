@@ -14,6 +14,9 @@ AppTextArea 1.0 AppTextArea.qml
 ThemeChoice 1.0 ThemeChoice.qml
 StatusPill 1.0 StatusPill.qml
 NavButton 1.0 NavButton.qml
+WindowControlButton 1.0 WindowControlButton.qml
+WindowTitleBar 1.0 WindowTitleBar.qml
+WindowResizeFrame 1.0 WindowResizeFrame.qml
 MediaTile 1.0 MediaTile.qml
 FolderTreeRow 1.0 FolderTreeRow.qml
 PreparePanel 1.0 PreparePanel.qml

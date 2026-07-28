@@ -15,7 +15,24 @@ ClipRelay is a Python desktop application using Qt Quick through PySide6.
 | `cleanup.py` | Generated-file boundary checks and Trash operations |
 | `secrets.py` | Operating-system credential store and restricted fallback |
 | `qt_models.py` | Paged and virtualized Qt list models |
+| `native_window.py` | Frameless movement, resize, state, and macOS NSWindow integration |
 | `qml/` | Application shell, library, Prepare, history, settings, shared controls |
+
+## Window shell
+
+The visible title bar and window controls are rendered in QML so every theme
+owns the complete window surface. `NativeWindowController` keeps those controls
+connected to operating-system behavior:
+
+- system move where available, with a cursor-driven geometry fallback
+- native resize on supported backends, with constrained manual resizing on
+  macOS
+- normal, maximized, minimized, and full-screen state restoration
+- active and inactive presentation state
+- rounded windowed corners and native shadow configuration through NSWindow
+
+Resize hit zones live outside the scaled workspace, so interface-density
+settings do not shrink the draggable edges or title-bar controls.
 
 ## Large-library model
 

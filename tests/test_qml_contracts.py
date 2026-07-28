@@ -87,15 +87,35 @@ def test_settings_exposes_maximum_mode_and_live_performance_diagnostics() -> Non
     assert 'controller.settings.performance_mode === "maximum"' in library
 
 
-def test_header_background_starts_native_move_without_blocking_controls() -> None:
+def test_frameless_window_has_custom_titlebar_and_resize_fallbacks() -> None:
     main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    titlebar = (QML_DIR / "WindowTitleBar.qml").read_text(
+        encoding="utf-8"
+    )
+    resize_frame = (QML_DIR / "WindowResizeFrame.qml").read_text(
+        encoding="utf-8"
+    )
+    controls = (QML_DIR / "WindowControlButton.qml").read_text(
+        encoding="utf-8"
+    )
 
-    assert "Qt.NoTitleBarBackgroundHint" in main
+    assert "Qt.FramelessWindowHint" in main
+    assert "WindowTitleBar {" in main
+    assert "WindowResizeFrame {" in main
     assert "Qt.ExpandedClientAreaHint" not in main
-    assert "height: 82" in main
-    assert "z: -1" in main
-    assert main.count("mouse.accepted = window.startSystemMove()") == 1
-    assert "startSystemResize" not in main
+    assert "Qt.NoTitleBarBackgroundHint" not in main
+    assert "readonly property int titleBarHeight" in main
+
+    assert "root.windowController.beginMove()" in titlebar
+    assert "root.windowController.updateMove()" in titlebar
+    assert "root.windowController.toggleZoom()" in titlebar
+    assert "root.windowController.performPrimaryZoom()" in titlebar
+    assert 'Accessible.name: accessibleLabel' in controls
+
+    assert resize_frame.count("root.beginResize(") == 8
+    assert "windowController.updateResize()" in resize_frame
+    for edge in ("LeftEdge", "RightEdge", "TopEdge", "BottomEdge"):
+        assert f"Qt.{edge}" in resize_frame
 
 
 def test_combo_popup_treats_trigger_as_its_parent() -> None:

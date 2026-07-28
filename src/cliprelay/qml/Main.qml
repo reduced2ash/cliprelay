@@ -12,8 +12,8 @@ ApplicationWindow {
     visible: true
     title: "ClipRelay"
     flags: Qt.Window
-        | Qt.NoTitleBarBackgroundHint
-    color: Theme.ink
+        | Qt.FramelessWindowHint
+    color: "transparent"
     palette.window: Theme.surface
     palette.windowText: Theme.text
     palette.base: Theme.raised
@@ -42,6 +42,7 @@ ApplicationWindow {
     property bool narrowWindow: width / uiScale < 1080
     property bool navCollapsed: narrowWindow || Boolean(controller.settings.sidebar_collapsed)
     readonly property int shellBlendHeight: 96
+    readonly property int titleBarHeight: nativeWindow.fullscreen ? 0 : 38
 
     Binding {
         target: Theme
@@ -66,6 +67,23 @@ ApplicationWindow {
         enabled: window.currentPage === 0
         onActivated: libraryPage.focusSearch()
     }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+M" : "Ctrl+M"
+        onActivated: nativeWindow.minimizeWindow()
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Ctrl+Meta+F" : "F11"
+        onActivated: nativeWindow.toggleFullscreen()
+    }
+    Shortcut {
+        sequence: "Escape"
+        enabled: nativeWindow.fullscreen
+        onActivated: nativeWindow.toggleFullscreen()
+    }
+    Shortcut {
+        sequences: [StandardKey.Close]
+        onActivated: nativeWindow.closeWindow()
+    }
 
     Connections {
         target: controller
@@ -80,58 +98,69 @@ ApplicationWindow {
         }
     }
 
-    Item {
-        id: scaledWorkspace
-        focus: true
-        anchors.left: parent.left
-        anchors.top: parent.top
-        width: parent.width / window.uiScale
-        height: parent.height / window.uiScale
-        scale: window.uiScale
-        transformOrigin: Item.TopLeft
-        Keys.priority: Keys.AfterItem
-        Keys.onPressed: function(event) {
-            if (
-                window.currentPage !== 0
-                || !libraryPage.commandShortcutsEnabled
-                || event.isAutoRepeat
-            ) {
-                return
-            }
-            const noModifier = event.modifiers === Qt.NoModifier
-            const shiftOnly = event.modifiers === Qt.ShiftModifier
-            if (event.key === Qt.Key_Space && noModifier) {
-                libraryPage.togglePlayback()
-                event.accepted = true
-            } else if (event.key === Qt.Key_Left && noModifier) {
-                libraryPage.navigateSelection(-1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Right && noModifier) {
-                libraryPage.navigateSelection(1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_R && noModifier) {
-                controller.pickRandom()
-                event.accepted = true
-            } else if (event.key === Qt.Key_R && shiftOnly) {
-                controller.pickPreviousRandom()
-                event.accepted = true
-            }
-        }
+    Rectangle {
+        anchors.fill: parent
+        radius: nativeWindow.resizable ? Theme.radiusMd : 0
+        color: Theme.ink
+    }
 
-        // This sits behind the real controls. Buttons keep normal input, while
-        // blank header, page-title, and brand areas start the native macOS or
-        // Windows move operation directly from the mouse-down event.
-        MouseArea {
+    WindowTitleBar {
+        id: windowTitleBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: window.titleBarHeight
+        visible: height > 0
+        hostWindow: window
+        windowController: nativeWindow
+        z: 9000
+    }
+
+    Item {
+        id: contentViewport
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: windowTitleBar.bottom
+        anchors.bottom: parent.bottom
+        clip: true
+
+        Item {
+            id: scaledWorkspace
+            focus: true
             anchors.left: parent.left
-            anchors.right: parent.right
             anchors.top: parent.top
-            height: 82
-            z: -1
-            acceptedButtons: Qt.LeftButton
-            onPressed: function(mouse) {
-                mouse.accepted = window.startSystemMove()
+            width: parent.width / window.uiScale
+            height: parent.height / window.uiScale
+            scale: window.uiScale
+            transformOrigin: Item.TopLeft
+            Keys.priority: Keys.AfterItem
+            Keys.onPressed: function(event) {
+                if (
+                    window.currentPage !== 0
+                    || !libraryPage.commandShortcutsEnabled
+                    || event.isAutoRepeat
+                ) {
+                    return
+                }
+                const noModifier = event.modifiers === Qt.NoModifier
+                const shiftOnly = event.modifiers === Qt.ShiftModifier
+                if (event.key === Qt.Key_Space && noModifier) {
+                    libraryPage.togglePlayback()
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Left && noModifier) {
+                    libraryPage.navigateSelection(-1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Right && noModifier) {
+                    libraryPage.navigateSelection(1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_R && noModifier) {
+                    controller.pickRandom()
+                    event.accepted = true
+                } else if (event.key === Qt.Key_R && shiftOnly) {
+                    controller.pickPreviousRandom()
+                    event.accepted = true
+                }
             }
-        }
 
         RowLayout {
             anchors.fill: parent
@@ -393,6 +422,20 @@ ApplicationWindow {
             }
         }
         Timer { id: toastTimer; interval: 5200; onTriggered: toast.shown = false }
+        }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        radius: nativeWindow.resizable ? Theme.radiusMd : 0
+        color: "transparent"
+        border.width: nativeWindow.resizable ? 1 : 0
+        border.color: Theme.border
+        z: 9999
+    }
+
+    WindowResizeFrame {
+        anchors.fill: parent
+        windowController: nativeWindow
+    }
 }

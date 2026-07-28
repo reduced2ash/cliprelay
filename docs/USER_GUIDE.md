@@ -60,6 +60,14 @@ live playback and editing state while providing a larger editor.
 | `Cmd+1` / `Ctrl+1` | Open Library |
 | `Cmd+2` / `Ctrl+2` | Open History |
 | `Cmd+,` / `Ctrl+,` | Open Settings |
+| `Cmd+M` / `Ctrl+M` | Minimize the window |
+| `Control+Cmd+F` / `F11` | Enter or exit full screen |
+| `Escape` | Exit full screen |
+
+The themed title bar behaves like the platform window frame. Drag its empty
+area to move the window, drag any edge or corner to resize, and double-click
+the title bar to maximize or restore. On macOS, the green button enters full
+screen; Option-click it to zoom the window instead.
 
 ## Telegram
 
