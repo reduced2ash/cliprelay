@@ -80,8 +80,10 @@ Button {
             if (control.kind === "ghost") return control.hovered || control.down ? Theme.active : "transparent"
             return control.hovered || control.down ? Theme.active : Theme.raised
         }
-        border.width: control.activeFocus ? Theme.focusWidth : (control.kind === "secondary" ? 1 : 0)
-        border.color: control.activeFocus ? Theme.accent : Theme.border
+        border.width: control.visualFocus
+            ? Theme.focusWidth
+            : (control.kind === "secondary" ? 1 : 0)
+        border.color: control.visualFocus ? Theme.accent : Theme.border
         Behavior on color { ColorAnimation { duration: Theme.fastMotion } }
     }
 

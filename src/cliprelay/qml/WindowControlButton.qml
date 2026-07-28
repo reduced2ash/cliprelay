@@ -11,7 +11,7 @@ AbstractButton {
     property bool windowMaximized: false
     property bool windowFullscreen: false
     readonly property bool showGlyph: !macStyle || hovered || pressed
-        || activeFocus
+        || visualFocus
     readonly property color trafficColor: roleName === "close"
         ? "#FF5F57" : roleName === "minimize" ? "#FEBC2E" : "#28C840"
     readonly property string accessibleLabel: roleName === "close"
@@ -42,10 +42,10 @@ AbstractButton {
                 return "#C8464B"
             if (root.pressed)
                 return Theme.active
-            return root.hovered || root.activeFocus
+            return root.hovered || root.visualFocus
                 ? Theme.hover : "transparent"
         }
-        border.width: root.activeFocus ? 1 : 0
+        border.width: root.visualFocus ? 1 : 0
         border.color: Theme.accent
 
         Rectangle {

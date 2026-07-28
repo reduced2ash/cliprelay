@@ -54,7 +54,7 @@ ComboBox {
         height: 13
         name: control.popup.visible ? "chevronUp" : "chevronDown"
         strokeWidth: 1.8
-        iconColor: control.activeFocus || control.popup.visible
+        iconColor: control.visualFocus || control.popup.visible
             ? Theme.accent : Theme.muted
     }
 
@@ -71,8 +71,8 @@ ComboBox {
         radius: Theme.radiusWorkbench
         color: control.hovered || control.popup.visible
             ? Theme.hover : Theme.raised
-        border.width: control.activeFocus || control.popup.visible ? 2 : 1
-        border.color: control.activeFocus || control.popup.visible
+        border.width: control.visualFocus || control.popup.visible ? 2 : 1
+        border.color: control.visualFocus || control.popup.visible
             ? Theme.accent : Theme.border
         Behavior on color {
             ColorAnimation { duration: Theme.fastMotion }

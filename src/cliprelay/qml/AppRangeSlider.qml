@@ -35,7 +35,7 @@ RangeSlider {
         radius: width / 2
         color: Theme.text
         border.width: 2
-        border.color: control.activeFocus ? Theme.accent : Theme.raised
+        border.color: control.visualFocus ? Theme.accent : Theme.raised
         Behavior on width { NumberAnimation { duration: Theme.quickMotion } }
     }
 
@@ -47,7 +47,7 @@ RangeSlider {
         radius: width / 2
         color: Theme.text
         border.width: 2
-        border.color: control.activeFocus ? Theme.accent : Theme.raised
+        border.color: control.visualFocus ? Theme.accent : Theme.raised
         Behavior on width { NumberAnimation { duration: Theme.quickMotion } }
     }
 }

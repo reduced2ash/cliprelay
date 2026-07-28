@@ -27,12 +27,12 @@ Slider {
     handle: Rectangle {
         x: control.leftPadding + control.visualPosition * (control.availableWidth - width)
         y: Math.round((control.height - height) / 2)
-        width: control.pressed || control.activeFocus ? 17 : 15
+        width: control.pressed || control.visualFocus ? 17 : 15
         height: width
         radius: width / 2
         color: Theme.text
-        border.width: control.activeFocus ? 3 : 2
-        border.color: control.activeFocus ? Theme.accent : Theme.raised
+        border.width: control.visualFocus ? 3 : 2
+        border.color: control.visualFocus ? Theme.accent : Theme.raised
         Behavior on width { NumberAnimation { duration: Theme.quickMotion } }
     }
 }

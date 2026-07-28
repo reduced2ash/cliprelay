@@ -29,8 +29,8 @@ CheckBox {
         color: control.checked
             ? (control.down ? Theme.accentPressed : Theme.accent)
             : control.hovered ? Theme.active : Theme.raised
-        border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus
+        border.width: control.visualFocus ? 2 : 1
+        border.color: control.visualFocus
             ? Theme.accent
             : control.checked ? Theme.accent : Theme.borderStrong
 

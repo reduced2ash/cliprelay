@@ -29,56 +29,65 @@ Button {
     Accessible.name: text
     Accessible.description: toolTipText
 
-    contentItem: RowLayout {
-        id: contentRow
-        spacing: 6
-
-        Item {
-            visible: control.iconOnly
-            Layout.fillWidth: true
-        }
+    contentItem: Item {
         AppIcon {
-            visible: control.iconName.length > 0
-            Layout.preferredWidth: control.iconOnly ? 16 : 15
-            Layout.preferredHeight: control.iconOnly ? 16 : 15
-            Layout.alignment: Qt.AlignVCenter
+            visible: control.iconOnly && control.iconName.length > 0
+            anchors.centerIn: parent
+            width: 16
+            height: 16
             name: control.iconName
-            strokeWidth: control.iconOnly ? 1.85 : 1.7
+            strokeWidth: 1.85
             iconColor: control.kind === "primary"
                 ? Theme.accentContent
                 : control.enabled
-                    ? (control.hovered || control.activeFocus
+                    ? (control.hovered || control.visualFocus
                         ? Theme.text : Theme.textSoft)
                     : Theme.mutedSoft
         }
-        Text {
+
+        RowLayout {
+            id: contentRow
             visible: !control.iconOnly
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-            Layout.alignment: Qt.AlignVCenter
-            text: control.text
-            color: control.kind === "primary"
-                ? Theme.accentContent : Theme.text
-            font.pixelSize: Theme.textWorkbench
-            font.weight: control.kind === "primary"
-                ? Font.DemiBold : Font.Medium
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
-        }
-        AppIcon {
-            visible: !control.iconOnly
-                && control.trailingIconName.length > 0
-            Layout.preferredWidth: 13
-            Layout.preferredHeight: 13
-            Layout.alignment: Qt.AlignVCenter
-            name: control.trailingIconName
-            strokeWidth: 1.8
-            iconColor: control.kind === "primary"
-                ? Theme.accentContent : Theme.muted
-        }
-        Item {
-            visible: control.iconOnly
-            Layout.fillWidth: true
+            anchors.fill: parent
+            spacing: 6
+
+            AppIcon {
+                visible: control.iconName.length > 0
+                Layout.preferredWidth: 15
+                Layout.preferredHeight: 15
+                Layout.alignment: Qt.AlignVCenter
+                name: control.iconName
+                strokeWidth: 1.7
+                iconColor: control.kind === "primary"
+                    ? Theme.accentContent
+                    : control.enabled
+                        ? (control.hovered || control.visualFocus
+                            ? Theme.text : Theme.textSoft)
+                        : Theme.mutedSoft
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.alignment: Qt.AlignVCenter
+                text: control.text
+                color: control.kind === "primary"
+                    ? Theme.accentContent : Theme.text
+                font.pixelSize: Theme.textWorkbench
+                font.weight: control.kind === "primary"
+                    ? Font.DemiBold : Font.Medium
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+            AppIcon {
+                visible: control.trailingIconName.length > 0
+                Layout.preferredWidth: 13
+                Layout.preferredHeight: 13
+                Layout.alignment: Qt.AlignVCenter
+                name: control.trailingIconName
+                strokeWidth: 1.8
+                iconColor: control.kind === "primary"
+                    ? Theme.accentContent : Theme.muted
+            }
         }
     }
 
@@ -94,10 +103,10 @@ Button {
             return control.kind === "secondary"
                 ? Theme.raised : "transparent"
         }
-        border.width: control.activeFocus
+        border.width: control.visualFocus
             ? Theme.focusWidth
             : control.kind === "secondary" ? 1 : 0
-        border.color: control.activeFocus ? Theme.accent : Theme.border
+        border.color: control.visualFocus ? Theme.accent : Theme.border
         Behavior on color {
             ColorAnimation { duration: Theme.fastMotion }
         }

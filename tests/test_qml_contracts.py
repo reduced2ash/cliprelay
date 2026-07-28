@@ -168,3 +168,28 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert '\"id\": \"theme_full_white\"' in actions
     assert "readonly property int workbenchTitleHeight: 40" in theme
     assert "readonly property int workbenchContextHeight: 42" in theme
+
+
+def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> None:
+    workbench_button = (QML_DIR / "WorkbenchButton.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "contentItem: Item {" in workbench_button
+    assert "anchors.centerIn: parent" in workbench_button
+
+    for filename in (
+        "WorkbenchButton.qml",
+        "AppButton.qml",
+        "NavButton.qml",
+        "WindowControlButton.qml",
+        "ThemeChoice.qml",
+        "AppCheckBox.qml",
+        "AppComboBox.qml",
+        "WorkbenchComboBox.qml",
+        "AppSlider.qml",
+        "AppRangeSlider.qml",
+    ):
+        source = (QML_DIR / filename).read_text(encoding="utf-8")
+        assert "visualFocus" in source
+        assert ".activeFocus" not in source

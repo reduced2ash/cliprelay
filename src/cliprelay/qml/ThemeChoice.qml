@@ -137,8 +137,8 @@ Button {
         color: control.selected
             ? Theme.accentSoft
             : control.hovered ? Theme.hover : Theme.surfaceSoft
-        border.width: control.activeFocus || control.selected ? 2 : 1
-        border.color: control.activeFocus || control.selected
+        border.width: control.visualFocus || control.selected ? 2 : 1
+        border.color: control.visualFocus || control.selected
             ? Theme.accent : control.hovered ? Theme.borderStrong : Theme.border
         Behavior on color { ColorAnimation { duration: Theme.fastMotion } }
         Behavior on border.color { ColorAnimation { duration: Theme.fastMotion } }

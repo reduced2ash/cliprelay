@@ -368,7 +368,7 @@ Item {
                         hoverEnabled: true
                         enabled: modelData.enabled !== false
                         highlighted: ListView.isCurrentItem
-                            || hovered || activeFocus
+                            || hovered || visualFocus
                         focusPolicy: Qt.StrongFocus
                         Accessible.name: modelData.title
                         Accessible.description: modelData.detail
@@ -432,7 +432,7 @@ Item {
                             radius: Theme.radiusWorkbench
                             color: resultRow.highlighted
                                 ? Theme.active : "transparent"
-                            border.width: resultRow.activeFocus
+                            border.width: resultRow.visualFocus
                                 ? Theme.focusWidth : 0
                             border.color: Theme.accent
                         }
