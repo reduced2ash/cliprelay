@@ -356,6 +356,9 @@ class AppController(QObject):
             "folder": "",
             "search": "",
             "sortMode": str(self._setting("sort_mode", "newest")),
+            "folderSortMode": str(
+                self._setting("folder_sort_mode", "name_asc")
+            ),
             "selectedMediaId": 0,
             "selectedMediaName": "",
             "navigationBack": [],
@@ -385,6 +388,11 @@ class AppController(QObject):
         sort_mode = str(value.get("sortMode") or "newest")
         if sort_mode not in {"newest", "oldest", "name", "duration", "size"}:
             sort_mode = "newest"
+        folder_sort_mode = str(
+            value.get("folderSortMode") or "name_asc"
+        )
+        if folder_sort_mode not in FolderModel.SORT_MODES:
+            folder_sort_mode = "name_asc"
         random_mode = (
             "selected"
             if value.get("randomFolderMode") == "selected"
@@ -423,6 +431,7 @@ class AppController(QObject):
             "folder": str(value.get("folder") or ""),
             "search": str(value.get("search") or ""),
             "sortMode": sort_mode,
+            "folderSortMode": folder_sort_mode,
             "selectedMediaId": selected_media_id,
             "selectedMediaName": str(
                 value.get("selectedMediaName") or ""
@@ -461,6 +470,9 @@ class AppController(QObject):
             initial["sortMode"] = str(
                 self._setting("sort_mode", "newest")
             )
+            initial["folderSortMode"] = str(
+                self._setting("folder_sort_mode", "name_asc")
+            )
             initial["randomFolderMode"] = self._random_folder_mode()
             initial["randomFolders"] = self._stored_random_folders()
             self._workspace_tabs = [initial]
@@ -491,6 +503,9 @@ class AppController(QObject):
         if active:
             self._settings_cache["library_root"] = active["root"]
             self._settings_cache["sort_mode"] = active["sortMode"]
+            self._settings_cache["folder_sort_mode"] = (
+                active["folderSortMode"]
+            )
             self._settings_cache["random_folder_mode"] = (
                 active["randomFolderMode"]
             )
@@ -510,6 +525,7 @@ class AppController(QObject):
             self.library_model.folder = active["folder"]
             self.library_model.search = active["search"]
             self.library_model.sort_mode = active["sortMode"]
+            self.folder_model.set_sort_mode(active["folderSortMode"])
             self._pending_navigation_focus_media_id = max(
                 0,
                 int(active["selectedMediaId"]),
@@ -559,6 +575,10 @@ class AppController(QObject):
         workspace["sortMode"] = str(
             self.library_model.sort_mode
             or self._setting("sort_mode", "newest")
+        )
+        workspace["folderSortMode"] = str(
+            self.folder_model.sort_mode
+            or self._setting("folder_sort_mode", "name_asc")
         )
         workspace["selectedMediaId"] = max(0, int(self._selected_id))
         workspace["selectedMediaName"] = str(
@@ -615,6 +635,7 @@ class AppController(QObject):
             "folder": workspace["folder"],
             "search": workspace["search"],
             "sortMode": workspace["sortMode"],
+            "folderSortMode": workspace["folderSortMode"],
             "selectedMediaName": workspace["selectedMediaName"],
             "active": workspace["id"] == self._active_workspace_id,
             "index": index,
@@ -705,6 +726,10 @@ class AppController(QObject):
             self._store_setting("library_root", workspace["root"])
             self._store_setting("sort_mode", workspace["sortMode"])
             self._store_setting(
+                "folder_sort_mode",
+                workspace["folderSortMode"],
+            )
+            self._store_setting(
                 "random_folder_mode",
                 workspace["randomFolderMode"],
             )
@@ -730,6 +755,9 @@ class AppController(QObject):
             self.library_model.folder = workspace["folder"]
             self.library_model.search = workspace["search"]
             self.library_model.sort_mode = workspace["sortMode"]
+            self.folder_model.set_sort_mode(
+                workspace["folderSortMode"]
+            )
             self._set_selected(self._workspace_media_row(workspace))
             self._invalidate_random_folder_options(clear=True)
             self._stop_watcher(wait=False)
@@ -1198,6 +1226,9 @@ class AppController(QObject):
 
     def refresh_all(self) -> None:
         self.library_model.sort_mode = self._setting("sort_mode")
+        self.folder_model.set_sort_mode(
+            str(self._setting("folder_sort_mode", "name_asc"))
+        )
         if self._can_use_model_workers():
             self._queue_full_model_refresh()
             return
@@ -2009,6 +2040,11 @@ class AppController(QObject):
                 self.library_model.sort_mode = str(value)
                 self._refresh_library_model_only()
                 self._queue_selection_neighbors()
+                self._schedule_workspace_persist()
+            if key == "folder_sort_mode":
+                self.folder_model.set_sort_mode(
+                    str(self._setting("folder_sort_mode", "name_asc"))
+                )
                 self._schedule_workspace_persist()
             self.settingsChanged.emit()
         except Exception as exc:

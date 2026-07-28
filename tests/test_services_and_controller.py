@@ -816,6 +816,7 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
     monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
 
     first_workspace = controller.activeWorkspaceId
+    controller.setSetting("folder_sort_mode", "count_desc")
     controller.selectMedia(media[0][0])
     controller.selectMedia(media[0][1])
     controller.saveActiveWorkspaceDraft({
@@ -827,6 +828,7 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
     second_workspace = controller.activeWorkspaceId
     assert second_workspace != first_workspace
     assert controller.settings["library_root"] == str(roots[1])
+    controller.setSetting("folder_sort_mode", "name_desc")
     controller.selectMedia(media[1][0])
     controller.selectMedia(media[1][1])
     controller.saveActiveWorkspaceDraft({
@@ -839,12 +841,14 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
 
     controller.activateWorkspace(first_workspace)
     assert controller.settings["library_root"] == str(roots[0])
+    assert controller.settings["folder_sort_mode"] == "count_desc"
     assert controller.selectedMediaId == media[0][1]
     assert controller.activeWorkspaceDraft["caption"] == "first workspace"
     controller.navigateBack()
     assert controller.selectedMediaId == media[0][0]
 
     controller.activateWorkspace(second_workspace)
+    assert controller.settings["folder_sort_mode"] == "name_desc"
     assert controller.selectedMediaId == media[1][0]
     assert controller.canNavigateForward
     assert controller.activeWorkspaceDraft["caption"] == "second workspace"
@@ -874,6 +878,7 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
     assert restored.workspaceCount == 3
     assert restored.activeWorkspaceId == duplicate_id
     assert restored.settings["library_root"] == str(roots[1])
+    assert restored.settings["folder_sort_mode"] == "name_desc"
     assert restored.activeWorkspaceDraft["caption"] == "second workspace"
     restored.shutdown()
 

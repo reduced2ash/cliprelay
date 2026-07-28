@@ -282,6 +282,16 @@ class LibraryModel(DictListModel):
 
 
 class FolderModel(DictListModel):
+    SORT_MODES = {
+        "name_asc",
+        "name_desc",
+        "added_recent",
+        "added_old",
+        "recent",
+        "stale",
+        "count_desc",
+        "count_asc",
+    }
     PathRole = Qt.ItemDataRole.UserRole + 1
     NameRole = PathRole + 1
     CountRole = PathRole + 2
@@ -313,6 +323,7 @@ class FolderModel(DictListModel):
         self._expanded: set[str] = set()
         self._initialized = False
         self._media_count = 0
+        self.sort_mode = "name_asc"
 
     @Property(int, notify=summaryChanged)
     def totalCount(self) -> int:
@@ -358,11 +369,76 @@ class FolderModel(DictListModel):
         self.replace(self._visible_rows())
         self.summaryChanged.emit()
 
+    def _sort_children(self) -> None:
+        def name_key(path: str) -> tuple[str, str]:
+            node = self._nodes[path]
+            return (
+                str(node["folderName"]).casefold(),
+                path.casefold(),
+            )
+
+        for paths in self._children.values():
+            if self.sort_mode == "name_desc":
+                paths.sort(key=name_key, reverse=True)
+            elif self.sort_mode == "added_recent":
+                paths.sort(key=name_key)
+                paths.sort(
+                    key=lambda path: str(
+                        self._nodes[path]["latestIndexed"]
+                    ),
+                    reverse=True,
+                )
+            elif self.sort_mode == "added_old":
+                paths.sort(
+                    key=lambda path: (
+                        str(self._nodes[path]["latestIndexed"]),
+                        *name_key(path),
+                    )
+                )
+            elif self.sort_mode == "recent":
+                paths.sort(
+                    key=lambda path: (
+                        -float(self._nodes[path]["latestMtime"]),
+                        *name_key(path),
+                    )
+                )
+            elif self.sort_mode == "stale":
+                paths.sort(
+                    key=lambda path: (
+                        float(self._nodes[path]["latestMtime"]),
+                        *name_key(path),
+                    )
+                )
+            elif self.sort_mode == "count_desc":
+                paths.sort(
+                    key=lambda path: (
+                        -int(self._nodes[path]["videoCount"]),
+                        *name_key(path),
+                    )
+                )
+            elif self.sort_mode == "count_asc":
+                paths.sort(
+                    key=lambda path: (
+                        int(self._nodes[path]["videoCount"]),
+                        *name_key(path),
+                    )
+                )
+            else:
+                paths.sort(key=name_key)
+
+    def set_sort_mode(self, mode: str) -> None:
+        normalized = mode if mode in self.SORT_MODES else "name_asc"
+        if normalized == self.sort_mode:
+            return
+        self.sort_mode = normalized
+        self._sort_children()
+        self._rebuild_visible()
+
     def fetch_refresh(self) -> tuple[int, dict[str, dict[str, Any]], dict[str, list[str]]]:
         media_count = self.database.counts()["media"]
         nodes: dict[str, dict[str, Any]] = {}
         children: dict[str, list[str]] = {}
-        for row in self.database.list_random_folders():
+        for row in self.database.list_explorer_folders():
             path = str(row["folder"])
             if not path:
                 continue
@@ -374,11 +450,10 @@ class FolderModel(DictListModel):
                 "folderFullPath": path,
                 "folderKind": "folder",
                 "folderParent": parent,
+                "latestMtime": float(row["latest_mtime"]),
+                "latestIndexed": str(row["latest_indexed"]),
             }
             children.setdefault(parent, []).append(path)
-
-        for paths in children.values():
-            paths.sort(key=lambda path: nodes[path]["folderName"].casefold())
         return media_count, nodes, children
 
     def apply_refresh(
@@ -390,6 +465,7 @@ class FolderModel(DictListModel):
         self._media_count = media_count
         self._nodes = nodes
         self._children = children
+        self._sort_children()
         self._expanded.intersection_update(nodes)
         top_level_branches = {
             path

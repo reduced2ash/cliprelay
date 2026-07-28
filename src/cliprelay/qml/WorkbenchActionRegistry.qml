@@ -169,6 +169,86 @@ QtObject {
             "enabled": appController.settings.sort_mode !== "size"
         },
         {
+            "id": "folder_sort_name_asc",
+            "label": "Sort folders A to Z",
+            "detail": "Alphabetical Explorer folder order",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder alphabetical ascending",
+            "enabled": appController.settings.folder_sort_mode !== "name_asc"
+        },
+        {
+            "id": "folder_sort_name_desc",
+            "label": "Sort folders Z to A",
+            "detail": "Reverse alphabetical Explorer folder order",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder alphabetical descending",
+            "enabled": appController.settings.folder_sort_mode !== "name_desc"
+        },
+        {
+            "id": "folder_sort_added_recent",
+            "label": "Sort folders by recent additions",
+            "detail": "Folders with newly indexed videos first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder recently added indexed",
+            "enabled": appController.settings.folder_sort_mode !== "added_recent"
+        },
+        {
+            "id": "folder_sort_added_old",
+            "label": "Sort folders by oldest additions",
+            "detail": "Folders whose newest additions are oldest first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder least recently added indexed",
+            "enabled": appController.settings.folder_sort_mode !== "added_old"
+        },
+        {
+            "id": "folder_sort_recent",
+            "label": "Sort folders by recent updates",
+            "detail": "Folders with the newest videos first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder recent updated newest",
+            "enabled": appController.settings.folder_sort_mode !== "recent"
+        },
+        {
+            "id": "folder_sort_stale",
+            "label": "Sort folders by oldest updates",
+            "detail": "Folders least recently updated first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder old stale least recent",
+            "enabled": appController.settings.folder_sort_mode !== "stale"
+        },
+        {
+            "id": "folder_sort_count_desc",
+            "label": "Sort folders by most videos",
+            "detail": "Largest Explorer folders first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder count most videos",
+            "enabled": appController.settings.folder_sort_mode !== "count_desc"
+        },
+        {
+            "id": "folder_sort_count_asc",
+            "label": "Sort folders by fewest videos",
+            "detail": "Smallest Explorer folders first",
+            "category": "Sort",
+            "icon": "folders",
+            "shortcut": "",
+            "keywords": "sort explorer folder count fewest videos",
+            "enabled": appController.settings.folder_sort_mode !== "count_asc"
+        },
+        {
             "id": "density_default",
             "label": "Use default library density",
             "detail": "Show readable thumbnails with complete metadata",
@@ -308,6 +388,8 @@ QtObject {
             libraryPage.reopenClosedWorkspace()
         } else if (actionId === "rescan") {
             appController.scanLibrary()
+        } else if (actionId.indexOf("folder_sort_") === 0) {
+            libraryPage.setFolderSortMode(actionId.substring(12))
         } else if (actionId.indexOf("sort_") === 0) {
             libraryPage.setSortMode(actionId.substring(5))
         } else if (actionId === "density_default") {

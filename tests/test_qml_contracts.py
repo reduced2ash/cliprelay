@@ -107,6 +107,9 @@ def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> Non
         encoding="utf-8"
     )
     row = (QML_DIR / "FolderTreeRow.qml").read_text(encoding="utf-8")
+    sort_control = (QML_DIR / "LibrarySortControl.qml").read_text(
+        encoding="utf-8"
+    )
 
     assert 'text: "EXPLORER"' in context
     assert "folderTreeModel.totalCount.toLocaleString()" in context
@@ -116,6 +119,16 @@ def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> Non
     assert "folderModel.toggleExpanded(folderPath)" in page
     assert "folderModel.parentIndex(folderRow.folderPath)" in page
     assert "reuseItems: true" in page
+    assert "LibrarySortControl {" in context
+    assert 'text: "VIDEOS"' in sort_control
+    assert 'text: "EXPLORER FOLDERS"' in sort_control
+    assert '"mode": "name_asc"' in sort_control
+    assert '"mode": "added_recent"' in sort_control
+    assert '"mode": "recent"' in sort_control
+    assert '"mode": "count_desc"' in sort_control
+    assert "Popup.CloseOnPressOutsideParent" in sort_control
+    assert '"folder_sort_" + modelData.mode' in sort_control
+    assert 'setSetting("folder_sort_mode", mode)' in page
 
     assert "height: 34" in row
     assert "required property int folderDepth" in row

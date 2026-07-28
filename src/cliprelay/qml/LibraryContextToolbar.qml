@@ -224,20 +224,11 @@ Rectangle {
                     color: Theme.border
                 }
 
-                WorkbenchComboBox {
-                    id: sortBox
+                LibrarySortControl {
                     visible: root.hasLibrary
                     Layout.preferredWidth: root.narrowActions ? 96 : 112
-                    model: ["Newest", "Oldest", "Name", "Duration", "Size"]
-                    currentIndex: [
-                        "newest", "oldest", "name", "duration", "size"
-                    ].indexOf(root.appController.settings.sort_mode)
-                    onActivated: root.actionRegistry.triggerAction(
-                        "sort_" + [
-                            "newest", "oldest", "name", "duration", "size"
-                        ][currentIndex]
-                    )
-                    Accessible.name: "Sort videos"
+                    actionRegistry: root.actionRegistry
+                    appController: root.appController
                 }
 
                 Rectangle {

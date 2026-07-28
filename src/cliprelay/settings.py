@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
     "sidebar_collapsed": False,
     "prepare_expanded": False,
     "sort_mode": "newest",
+    "folder_sort_mode": "name_asc",
     "cleanup_policy": "keep",
     "x_limit_mb": 512,
     "x_duration_seconds": 140,
@@ -67,6 +68,19 @@ class Settings:
             value = str(value)
             if value not in {"default", "compact"}:
                 value = "default"
+        if key == "folder_sort_mode":
+            value = str(value)
+            if value not in {
+                "name_asc",
+                "name_desc",
+                "added_recent",
+                "added_old",
+                "recent",
+                "stale",
+                "count_desc",
+                "count_asc",
+            }:
+                value = "name_asc"
         if key == "export_encoder":
             value = str(value)
             if value not in {"auto", "hardware", "software"}:

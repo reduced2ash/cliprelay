@@ -16,20 +16,25 @@ def test_performance_settings_validate_and_default_safely(
     assert settings.get("performance_mode") == "automatic"
     assert settings.get("export_encoder") == "auto"
     assert settings.get("library_density") == "default"
+    assert settings.get("folder_sort_mode") == "name_asc"
 
     settings.set("performance_mode", "maximum")
     settings.set("export_encoder", "hardware")
     settings.set("library_density", "compact")
+    settings.set("folder_sort_mode", "recent")
     assert settings.as_dict()["performance_mode"] == "maximum"
     assert settings.as_dict()["export_encoder"] == "hardware"
     assert settings.as_dict()["library_density"] == "compact"
+    assert settings.as_dict()["folder_sort_mode"] == "recent"
 
     settings.set("performance_mode", "turbo")
     settings.set("export_encoder", "mystery")
     settings.set("library_density", "poster-wall")
+    settings.set("folder_sort_mode", "random")
     assert settings.get("performance_mode") == "automatic"
     assert settings.get("export_encoder") == "auto"
     assert settings.get("library_density") == "default"
+    assert settings.get("folder_sort_mode") == "name_asc"
 
 
 def media_payload(path: Path, root: Path, name: str = "sample.mp4") -> dict:
@@ -219,6 +224,64 @@ def test_folder_model_builds_a_compact_expandable_tree(tmp_path: Path) -> None:
         "exports",
         "studio",
     ]
+
+
+def test_folder_model_sorts_siblings_without_refreshing(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+
+    def add_video(relative_path: str, mtime: float) -> None:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative_path.encode())
+        payload = media_payload(path, root, path.name)
+        payload.update(
+            relative_path=relative_path,
+            folder=path.parent.relative_to(root).as_posix(),
+            mtime=mtime,
+        )
+        database.upsert_media(payload)
+
+    add_video("alpha/a.mp4", 10)
+    add_video("beta/one.mp4", 20)
+    add_video("beta/two.mp4", 30)
+    add_video("zulu/z.mp4", 40)
+    with database.connection() as connection:
+        connection.execute(
+            "UPDATE media_files SET indexed_at = CASE folder "
+            "WHEN 'alpha' THEN '2026-01-03T00:00:00+00:00' "
+            "WHEN 'beta' THEN '2026-01-02T00:00:00+00:00' "
+            "ELSE '2026-01-01T00:00:00+00:00' END"
+        )
+
+    model = FolderModel(database)
+    model.refresh()
+
+    def top_level() -> list[str]:
+        return [
+            row["folderPath"]
+            for row in model.rows
+            if row["folderDepth"] == 0 and row["folderKind"] == "folder"
+        ]
+
+    assert top_level() == ["alpha", "beta", "zulu"]
+    model.set_sort_mode("name_desc")
+    assert top_level() == ["zulu", "beta", "alpha"]
+    model.set_sort_mode("added_recent")
+    assert top_level() == ["alpha", "beta", "zulu"]
+    model.set_sort_mode("added_old")
+    assert top_level() == ["zulu", "beta", "alpha"]
+    model.set_sort_mode("recent")
+    assert top_level() == ["zulu", "beta", "alpha"]
+    model.set_sort_mode("stale")
+    assert top_level() == ["alpha", "beta", "zulu"]
+    model.set_sort_mode("count_desc")
+    assert top_level() == ["beta", "alpha", "zulu"]
+    model.set_sort_mode("count_asc")
+    assert top_level() == ["alpha", "zulu", "beta"]
 
 
 def test_invalidate_missing_preserves_present_files(tmp_path: Path) -> None:

@@ -738,6 +738,63 @@ class Database:
         )
         return folders
 
+    def list_explorer_folders(self) -> list[dict[str, Any]]:
+        """Return folder-tree aggregates used by the Explorer.
+
+        Counts and modification times include every descendant so a parent
+        folder sorts according to the videos visible when that branch is
+        selected, rather than only files placed directly inside it.
+        """
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT folder, COUNT(*) AS count, MAX(mtime) AS latest_mtime, "
+                "MAX(indexed_at) AS latest_indexed "
+                "FROM media_files WHERE valid=1 AND active=1 "
+                "GROUP BY folder"
+            ).fetchall()
+
+        aggregates: dict[str, dict[str, int | float | str]] = {}
+        for row in rows:
+            folder = str(row["folder"])
+            if not folder:
+                continue
+            count = int(row["count"])
+            latest_mtime = float(row["latest_mtime"] or 0)
+            latest_indexed = str(row["latest_indexed"] or "")
+            parts = folder.split("/")
+            for depth in range(1, len(parts) + 1):
+                ancestor = "/".join(parts[:depth])
+                aggregate = aggregates.setdefault(
+                    ancestor,
+                    {
+                        "count": 0,
+                        "latest_mtime": 0.0,
+                        "latest_indexed": "",
+                    },
+                )
+                aggregate["count"] = int(aggregate["count"]) + count
+                aggregate["latest_mtime"] = max(
+                    float(aggregate["latest_mtime"]),
+                    latest_mtime,
+                )
+                aggregate["latest_indexed"] = max(
+                    str(aggregate["latest_indexed"]),
+                    latest_indexed,
+                )
+
+        return [
+            {
+                "folder": folder,
+                "count": int(values["count"]),
+                "latest_mtime": float(values["latest_mtime"]),
+                "latest_indexed": str(values["latest_indexed"]),
+            }
+            for folder, values in sorted(
+                aggregates.items(),
+                key=lambda item: item[0].casefold(),
+            )
+        ]
+
     @staticmethod
     def _folder_scope(
         folders: Iterable[str] | None,

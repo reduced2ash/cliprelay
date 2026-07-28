@@ -19,6 +19,8 @@ WindowTitleBar 1.0 WindowTitleBar.qml
 WindowResizeFrame 1.0 WindowResizeFrame.qml
 WorkbenchButton 1.0 WorkbenchButton.qml
 WorkbenchComboBox 1.0 WorkbenchComboBox.qml
+WorkbenchSortMenuItem 1.0 WorkbenchSortMenuItem.qml
+LibrarySortControl 1.0 LibrarySortControl.qml
 WorkbenchActionRegistry 1.0 WorkbenchActionRegistry.qml
 WorkbenchActivityButton 1.0 WorkbenchActivityButton.qml
 CommandCenter 1.0 CommandCenter.qml

@@ -22,6 +22,8 @@ Rectangle {
     readonly property bool compactLibrary:
         String(controller.settings.library_density || "default")
             === "compact"
+    readonly property string explorerSortMode:
+        String(controller.settings.folder_sort_mode || "name_asc")
     objectName: "libraryPage"
 
     signal searchFocusRequested()
@@ -92,6 +94,10 @@ Rectangle {
 
     function setSortMode(mode) {
         controller.setSetting("sort_mode", mode)
+    }
+
+    function setFolderSortMode(mode) {
+        controller.setSetting("folder_sort_mode", mode)
     }
 
     function selectSearchResult(mediaId) {
@@ -245,6 +251,13 @@ Rectangle {
             }
         })
     }
+    onExplorerSortModeChanged: Qt.callLater(function() {
+        const folderIndex = folderModel.indexOf(root.currentFolder)
+        if (folderIndex < 0)
+            return
+        folderList.currentIndex = folderIndex
+        folderList.positionViewAtIndex(folderIndex, ListView.Contain)
+    })
 
     Component.onCompleted: {
         root.currentFolder = String(controller.activeWorkspace.folder || "")
