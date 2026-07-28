@@ -465,10 +465,48 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _command_scope(value: str) -> str:
+        scope = str(value or "all").strip().lower()
+        return scope if scope in {"all", "videos", "folders"} else "all"
+
+    @staticmethod
+    def _merge_command_results(
+        media_results: list[dict[str, Any]],
+        folder_results: list[dict[str, Any]],
+        limit: int,
+        scope: str,
+    ) -> list[dict[str, Any]]:
+        if scope == "videos":
+            return media_results[:limit]
+        if scope == "folders":
+            return folder_results[:limit]
+        if limit == 1:
+            return (media_results or folder_results)[:1]
+
+        reserved_folders = min(3, max(1, limit // 3))
+        folder_count = min(len(folder_results), reserved_folders)
+        media_count = min(len(media_results), limit - folder_count)
+        results = (
+            media_results[:media_count]
+            + folder_results[:folder_count]
+        )
+        remaining = limit - len(results)
+        if remaining:
+            extra_media = media_results[media_count:media_count + remaining]
+            results.extend(extra_media)
+            remaining -= len(extra_media)
+        if remaining:
+            results.extend(
+                folder_results[folder_count:folder_count + remaining]
+            )
+        return results
+
     def search_suggestions(
         self,
         query: str,
         limit: int = 9,
+        scope: str = "all",
     ) -> list[dict[str, Any]]:
         """Return a small, UI-ready set of media and folder matches.
 
@@ -478,6 +516,7 @@ class Database:
 
         value = query.strip()
         capped_limit = max(1, min(int(limit), 12))
+        normalized_scope = self._command_scope(scope)
         if not value:
             return []
         escaped = (
@@ -487,32 +526,49 @@ class Database:
         )
         contains = f"%{escaped}%"
         prefix = f"{escaped}%"
+        leaf_exact = f"%/{escaped}"
+        leaf_prefix = f"%/{prefix}"
+        media_rows: list[sqlite3.Row] = []
+        folder_rows: list[sqlite3.Row] = []
         with self.connection() as connection:
-            media_rows = connection.execute(
-                "SELECT id,name,relative_path,folder FROM media_files "
-                "WHERE valid=1 AND active=1 "
-                "AND (name LIKE ? ESCAPE '\\' "
-                "OR relative_path LIKE ? ESCAPE '\\') "
-                "ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' "
-                "THEN 0 ELSE 1 END, name COLLATE NOCASE, id "
-                "LIMIT ?",
-                (contains, contains, prefix, capped_limit),
-            ).fetchall()
-            folder_rows = connection.execute(
-                "SELECT folder,COUNT(*) AS count FROM media_files "
-                "WHERE valid=1 AND active=1 AND folder != '' "
-                "AND folder LIKE ? ESCAPE '\\' "
-                "GROUP BY folder "
-                "ORDER BY CASE WHEN folder LIKE ? ESCAPE '\\' "
-                "THEN 0 ELSE 1 END, folder COLLATE NOCASE "
-                "LIMIT ?",
-                (contains, prefix, capped_limit),
-            ).fetchall()
+            if normalized_scope != "folders":
+                media_rows = connection.execute(
+                    "SELECT id,name,relative_path,folder FROM media_files "
+                    "WHERE valid=1 AND active=1 "
+                    "AND (name LIKE ? ESCAPE '\\' "
+                    "OR relative_path LIKE ? ESCAPE '\\') "
+                    "ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' "
+                    "THEN 0 ELSE 1 END, name COLLATE NOCASE, id "
+                    "LIMIT ?",
+                    (contains, contains, prefix, capped_limit),
+                ).fetchall()
+            if normalized_scope != "videos":
+                folder_rows = connection.execute(
+                    "SELECT folder,COUNT(*) AS count FROM media_files "
+                    "WHERE valid=1 AND active=1 AND folder != '' "
+                    "AND folder LIKE ? ESCAPE '\\' "
+                    "GROUP BY folder "
+                    "ORDER BY CASE "
+                    "WHEN folder = ? COLLATE NOCASE "
+                    "OR folder LIKE ? ESCAPE '\\' THEN 0 "
+                    "WHEN folder LIKE ? ESCAPE '\\' "
+                    "OR folder LIKE ? ESCAPE '\\' THEN 1 "
+                    "ELSE 2 END, folder COLLATE NOCASE "
+                    "LIMIT ?",
+                    (
+                        contains,
+                        value,
+                        leaf_exact,
+                        prefix,
+                        leaf_prefix,
+                        capped_limit,
+                    ),
+                ).fetchall()
 
-        results: list[dict[str, Any]] = []
+        media_results: list[dict[str, Any]] = []
         for row in media_rows:
             relative_path = str(row["relative_path"] or row["name"])
-            results.append(
+            media_results.append(
                 {
                     "kind": "media",
                     "mediaId": int(row["id"]),
@@ -523,12 +579,11 @@ class Database:
                     "count": 0,
                 }
             )
-            if len(results) >= capped_limit:
-                return results
 
+        folder_results: list[dict[str, Any]] = []
         for row in folder_rows:
             folder = str(row["folder"])
-            results.append(
+            folder_results.append(
                 {
                     "kind": "folder",
                     "mediaId": 0,
@@ -539,36 +594,55 @@ class Database:
                     "count": int(row["count"]),
                 }
             )
-            if len(results) >= capped_limit:
-                break
-        return results
+        return self._merge_command_results(
+            media_results,
+            folder_results,
+            capped_limit,
+            normalized_scope,
+        )
 
     def command_center_overview(
         self,
         limit: int = 9,
+        scope: str = "all",
     ) -> list[dict[str, Any]]:
         """Return a compact zero-query mix of recent media and folders."""
 
         capped_limit = max(3, min(int(limit), 12))
-        media_limit = min(6, max(1, capped_limit - 2))
-        folder_limit = capped_limit - media_limit
+        normalized_scope = self._command_scope(scope)
+        media_limit = (
+            capped_limit
+            if normalized_scope == "videos"
+            else 0 if normalized_scope == "folders"
+            else min(6, max(1, capped_limit - 2))
+        )
+        folder_limit = (
+            capped_limit
+            if normalized_scope == "folders"
+            else 0 if normalized_scope == "videos"
+            else capped_limit - media_limit
+        )
+        media_rows: list[sqlite3.Row] = []
+        folder_rows: list[sqlite3.Row] = []
         with self.connection() as connection:
-            media_rows = connection.execute(
-                "SELECT id,name,relative_path,folder FROM media_files "
-                "WHERE valid=1 AND active=1 "
-                "ORDER BY mtime DESC,id DESC LIMIT ?",
-                (media_limit,),
-            ).fetchall()
-            folder_rows = connection.execute(
-                "SELECT folder,COUNT(*) AS count,MAX(mtime) AS latest "
-                "FROM media_files "
-                "WHERE valid=1 AND active=1 AND folder != '' "
-                "GROUP BY folder "
-                "ORDER BY latest DESC,folder COLLATE NOCASE LIMIT ?",
-                (folder_limit,),
-            ).fetchall()
+            if media_limit:
+                media_rows = connection.execute(
+                    "SELECT id,name,relative_path,folder FROM media_files "
+                    "WHERE valid=1 AND active=1 "
+                    "ORDER BY mtime DESC,id DESC LIMIT ?",
+                    (media_limit,),
+                ).fetchall()
+            if folder_limit:
+                folder_rows = connection.execute(
+                    "SELECT folder,COUNT(*) AS count,MAX(mtime) AS latest "
+                    "FROM media_files "
+                    "WHERE valid=1 AND active=1 AND folder != '' "
+                    "GROUP BY folder "
+                    "ORDER BY latest DESC,folder COLLATE NOCASE LIMIT ?",
+                    (folder_limit,),
+                ).fetchall()
 
-        results = [
+        media_results = [
             {
                 "kind": "media",
                 "mediaId": int(row["id"]),
@@ -580,7 +654,7 @@ class Database:
             }
             for row in media_rows
         ]
-        results.extend(
+        folder_results = [
             {
                 "kind": "folder",
                 "mediaId": 0,
@@ -591,8 +665,13 @@ class Database:
                 "count": int(row["count"]),
             }
             for row in folder_rows
+        ]
+        return self._merge_command_results(
+            media_results,
+            folder_results,
+            capped_limit,
+            normalized_scope,
         )
-        return results[:capped_limit]
 
     def navigation_neighbors(
         self,

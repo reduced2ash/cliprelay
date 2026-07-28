@@ -1318,16 +1318,22 @@ class AppController(QObject):
         self._queue_selection_neighbors()
 
     @Slot(str)
-    def requestCommandSearch(self, value: str) -> None:
+    @Slot(str, str)
+    def requestCommandSearch(
+        self,
+        value: str,
+        scope: str = "all",
+    ) -> None:
         query = value.strip()
         if not query:
             self._clear_command_results()
             return
-        self._request_command_results(query)
+        self._request_command_results(query, scope)
 
     @Slot()
-    def requestCommandOverview(self) -> None:
-        self._request_command_results(None)
+    @Slot(str)
+    def requestCommandOverview(self, scope: str = "all") -> None:
+        self._request_command_results(None, scope)
 
     def _clear_command_results(self) -> None:
         self._command_search_generation += 1
@@ -1343,7 +1349,14 @@ class AppController(QObject):
         if changed:
             self.commandSearchChanged.emit()
 
-    def _request_command_results(self, query: str | None) -> None:
+    def _request_command_results(
+        self,
+        query: str | None,
+        scope: str = "all",
+    ) -> None:
+        normalized_scope = str(scope or "all").strip().lower()
+        if normalized_scope not in {"all", "videos", "folders"}:
+            normalized_scope = "all"
         self._command_search_generation += 1
         generation = self._command_search_generation
         if self._command_search_task:
@@ -1355,33 +1368,45 @@ class AppController(QObject):
         self.commandSearchChanged.emit()
         if not self._can_use_model_workers():
             self._command_search_results = (
-                self.database.command_center_overview()
+                self.database.command_center_overview(
+                    scope=normalized_scope,
+                )
                 if query is None
-                else self.database.search_suggestions(query)
+                else self.database.search_suggestions(
+                    query,
+                    scope=normalized_scope,
+                )
             )
             self._command_search_loading = False
             self.commandSearchChanged.emit()
             return
 
         task = asyncio.create_task(
-            self._load_command_center_async(query, generation)
+            self._load_command_center_async(
+                query,
+                normalized_scope,
+                generation,
+            )
         )
         self._command_search_task = task
 
     async def _load_command_center_async(
         self,
         query: str | None,
+        scope: str,
         generation: int,
     ) -> None:
         try:
             if query is None:
                 results = await asyncio.to_thread(
                     self.database.command_center_overview,
+                    scope=scope,
                 )
             else:
                 results = await asyncio.to_thread(
                     self.database.search_suggestions,
                     query,
+                    scope=scope,
                 )
             if (
                 self._shutting_down

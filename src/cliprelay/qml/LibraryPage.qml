@@ -66,8 +66,17 @@ Rectangle {
         controller.requestCommandSearch("")
         controller.setSearch("")
         controller.setFolder(root.currentFolder)
-        folderModel.expandTo(root.currentFolder)
+        const folderIndex = folderModel.expandTo(root.currentFolder)
         root.syncingReveal = false
+        Qt.callLater(function() {
+            if (folderIndex < 0)
+                return
+            folderList.currentIndex = folderIndex
+            folderList.positionViewAtIndex(
+                folderIndex,
+                ListView.Center
+            )
+        })
     }
 
     function togglePlayback() {

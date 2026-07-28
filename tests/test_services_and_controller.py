@@ -190,6 +190,20 @@ def test_command_center_loads_overview_search_and_clear_states(
 
     controller.requestCommandSearch("featured")
     assert controller.commandSearchResults[0]["title"] == source.name
+
+    controller.requestCommandSearch("Reference", "folders")
+    assert [row["kind"] for row in controller.commandSearchResults] == [
+        "folder",
+    ]
+    assert controller.commandSearchResults[0]["folderPath"] == "Reference"
+
+    controller.requestCommandOverview("videos")
+    assert controller.commandSearchResults
+    assert all(
+        row["kind"] == "media"
+        for row in controller.commandSearchResults
+    )
+
     controller.requestCommandSearch("")
     assert controller.commandSearchResults == []
     controller.shutdown()

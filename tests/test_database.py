@@ -347,6 +347,42 @@ def test_command_search_is_bounded_and_uses_indexed_media_and_folders(
     assert overview[0]["title"] == "alpine_route.mp4"
     assert overview[3]["folderPath"] == "Travel"
 
+    crowded_folder = "Archive/Crowded Folder"
+    for index in range(15):
+        path = root / crowded_folder / f"take-{index:02}.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(str(index).encode())
+        payload = media_payload(path, root, path.name)
+        payload.update(
+            relative_path=f"{crowded_folder}/{path.name}",
+            folder=crowded_folder,
+            mtime=200 + index,
+        )
+        database.upsert_media(payload)
+
+    crowded_all = database.search_suggestions(
+        "crowded folder",
+        limit=9,
+    )
+    assert len(crowded_all) == 9
+    assert crowded_all[-1]["kind"] == "folder"
+    assert crowded_all[-1]["folderPath"] == crowded_folder
+
+    crowded_folders = database.search_suggestions(
+        "crowded folder",
+        limit=9,
+        scope="folders",
+    )
+    assert [row["kind"] for row in crowded_folders] == ["folder"]
+    assert crowded_folders[0]["folderPath"] == crowded_folder
+
+    folder_overview = database.command_center_overview(
+        limit=5,
+        scope="folders",
+    )
+    assert folder_overview
+    assert all(row["kind"] == "folder" for row in folder_overview)
+
     model = LibraryModel(database)
     model.search = "Makima"
     model.refresh()

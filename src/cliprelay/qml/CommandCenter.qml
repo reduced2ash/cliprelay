@@ -150,6 +150,27 @@ Item {
         return String(value || "").replace(/^\s+/, "")
     }
 
+    function libraryScope() {
+        return root.effectiveScope === "videos"
+                || root.effectiveScope === "folders"
+            ? root.effectiveScope
+            : "all"
+    }
+
+    function requestLibraryResults() {
+        if (root.commandMode)
+            return
+        const scope = root.libraryScope()
+        if (root.mediaQuery.trim().length) {
+            root.appController.requestCommandSearch(
+                root.mediaQuery,
+                scope
+            )
+        } else {
+            root.appController.requestCommandOverview(scope)
+        }
+    }
+
     function commandResult(action, sectionOverride) {
         return {
             "kind": "command",
@@ -211,10 +232,7 @@ Item {
         root.setFieldText(root.mediaQuery)
         commandField.forceActiveFocus()
         commandField.selectAll()
-        if (root.mediaQuery.trim().length)
-            root.appController.requestCommandSearch(root.mediaQuery)
-        else
-            root.appController.requestCommandOverview()
+        root.requestLibraryResults()
         root.openPanel()
     }
 
@@ -250,10 +268,7 @@ Item {
         } else {
             root.activeScope = normalized
             root.setFieldText(root.mediaQuery)
-            if (root.mediaQuery.trim().length)
-                root.appController.requestCommandSearch(root.mediaQuery)
-            else
-                root.appController.requestCommandOverview()
+            root.requestLibraryResults()
         }
         commandField.forceActiveFocus()
         root.openPanel()
@@ -267,7 +282,7 @@ Item {
             root.mediaQuery = ""
             root.setFieldText("")
             root.searchRequested("")
-            root.appController.requestCommandOverview()
+            root.requestLibraryResults()
         }
         resultsList.currentIndex = root.firstEnabledIndex()
         root.openPanel()
@@ -309,6 +324,7 @@ Item {
         if (row.kind === "command") {
             root.actionRegistry.triggerAction(row.actionId)
         } else if (row.kind === "folder") {
+            root.mediaQuery = ""
             root.folderRequested(String(row.folderPath || ""))
         } else {
             root.mediaRequested(Number(row.mediaId || 0))
@@ -357,10 +373,7 @@ Item {
         repeat: false
         onTriggered: {
             root.searchRequested(root.mediaQuery)
-            if (root.mediaQuery.trim().length)
-                root.appController.requestCommandSearch(root.mediaQuery)
-            else
-                root.appController.requestCommandOverview()
+            root.requestLibraryResults()
         }
     }
 
@@ -392,6 +405,7 @@ Item {
             if (root.syncingQuery)
                 return
             if (root.commandMode) {
+                searchTimer.stop()
                 resultsList.currentIndex = root.firstEnabledIndex()
                 root.openPanel()
                 return
@@ -405,7 +419,7 @@ Item {
                 return
             if (!root.commandMode
                     && root.mediaQuery.trim().length === 0)
-                root.appController.requestCommandOverview()
+                root.requestLibraryResults()
             root.openPanel()
         }
 

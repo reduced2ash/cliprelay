@@ -163,12 +163,17 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert "interval: 120" in command
     assert "requestCommandSearch" in command
     assert "requestCommandOverview" in command
+    assert "function libraryScope()" in command
+    assert "root.appController.requestCommandSearch(\n"
+    assert "root.mediaQuery,\n                scope" in command
+    assert "root.appController.requestCommandOverview(scope)" in command
     assert 'property string activeScope: "all"' in command
     assert '{ "id": "videos", "label": "Videos" }' in command
     assert '{ "id": "folders", "label": "Folders" }' in command
     assert '{ "id": "commands", "label": "Commands" }' in command
     assert "root.libraryRows.concat(root.commandRows)" in command
     assert "root.quickCommandRows.concat(root.libraryRows)" in command
+    assert 'row.kind === "folder") {\n            root.mediaQuery = ""' in command
     assert "popupType: Popup.Item" in command
     assert "parent: root" in command
     assert "y: root.height + 5" in command
@@ -187,6 +192,9 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
     assert "libraryPage.navigateSelection(1)" in main
     assert "pickPreviousRandom" not in main
     assert "onLibraryNavigationRestored" in page
+    assert "const folderIndex = folderModel.expandTo(root.currentFolder)" in page
+    assert "folderList.positionViewAtIndex(\n"
+    assert "folderIndex,\n                ListView.Center" in page
     assert '\"id\": \"toggle_folders\"' in actions
     assert '\"id\": \"theme_full_white\"' in actions
     assert "readonly property int workbenchTitleHeight: 40" in theme
