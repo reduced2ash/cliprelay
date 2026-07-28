@@ -14,6 +14,10 @@ The library can display:
 Search matches filenames and relative folder paths. Sort by newest, oldest,
 name, duration, or size.
 
+The title-bar command center searches videos and folders without rescanning the
+library. Start a query with `>` to browse app commands, or press
+`Cmd+Shift+P` / `Ctrl+Shift+P` to open command mode directly.
+
 ## Random selection
 
 **Pick random** uses the local filename manifest instead of walking the folder
@@ -56,7 +60,9 @@ live playback and editing state while providing a larger editor.
 | `←` / `→` | Select the previous or next video |
 | `R` | Pick a random video |
 | `Shift+R` | Return to the previous random pick |
-| `Cmd+F` / `Ctrl+F` | Focus library search |
+| `Cmd+K` / `Ctrl+K` | Focus the command center |
+| `Cmd+F` / `Ctrl+F` | Focus video and folder search |
+| `Cmd+Shift+P` / `Ctrl+Shift+P` | Open command mode |
 | `Cmd+1` / `Ctrl+1` | Open Library |
 | `Cmd+2` / `Ctrl+2` | Open History |
 | `Cmd+,` / `Ctrl+,` | Open Settings |

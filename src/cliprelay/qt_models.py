@@ -215,6 +215,10 @@ class LibraryModel(DictListModel):
     def find_index(self, media_id: int) -> int:
         return next((index for index, row in enumerate(self.rows) if row["mediaId"] == media_id), -1)
 
+    @Slot(int, result=int)
+    def indexOf(self, media_id: int) -> int:
+        return self.find_index(media_id)
+
     def update_asset(self, media_id: int, role_name: str, path: str) -> None:
         index = self.find_index(media_id)
         if index < 0:

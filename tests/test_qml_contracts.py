@@ -52,13 +52,17 @@ def test_library_grid_height_tracks_responsive_tile_width() -> None:
 
 def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> None:
     page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    context = (QML_DIR / "LibraryContextToolbar.qml").read_text(
+        encoding="utf-8"
+    )
     row = (QML_DIR / "FolderTreeRow.qml").read_text(encoding="utf-8")
 
-    assert 'text: "EXPLORER"' in page
+    assert 'text: "EXPLORER"' in context
+    assert "folderTreeModel.totalCount.toLocaleString()" in context
+    assert "folderTreeModel.collapseAll()" in context
     assert "Layout.preferredWidth: 204" in page
     assert "delegate: FolderTreeRow {" in page
     assert "folderModel.toggleExpanded(folderPath)" in page
-    assert "folderModel.collapseAll()" in page
     assert "folderModel.parentIndex(folderRow.folderPath)" in page
     assert "reuseItems: true" in page
 
@@ -110,6 +114,9 @@ def test_frameless_window_has_custom_titlebar_and_resize_fallbacks() -> None:
     assert "root.windowController.updateMove()" in titlebar
     assert "root.windowController.toggleZoom()" in titlebar
     assert "root.windowController.performPrimaryZoom()" in titlebar
+    assert "CommandCenter {" in titlebar
+    assert "WorkbenchActivityButton {" in titlebar
+    assert "randomSourceButtonItem" in titlebar
     assert 'Accessible.name: accessibleLabel' in controls
 
     assert resize_frame.count("root.beginResize(") == 8
@@ -123,3 +130,37 @@ def test_combo_popup_treats_trigger_as_its_parent() -> None:
 
     assert "Popup.CloseOnPressOutsideParent" in combo
     assert "Popup.CloseOnPressOutside\n" not in combo
+
+
+def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None:
+    main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    titlebar = (QML_DIR / "WindowTitleBar.qml").read_text(
+        encoding="utf-8"
+    )
+    command = (QML_DIR / "CommandCenter.qml").read_text(
+        encoding="utf-8"
+    )
+    actions = (QML_DIR / "WorkbenchActionRegistry.qml").read_text(
+        encoding="utf-8"
+    )
+    theme = (QML_DIR / "Theme.qml").read_text(encoding="utf-8")
+
+    assert "LibraryContextToolbar {" in main
+    assert "Theme.workbenchTitleHeight" in main
+    assert "Theme.workbenchContextHeight" in main
+    assert "WorkbenchActionRegistry {" in main
+    assert 'text: "Video library"' not in page
+    assert 'placeholderText: "Search filenames and folders"' not in page
+    assert "GridLayout {\n                    id: libraryToolbar" not in page
+
+    assert "CommandCenter {" in titlebar
+    assert '"Search videos, folders, and commands"' in command
+    assert "interval: 120" in command
+    assert "requestCommandSearch" in command
+    assert "parent: Overlay.overlay" in command
+    assert '\"id\": \"pick_random\"' in actions
+    assert '\"id\": \"toggle_folders\"' in actions
+    assert '\"id\": \"theme_full_white\"' in actions
+    assert "readonly property int workbenchTitleHeight: 40" in theme
+    assert "readonly property int workbenchContextHeight: 42" in theme

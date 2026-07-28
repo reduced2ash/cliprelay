@@ -80,10 +80,19 @@ QtObject {
     readonly property int textSection: 16
     readonly property int textTitle: 20
     readonly property int textDisplay: 26
+    readonly property int textWorkbench: 12
 
     readonly property int controlHeight: 44
     readonly property int compactControl: 40
+    readonly property int workbenchTitleHeight: 40
+    readonly property int workbenchContextHeight: 42
+    readonly property int workbenchControlHeight: 30
+    readonly property int radiusWorkbench: 4
     readonly property int focusWidth: 2
+
+    readonly property string monoFamily: Qt.platform.os === "windows"
+        ? "Cascadia Mono" : Qt.platform.os === "osx"
+            ? "Menlo" : "monospace"
 
     readonly property int quickMotion: 90
     readonly property int fastMotion: 140

@@ -56,6 +56,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--command-center",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--prepare-fullscreen", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--prepare-tab",
@@ -202,6 +207,16 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if random_sources:
                     QMetaObject.invokeMethod(random_sources, "open")
+            if args.command_center:
+                command_center = root_window.findChild(
+                    QObject,
+                    "commandCenter",
+                )
+                if command_center:
+                    QMetaObject.invokeMethod(
+                        command_center,
+                        "focusCommands",
+                    )
             if args.prepare_fullscreen and args.page == "library":
                 library_page = root_window.findChild(QObject, "libraryPage")
                 if library_page:

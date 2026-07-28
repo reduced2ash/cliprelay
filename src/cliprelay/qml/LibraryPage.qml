@@ -10,16 +10,64 @@ Rectangle {
     color: Theme.ink
     property bool showFolders: true
     property string currentFolder: ""
+    property string searchText: ""
     property bool syncingReveal: false
-    property bool compactToolbar: width < 1100
     property Item fullscreenHost
+    property Item randomSourceTrigger
     property bool prepareFullscreen: false
     property bool commandShortcutsEnabled: !randomSourcePopup.opened
+    readonly property bool randomSourcesOpen: randomSourcePopup.opened
     objectName: "libraryPage"
 
+    signal searchFocusRequested()
+
     function focusSearch() {
-        searchField.forceActiveFocus()
-        searchField.selectAll()
+        root.searchFocusRequested()
+    }
+
+    function setSearchText(value) {
+        const normalized = String(value || "")
+        if (root.searchText === normalized)
+            return
+        root.searchText = normalized
+        if (!root.syncingReveal)
+            controller.setSearch(normalized)
+    }
+
+    function toggleFolders() {
+        root.showFolders = !root.showFolders
+    }
+
+    function chooseLibraryFolder() {
+        libraryDialog.open()
+    }
+
+    function setSortMode(mode) {
+        controller.setSetting("sort_mode", mode)
+    }
+
+    function selectSearchResult(mediaId) {
+        controller.selectMedia(mediaId)
+        Qt.callLater(function() {
+            const mediaIndex = libraryModel.indexOf(mediaId)
+            if (mediaIndex >= 0)
+                libraryGrid.positionViewAtIndex(
+                    mediaIndex,
+                    GridView.Center
+                )
+        })
+    }
+
+    function selectSearchFolder(folderPath) {
+        root.syncingReveal = true
+        root.searchText = ""
+        root.currentFolder = String(folderPath || "")
+        root.showFolders = true
+        controller.requestCommandSearch("")
+        controller.setSearch("")
+        controller.setFolder(root.currentFolder)
+        folderModel.expandTo(root.currentFolder)
+        root.syncingReveal = false
     }
 
     function togglePlayback() {
@@ -76,8 +124,8 @@ Rectangle {
             root.syncingReveal = true
             root.showFolders = true
             root.currentFolder = folder
-            searchTimer.stop()
-            searchField.text = ""
+            root.searchText = ""
+            controller.requestCommandSearch("")
             root.syncingReveal = false
             Qt.callLater(function() {
                 if (folderIndex >= 0) {
@@ -113,13 +161,15 @@ Rectangle {
         property double lastClosedAt: 0
         readonly property real edgeInset: 12
         readonly property point triggerTop: parent
-            ? randomSourceButton.mapToItem(parent, 0, 0)
+            && root.randomSourceTrigger
+            ? root.randomSourceTrigger.mapToItem(parent, 0, 0)
             : Qt.point(0, 0)
         readonly property point triggerBottomRight: parent
-            ? randomSourceButton.mapToItem(
+            && root.randomSourceTrigger
+            ? root.randomSourceTrigger.mapToItem(
                 parent,
-                randomSourceButton.width,
-                randomSourceButton.height
+                root.randomSourceTrigger.width,
+                root.randomSourceTrigger.height
             )
             : Qt.point(0, 0)
         readonly property real belowY: triggerBottomRight.y + 6
@@ -593,97 +643,6 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 82
-            Layout.leftMargin: 26; Layout.rightMargin: 24
-            spacing: 8
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Text { text: "Video library"; color: Theme.text; font.pixelSize: Theme.textTitle; font.weight: Font.DemiBold }
-                Text {
-                    text: controller.settings.library_root ? controller.settings.library_root : "Choose a folder to begin"
-                    color: Theme.muted; font.pixelSize: Theme.textXs; elide: Text.ElideMiddle; Layout.fillWidth: true
-                }
-            }
-            AppButton {
-                text: root.showFolders ? "Hide folders" : "Show folders"
-                iconName: "folders"
-                compact: root.compactToolbar
-                toolTipText: text
-                kind: root.showFolders ? "secondary" : "ghost"
-                onClicked: root.showFolders = !root.showFolders
-            }
-            AppButton {
-                text: "Choose folder"
-                iconName: "folder"
-                compact: root.compactToolbar
-                toolTipText: text
-                kind: "ghost"
-                onClicked: libraryDialog.open()
-            }
-            AppButton {
-                text: "Previous video"
-                iconName: "chevronLeft"
-                compact: true
-                toolTipText: "Previous video  ·  ←"
-                kind: "ghost"
-                enabled: controller.canSelectPrevious
-                onClicked: controller.navigateSelection(-1)
-            }
-            AppButton {
-                text: "Next video"
-                iconName: "chevronRight"
-                compact: true
-                toolTipText: "Next video  ·  →"
-                kind: "ghost"
-                enabled: controller.canSelectNext
-                onClicked: controller.navigateSelection(1)
-            }
-            AppButton {
-                id: randomSourceButton
-                Layout.preferredWidth: root.compactToolbar ? 146 : 180
-                Layout.maximumWidth: root.compactToolbar ? 146 : 180
-                Layout.minimumWidth: 0
-                text: (root.compactToolbar ? "" : "From: ")
-                    + controller.randomFolderSummary
-                iconName: randomSourcePopup.opened
-                    ? "chevronUp" : "chevronDown"
-                kind: controller.hasRandomFolderSelection
-                    ? "secondary" : "ghost"
-                toolTipText: "Random sources: "
-                    + controller.randomFolderSummary
-                enabled: Boolean(controller.settings.library_root)
-                onClicked: root.toggleRandomSourcePopup()
-            }
-            AppButton {
-                text: "Previous random"
-                iconName: "history"
-                compact: true
-                toolTipText: "Previous random  ·  Shift+R"
-                kind: "ghost"
-                enabled: controller.canPickPreviousRandom
-                onClicked: controller.pickPreviousRandom()
-            }
-            AppButton {
-                text: controller.randomPicking ? "Picking…" : "Pick random"
-                iconName: "shuffle"
-                kind: "primary"
-                compact: root.width < 900
-                toolTipText: "Pick random  ·  R"
-                enabled: !controller.randomPicking
-                    && controller.hasRandomFolderSelection
-                    && (controller.settings.fast_random
-                        ? Boolean(controller.settings.library_root)
-                        : controller.counts.media > 0)
-                onClicked: controller.pickRandom()
-            }
-        }
-
-        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-
-        RowLayout {
-            Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
 
@@ -696,59 +655,6 @@ Rectangle {
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 42
-                        color: "transparent"
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 5
-                            spacing: 7
-
-                            AppIcon {
-                                Layout.preferredWidth: 15
-                                Layout.preferredHeight: 15
-                                name: "folders"
-                                strokeWidth: 1.75
-                                iconColor: Theme.muted
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                text: "EXPLORER"
-                                color: Theme.textSoft
-                                font.pixelSize: 11
-                                font.weight: Font.DemiBold
-                                font.letterSpacing: 0.8
-                            }
-                            Text {
-                                text: folderModel.totalCount.toLocaleString()
-                                color: Theme.mutedSoft
-                                font.pixelSize: 10
-                                font.weight: Font.Medium
-                            }
-                            AppButton {
-                                text: "Collapse all folders"
-                                iconName: "chevronUp"
-                                toolTipText: text
-                                kind: "ghost"
-                                compact: true
-                                Layout.minimumWidth: 40
-                                Layout.preferredWidth: 40
-                                Layout.maximumWidth: 40
-                                Layout.preferredHeight: 40
-                                onClicked: folderModel.collapseAll()
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.border
-                    }
 
                     ListView {
                         id: folderList
@@ -845,47 +751,6 @@ Rectangle {
                 Layout.fillHeight: true
                 spacing: 0
 
-                GridLayout {
-                    id: libraryToolbar
-                    property bool compact: libraryColumn.width < 520
-                    visible: controller.settings.library_root
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: compact ? 108 : 64
-                    Layout.leftMargin: 20; Layout.rightMargin: 20
-                    columns: compact ? 2 : 3
-                    columnSpacing: 10
-                    rowSpacing: 8
-                    AppField {
-                        id: searchField
-                        Layout.fillWidth: true
-                        Layout.columnSpan: libraryToolbar.compact ? 2 : 1
-                        iconName: "search"
-                        placeholderText: "Search filenames and folders"
-                        Accessible.name: "Search video library"
-                        onTextChanged: {
-                            if (!root.syncingReveal) searchTimer.restart()
-                        }
-                    }
-                    AppComboBox {
-                        id: sortBox
-                        Layout.fillWidth: libraryToolbar.compact
-                        Layout.preferredWidth: libraryToolbar.compact ? 120 : 138
-                        model: ["Newest", "Oldest", "Name", "Duration", "Size"]
-                        currentIndex: ["newest", "oldest", "name", "duration", "size"].indexOf(controller.settings.sort_mode)
-                        onActivated: controller.setSetting("sort_mode", ["newest", "oldest", "name", "duration", "size"][currentIndex])
-                        Accessible.name: "Sort videos"
-                    }
-                    AppButton {
-                        text: "Rescan"
-                        iconName: "refresh"
-                        kind: "ghost"
-                        Layout.fillWidth: libraryToolbar.compact
-                        enabled: !controller.scanning
-                        onClicked: controller.scanLibrary()
-                    }
-                }
-                Timer { id: searchTimer; interval: 180; onTriggered: controller.setSearch(searchField.text) }
-
                 ColumnLayout {
                     visible: controller.scanning
                     Layout.fillWidth: true
@@ -920,9 +785,9 @@ Rectangle {
                         visible: controller.settings.library_root && !controller.scanning && libraryGrid.count === 0
                         anchors.centerIn: parent
                         width: Math.min(420, parent.width - 48)
-                        iconName: searchField.text.length ? "search" : "media"
-                        title: searchField.text.length ? "No matching videos" : "No videos found"
-                        body: searchField.text.length
+                        iconName: root.searchText.length ? "search" : "media"
+                        title: root.searchText.length ? "No matching videos" : "No videos found"
+                        body: root.searchText.length
                             ? "Try a broader search or switch folders."
                             : (controller.settings.auto_index
                                 ? "Rescan the library, or enable deep format detection for uncommon files."

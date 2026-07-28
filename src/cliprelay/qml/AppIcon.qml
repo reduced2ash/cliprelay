@@ -131,6 +131,12 @@ Canvas {
             context.lineTo(8.2, 6.2)
             context.lineTo(10, 8)
             context.stroke()
+        } else if (root.name === "panel") {
+            context.beginPath()
+            context.rect(3.5, 4.5, 17, 15)
+            context.moveTo(9, 4.5)
+            context.lineTo(9, 19.5)
+            context.stroke()
         } else if (root.name === "grid") {
             context.strokeRect(4.2, 4.2, 6.1, 6.1)
             context.strokeRect(13.7, 4.2, 6.1, 6.1)
@@ -151,6 +157,24 @@ Canvas {
             context.arc(10.5, 10.5, 5.7, 0, Math.PI * 2)
             context.moveTo(14.7, 14.7)
             context.lineTo(19.5, 19.5)
+            context.stroke()
+        } else if (root.name === "command") {
+            context.beginPath()
+            context.moveTo(6.5, 7)
+            context.lineTo(10.5, 12)
+            context.lineTo(6.5, 17)
+            context.moveTo(12.5, 17)
+            context.lineTo(18, 17)
+            context.stroke()
+        } else if (root.name === "activity") {
+            context.beginPath()
+            context.moveTo(3.5, 12)
+            context.lineTo(7.2, 12)
+            context.lineTo(9.2, 7)
+            context.lineTo(12.1, 17)
+            context.lineTo(14.6, 9.5)
+            context.lineTo(16.3, 12)
+            context.lineTo(20.5, 12)
             context.stroke()
         } else if (root.name === "refresh") {
             context.beginPath()

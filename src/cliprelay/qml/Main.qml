@@ -41,8 +41,8 @@ ApplicationWindow {
     )
     property bool narrowWindow: width / uiScale < 1080
     property bool navCollapsed: narrowWindow || Boolean(controller.settings.sidebar_collapsed)
-    readonly property int shellBlendHeight: 96
-    readonly property int titleBarHeight: nativeWindow.fullscreen ? 0 : 38
+    readonly property int titleBarHeight: nativeWindow.fullscreen
+        ? 0 : Theme.workbenchTitleHeight
 
     Binding {
         target: Theme
@@ -64,8 +64,16 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: [StandardKey.Find]
-        enabled: window.currentPage === 0
-        onActivated: libraryPage.focusSearch()
+        onActivated: windowTitleBar.focusSearch()
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+K" : "Ctrl+K"
+        onActivated: windowTitleBar.focusSearch()
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx"
+            ? "Meta+Shift+P" : "Ctrl+Shift+P"
+        onActivated: windowTitleBar.focusCommands()
     }
     Shortcut {
         sequence: Qt.platform.os === "osx" ? "Meta+M" : "Ctrl+M"
@@ -104,6 +112,14 @@ ApplicationWindow {
         color: Theme.ink
     }
 
+    WorkbenchActionRegistry {
+        id: workbenchActions
+        appController: controller
+        libraryPage: libraryPage
+        hostWindow: window
+        windowController: nativeWindow
+    }
+
     WindowTitleBar {
         id: windowTitleBar
         anchors.left: parent.left
@@ -113,6 +129,9 @@ ApplicationWindow {
         visible: height > 0
         hostWindow: window
         windowController: nativeWindow
+        appController: controller
+        actionRegistry: workbenchActions
+        libraryPage: libraryPage
         z: 9000
     }
 
@@ -162,205 +181,193 @@ ApplicationWindow {
                 }
             }
 
-        RowLayout {
-            anchors.fill: parent
-            spacing: 0
-
-            Rectangle {
-                id: sidebarSurface
-                Layout.fillHeight: true
-                Layout.preferredWidth: window.navCollapsed ? 68 : 204
-                color: Theme.surface
-                border.width: 0
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: Math.min(window.shellBlendHeight, parent.height)
-                    gradient: Gradient {
-                        orientation: Gradient.Vertical
-                        GradientStop { position: 0.0; color: Theme.ink }
-                        GradientStop { position: 1.0; color: Theme.surface }
-                    }
-                }
-
             ColumnLayout {
                 anchors.fill: parent
-                anchors.leftMargin: window.navCollapsed ? 10 : 14
-                anchors.rightMargin: window.navCollapsed ? 10 : 14
-                anchors.topMargin: 14
-                anchors.bottomMargin: 12
-                spacing: 8
+                spacing: 0
+
+                LibraryContextToolbar {
+                    id: libraryContextToolbar
+                    visible: window.currentPage === 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible
+                        ? Theme.workbenchContextHeight : 0
+                    activityWidth: window.navCollapsed ? 68 : 204
+                    explorerWidth: 204
+                    activityCollapsed: window.navCollapsed
+                    showFolders: libraryPage.showFolders
+                    currentFolder: libraryPage.currentFolder
+                    libraryRoot: String(
+                        controller.settings.library_root || ""
+                    )
+                    actionRegistry: workbenchActions
+                    appController: controller
+                    folderTreeModel: folderModel
+                }
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 52
-                    spacing: window.navCollapsed ? 0 : 11
-                    Item {
-                        visible: window.navCollapsed
-                        Layout.fillWidth: true
-                    }
+                    Layout.fillHeight: true
+                    spacing: 0
+
                     Rectangle {
-                        Layout.preferredWidth: 40
-                        Layout.preferredHeight: 40
-                        radius: 11
-                        color: Theme.accent
-                        AppIcon {
-                            anchors.centerIn: parent
-                            width: 24
-                            height: 24
-                            name: "relay"
-                            strokeWidth: 2.3
-                            iconColor: Theme.accentContent
-                        }
-                    }
-                    Column {
-                        visible: !window.navCollapsed
-                        Layout.fillWidth: true
-                        spacing: 1
-                        Text { text: "ClipRelay"; color: Theme.text; font.pixelSize: Theme.textSection; font.weight: Font.DemiBold }
-                        Text { text: "local media desk"; color: Theme.muted; font.pixelSize: Theme.textXs }
-                    }
-                    Item {
-                        visible: window.navCollapsed
-                        Layout.fillWidth: true
-                    }
-                }
+                        id: sidebarSurface
+                        Layout.fillHeight: true
+                        Layout.preferredWidth:
+                            window.navCollapsed ? 68 : 204
+                        color: Theme.surface
+                        border.width: 0
 
-                Item { Layout.preferredHeight: 8 }
-                NavButton {
-                    Layout.fillWidth: true; text: "Library"; iconName: "library"
-                    collapsed: window.navCollapsed; selected: window.currentPage === 0
-                    onClicked: window.currentPage = 0
-                }
-                NavButton {
-                    Layout.fillWidth: true; text: "History"; iconName: "history"
-                    collapsed: window.navCollapsed; selected: window.currentPage === 1
-                    onClicked: window.currentPage = 1
-                }
-                NavButton {
-                    Layout.fillWidth: true; text: "Settings"; iconName: "settings"
-                    collapsed: window.navCollapsed; selected: window.currentPage === 2
-                    onClicked: window.currentPage = 2
-                }
-                Item { Layout.fillHeight: true }
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin:
+                                window.navCollapsed ? 10 : 14
+                            anchors.rightMargin:
+                                window.navCollapsed ? 10 : 14
+                            anchors.topMargin: 8
+                            anchors.bottomMargin: 12
+                            spacing: 5
 
-                NavButton {
-                    Layout.fillWidth: true
-                    text: window.navCollapsed ? "Expand sidebar" : "Collapse sidebar"
-                    iconName: window.navCollapsed ? "chevronRight" : "chevronLeft"
-                    collapsed: window.navCollapsed
-                    enabled: !window.narrowWindow
-                    toolTipText: window.narrowWindow
-                        ? "Widen the window to expand the sidebar"
-                        : text
-                    onClicked: controller.setSetting(
-                        "sidebar_collapsed",
-                        !Boolean(controller.settings.sidebar_collapsed)
-                    )
-                }
-
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    Text {
-                        visible: !window.navCollapsed
-                        text: controller.counts.media
-                            + (controller.counts.media === 1 ? " video" : " videos")
-                        color: Theme.text; font.pixelSize: Theme.textSm
-                    }
-                    Text {
-                        visible: !window.navCollapsed
-                        text: controller.counts.posts
-                            + (controller.counts.posts === 1 ? " relay" : " relays")
-                            + " recorded"
-                        color: Theme.muted; font.pixelSize: Theme.textXs
-                    }
-                    Item {
-                        visible: window.navCollapsed
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 36
-
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 6
-                            AppIcon {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 16
-                                height: 16
-                                name: "media"
-                                strokeWidth: 1.7
-                                iconColor: Theme.muted
+                            NavButton {
+                                Layout.fillWidth: true
+                                text: "Library"
+                                iconName: "library"
+                                collapsed: window.navCollapsed
+                                selected: window.currentPage === 0
+                                onClicked: window.currentPage = 0
                             }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: String(controller.counts.media)
-                                color: Theme.text
-                                font.pixelSize: Theme.textXs
-                                font.weight: Font.Medium
+                            NavButton {
+                                Layout.fillWidth: true
+                                text: "History"
+                                iconName: "history"
+                                collapsed: window.navCollapsed
+                                selected: window.currentPage === 1
+                                onClicked: window.currentPage = 1
+                            }
+                            NavButton {
+                                Layout.fillWidth: true
+                                text: "Settings"
+                                iconName: "settings"
+                                collapsed: window.navCollapsed
+                                selected: window.currentPage === 2
+                                onClicked: window.currentPage = 2
+                            }
+                            Item { Layout.fillHeight: true }
+
+                            NavButton {
+                                Layout.fillWidth: true
+                                text: window.navCollapsed
+                                    ? "Expand sidebar"
+                                    : "Collapse sidebar"
+                                iconName: window.navCollapsed
+                                    ? "chevronRight"
+                                    : "chevronLeft"
+                                collapsed: window.navCollapsed
+                                enabled: !window.narrowWindow
+                                toolTipText: window.narrowWindow
+                                    ? "Widen the window to expand the sidebar"
+                                    : text
+                                onClicked:
+                                    workbenchActions.triggerAction(
+                                        "toggle_sidebar"
+                                    )
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: Theme.border
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Text {
+                                    visible: !window.navCollapsed
+                                    text: controller.counts.media
+                                        + (controller.counts.media === 1
+                                            ? " video"
+                                            : " videos")
+                                    color: Theme.text
+                                    font.pixelSize: Theme.textSm
+                                }
+                                Text {
+                                    visible: !window.navCollapsed
+                                    text: controller.counts.posts
+                                        + (controller.counts.posts === 1
+                                            ? " relay"
+                                            : " relays")
+                                        + " recorded"
+                                    color: Theme.muted
+                                    font.pixelSize: Theme.textXs
+                                }
+                                Item {
+                                    visible: window.navCollapsed
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 36
+
+                                    Row {
+                                        anchors.centerIn: parent
+                                        spacing: 5
+                                        AppIcon {
+                                            anchors.verticalCenter:
+                                                parent.verticalCenter
+                                            width: 15
+                                            height: 15
+                                            name: "media"
+                                            strokeWidth: 1.7
+                                            iconColor: Theme.muted
+                                        }
+                                        Text {
+                                            anchors.verticalCenter:
+                                                parent.verticalCenter
+                                            text: String(
+                                                controller.counts.media
+                                            )
+                                            color: Theme.text
+                                            font.pixelSize: 10
+                                            font.family: Theme.monoFamily
+                                            font.weight: Font.Medium
+                                        }
+                                    }
+                                    HoverHandler {
+                                        id: videoCountHover
+                                    }
+                                    ToolTip.visible:
+                                        videoCountHover.hovered
+                                    ToolTip.text:
+                                        controller.counts.media
+                                        + (controller.counts.media === 1
+                                            ? " video"
+                                            : " videos")
+                                        + " in library"
+                                    ToolTip.delay: 450
+                                }
                             }
                         }
-                        HoverHandler { id: videoCountHover }
-                        ToolTip.visible: videoCountHover.hovered
-                        ToolTip.text: controller.counts.media
-                            + (controller.counts.media === 1 ? " video" : " videos")
-                            + " in library"
-                        ToolTip.delay: 450
                     }
-                }
-            }
-        }
 
-            Item {
-                Layout.fillHeight: true
-                Layout.preferredWidth: 1
+                    Rectangle {
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        color: Theme.border
+                    }
 
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: Math.min(window.shellBlendHeight, parent.height)
-                    gradient: Gradient {
-                        orientation: Gradient.Vertical
-                        GradientStop {
-                            position: 0.0
-                            color: Qt.rgba(
-                                Theme.border.r,
-                                Theme.border.g,
-                                Theme.border.b,
-                                0.0
-                            )
+                    StackLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        currentIndex: window.currentPage
+                        LibraryPage {
+                            id: libraryPage
+                            fullscreenHost: scaledWorkspace
+                            randomSourceTrigger:
+                                windowTitleBar.randomSourceButtonItem
+                            onSearchFocusRequested:
+                                windowTitleBar.focusSearch()
                         }
-                        GradientStop { position: 1.0; color: Theme.border }
+                        HistoryPage { }
+                        SettingsPage { }
                     }
                 }
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    anchors.topMargin: Math.min(
-                        window.shellBlendHeight,
-                        parent.height
-                    )
-                    color: Theme.border
-                }
             }
-
-            StackLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                currentIndex: window.currentPage
-                LibraryPage {
-                    id: libraryPage
-                    fullscreenHost: scaledWorkspace
-                }
-                HistoryPage { }
-                SettingsPage { }
-            }
-        }
 
         Rectangle {
             id: toast

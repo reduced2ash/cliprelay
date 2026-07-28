@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import "."
 
 Item {
@@ -6,9 +7,24 @@ Item {
 
     required property var hostWindow
     required property var windowController
+    required property var appController
+    required property var actionRegistry
+    required property var libraryPage
     readonly property bool macStyle: Qt.platform.os === "osx"
+    readonly property bool compact: width < 1120
+    readonly property bool veryCompact: width < 1000
+    readonly property alias randomSourceButtonItem: randomSourceButton
+    readonly property bool commandCenterOpen: commandCenter.popupOpen
 
-    height: 38
+    height: Theme.workbenchTitleHeight
+
+    function focusSearch() {
+        commandCenter.focusSearch()
+    }
+
+    function focusCommands() {
+        commandCenter.focusCommands()
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -37,16 +53,140 @@ Item {
         }
     }
 
-    Text {
-        anchors.centerIn: parent
-        width: Math.min(280, Math.max(0, parent.width - 260))
-        text: root.hostWindow.title
-        color: root.windowController.active ? Theme.textSoft : Theme.mutedSoft
-        font.pixelSize: Theme.textSm
-        font.weight: Font.Medium
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+    RowLayout {
+        anchors.fill: parent
+        anchors.leftMargin: root.macStyle ? 116 : 8
+        anchors.rightMargin: root.macStyle ? 8 : 142
+        spacing: 5
+        opacity: root.windowController.active ? 1 : 0.76
+
+        WorkbenchButton {
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            text: "ClipRelay Library"
+            iconName: "relay"
+            iconOnly: true
+            kind: "primary"
+            toolTipText: "ClipRelay  ·  Open Library"
+            onClicked: root.hostWindow.currentPage = 0
+        }
+
+        Item { Layout.preferredWidth: 2 }
+
+        WorkbenchButton {
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            text: root.actionRegistry.action("previous_video").label
+            iconName: "chevronLeft"
+            iconOnly: true
+            toolTipText: "Previous video  ·  ←"
+            kind: "ghost"
+            enabled: root.actionRegistry.action("previous_video").enabled
+            onClicked:
+                root.actionRegistry.triggerAction("previous_video")
+        }
+        WorkbenchButton {
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            text: root.actionRegistry.action("next_video").label
+            iconName: "chevronRight"
+            iconOnly: true
+            toolTipText: "Next video  ·  →"
+            kind: "ghost"
+            enabled: root.actionRegistry.action("next_video").enabled
+            onClicked:
+                root.actionRegistry.triggerAction("next_video")
+        }
+
+        Item {
+            Layout.preferredWidth: root.compact ? 2 : 8
+        }
+
+        CommandCenter {
+            id: commandCenter
+            Layout.fillWidth: true
+            Layout.minimumWidth: root.veryCompact ? 230 : 280
+            Layout.maximumWidth: 860
+            Layout.preferredHeight: 30
+            appController: root.appController
+            actionRegistry: root.actionRegistry
+            externalMediaQuery: root.libraryPage.searchText
+            onSearchRequested: function(query) {
+                root.hostWindow.currentPage = 0
+                root.libraryPage.setSearchText(query)
+            }
+            onMediaRequested: function(mediaId) {
+                root.hostWindow.currentPage = 0
+                root.libraryPage.selectSearchResult(mediaId)
+            }
+            onFolderRequested: function(folderPath) {
+                root.hostWindow.currentPage = 0
+                root.libraryPage.selectSearchFolder(folderPath)
+            }
+        }
+
+        Item {
+            Layout.preferredWidth: root.compact ? 2 : 7
+        }
+
+        WorkbenchActivityButton {
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            appController: root.appController
+        }
+
+        WorkbenchButton {
+            id: randomSourceButton
+            Layout.preferredWidth: root.veryCompact
+                ? 116 : root.compact ? 132 : 150
+            Layout.maximumWidth: Layout.preferredWidth
+            Layout.minimumWidth: 76
+            Layout.preferredHeight: 30
+            text: root.appController.randomFolderSummary
+            iconName: "folder"
+            trailingIconName: root.libraryPage.randomSourcesOpen
+                ? "chevronUp" : "chevronDown"
+            kind: root.libraryPage.randomSourcesOpen
+                || root.appController.hasRandomFolderSelection
+                    ? "secondary" : "ghost"
+            toolTipText: "Random sources: "
+                + root.appController.randomFolderSummary
+            enabled: Boolean(root.appController.settings.library_root)
+            onClicked: {
+                root.hostWindow.currentPage = 0
+                Qt.callLater(root.libraryPage.toggleRandomSourcePopup)
+            }
+        }
+
+        WorkbenchButton {
+            visible: !root.compact
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            text: root.actionRegistry.action("reset_shuffle").label
+            iconName: "refresh"
+            iconOnly: true
+            toolTipText: "Reset shuffle history"
+            kind: "ghost"
+            enabled: root.actionRegistry.action("reset_shuffle").enabled
+            onClicked:
+                root.actionRegistry.triggerAction("reset_shuffle")
+        }
+
+        WorkbenchButton {
+            Layout.preferredWidth: root.veryCompact
+                ? 96 : root.compact ? 112 : 128
+            Layout.maximumWidth: Layout.preferredWidth
+            Layout.minimumWidth: 72
+            Layout.preferredHeight: 30
+            text: root.appController.randomPicking
+                ? "Picking…" : root.veryCompact ? "Random" : "Pick random"
+            iconName: "shuffle"
+            kind: "primary"
+            toolTipText: "Pick random video  ·  R"
+            enabled: root.actionRegistry.action("pick_random").enabled
+            onClicked:
+                root.actionRegistry.triggerAction("pick_random")
+        }
     }
 
     Row {
@@ -55,7 +195,7 @@ Item {
         anchors.leftMargin: 7
         anchors.verticalCenter: parent.verticalCenter
         spacing: 0
-        z: 2
+        z: 3
 
         WindowControlButton {
             roleName: "close"
@@ -84,7 +224,7 @@ Item {
         anchors.right: parent.right
         anchors.top: parent.top
         height: parent.height
-        z: 2
+        z: 3
 
         WindowControlButton {
             roleName: "minimize"

@@ -62,6 +62,7 @@ class AppController(QObject):
     publishStateChanged = Signal()
     telegramStateChanged = Signal()
     telegramDialogsChanged = Signal()
+    commandSearchChanged = Signal()
     navigationRequested = Signal(str)
     libraryRevealRequested = Signal(str, int, int)
     librarySelectionRequested = Signal(int)
@@ -128,6 +129,10 @@ class AppController(QObject):
         self._random_folder_options_loading = False
         self._random_folder_generation = 0
         self._random_folder_task: asyncio.Task | None = None
+        self._command_search_results: list[dict[str, Any]] = []
+        self._command_search_loading = False
+        self._command_search_generation = 0
+        self._command_search_task: asyncio.Task | None = None
         self._pending_refresh = False
         self._pending_index = False
         self._shutting_down = False
@@ -404,6 +409,14 @@ class AppController(QObject):
     @Property("QVariantList", notify=telegramDialogsChanged)
     def telegramDialogs(self) -> list[dict[str, Any]]:
         return self._telegram_dialogs
+
+    @Property("QVariantList", notify=commandSearchChanged)
+    def commandSearchResults(self) -> list[dict[str, Any]]:
+        return list(self._command_search_results)
+
+    @Property(bool, notify=commandSearchChanged)
+    def commandSearchLoading(self) -> bool:
+        return self._command_search_loading
 
     @Slot()
     def _start_initial_model_refresh(self) -> None:
@@ -950,6 +963,9 @@ class AppController(QObject):
         if self._random_folder_task:
             self._random_folder_task.cancel()
             self._random_folder_task = None
+        if self._command_search_task:
+            self._command_search_task.cancel()
+            self._command_search_task = None
         for attribute in (
             "_full_refresh_task",
             "_library_model_refresh_task",
@@ -1115,6 +1131,71 @@ class AppController(QObject):
         self.library_model.search = value
         self._refresh_library_model_only()
         self._queue_selection_neighbors()
+
+    @Slot(str)
+    def requestCommandSearch(self, value: str) -> None:
+        query = value.strip()
+        self._command_search_generation += 1
+        generation = self._command_search_generation
+        if self._command_search_task:
+            self._command_search_task.cancel()
+            self._command_search_task = None
+        if not query:
+            changed = (
+                bool(self._command_search_results)
+                or self._command_search_loading
+            )
+            self._command_search_results = []
+            self._command_search_loading = False
+            if changed:
+                self.commandSearchChanged.emit()
+            return
+
+        self._command_search_loading = True
+        self.commandSearchChanged.emit()
+        if not self._can_use_model_workers():
+            self._command_search_results = self.database.search_suggestions(
+                query,
+            )
+            self._command_search_loading = False
+            self.commandSearchChanged.emit()
+            return
+
+        task = asyncio.create_task(
+            self._search_command_center_async(query, generation)
+        )
+        self._command_search_task = task
+
+    async def _search_command_center_async(
+        self,
+        query: str,
+        generation: int,
+    ) -> None:
+        try:
+            results = await asyncio.to_thread(
+                self.database.search_suggestions,
+                query,
+            )
+            if (
+                self._shutting_down
+                or generation != self._command_search_generation
+            ):
+                return
+            self._command_search_results = results
+            self._command_search_loading = False
+            self.commandSearchChanged.emit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if generation != self._command_search_generation:
+                return
+            LOGGER.warning("Command-center search failed: %s", exc)
+            self._command_search_results = []
+            self._command_search_loading = False
+            self.commandSearchChanged.emit()
+        finally:
+            if generation == self._command_search_generation:
+                self._command_search_task = None
 
     @Slot(str)
     def setFolder(self, value: str) -> None:

@@ -298,6 +298,49 @@ def test_large_library_model_is_paginated_without_filesystem_access(tmp_path: Pa
     assert len(model.rows) == 480
 
 
+def test_command_search_is_bounded_and_uses_indexed_media_and_folders(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+
+    for relative_path in (
+        "Cosplay/Makima Nurse/portrait.mp4",
+        "Cosplay/Makima Nurse/detail.mov",
+        "Travel/alpine_route.mp4",
+    ):
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative_path.encode())
+        payload = media_payload(path, root, path.name)
+        payload.update(
+            relative_path=relative_path,
+            folder=path.parent.relative_to(root).as_posix(),
+        )
+        database.upsert_media(payload)
+
+    results = database.search_suggestions("makima nurse", limit=4)
+    assert len(results) <= 4
+    assert [row["kind"] for row in results] == [
+        "media",
+        "media",
+        "folder",
+    ]
+    assert {row["title"] for row in results[:2]} == {
+        "portrait.mp4",
+        "detail.mov",
+    }
+    assert results[-1]["folderPath"] == "Cosplay/Makima Nurse"
+    assert database.search_suggestions("%", limit=4) == []
+
+    model = LibraryModel(database)
+    model.search = "Makima"
+    model.refresh()
+    media_id = int(model.rows[0]["mediaId"])
+    assert model.indexOf(media_id) >= 0
+
+
 def test_media_neighbors_follow_library_order_and_filters(tmp_path: Path) -> None:
     database = Database(tmp_path / "db.sqlite3")
     root = tmp_path / "library"

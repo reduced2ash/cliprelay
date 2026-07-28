@@ -465,6 +465,84 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def search_suggestions(
+        self,
+        query: str,
+        limit: int = 9,
+    ) -> list[dict[str, Any]]:
+        """Return a small, UI-ready set of media and folder matches.
+
+        Command-center search deliberately stays inside SQLite. It never walks
+        the filesystem or asks the media pipeline to inspect a file.
+        """
+
+        value = query.strip()
+        capped_limit = max(1, min(int(limit), 12))
+        if not value:
+            return []
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        contains = f"%{escaped}%"
+        prefix = f"{escaped}%"
+        with self.connection() as connection:
+            media_rows = connection.execute(
+                "SELECT id,name,relative_path,folder FROM media_files "
+                "WHERE valid=1 AND active=1 "
+                "AND (name LIKE ? ESCAPE '\\' "
+                "OR relative_path LIKE ? ESCAPE '\\') "
+                "ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' "
+                "THEN 0 ELSE 1 END, name COLLATE NOCASE, id "
+                "LIMIT ?",
+                (contains, contains, prefix, capped_limit),
+            ).fetchall()
+            folder_rows = connection.execute(
+                "SELECT folder,COUNT(*) AS count FROM media_files "
+                "WHERE valid=1 AND active=1 AND folder != '' "
+                "AND folder LIKE ? ESCAPE '\\' "
+                "GROUP BY folder "
+                "ORDER BY CASE WHEN folder LIKE ? ESCAPE '\\' "
+                "THEN 0 ELSE 1 END, folder COLLATE NOCASE "
+                "LIMIT ?",
+                (contains, prefix, capped_limit),
+            ).fetchall()
+
+        results: list[dict[str, Any]] = []
+        for row in media_rows:
+            relative_path = str(row["relative_path"] or row["name"])
+            results.append(
+                {
+                    "kind": "media",
+                    "mediaId": int(row["id"]),
+                    "folderPath": str(row["folder"] or ""),
+                    "title": str(row["name"]),
+                    "detail": relative_path,
+                    "icon": "media",
+                    "count": 0,
+                }
+            )
+            if len(results) >= capped_limit:
+                return results
+
+        for row in folder_rows:
+            folder = str(row["folder"])
+            results.append(
+                {
+                    "kind": "folder",
+                    "mediaId": 0,
+                    "folderPath": folder,
+                    "title": folder.rsplit("/", 1)[-1],
+                    "detail": folder,
+                    "icon": "folder",
+                    "count": int(row["count"]),
+                }
+            )
+            if len(results) >= capped_limit:
+                break
+        return results
+
     def navigation_neighbors(
         self,
         media_id: int,
