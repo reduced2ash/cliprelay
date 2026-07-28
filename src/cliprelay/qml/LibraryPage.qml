@@ -15,8 +15,12 @@ Rectangle {
     property Item fullscreenHost
     property Item randomSourceTrigger
     property bool prepareFullscreen: false
+    property int activePreviewMediaId: 0
     property bool commandShortcutsEnabled: !randomSourcePopup.opened
     readonly property bool randomSourcesOpen: randomSourcePopup.opened
+    readonly property bool compactLibrary:
+        String(controller.settings.library_density || "default")
+            === "compact"
     objectName: "libraryPage"
 
     signal searchFocusRequested()
@@ -130,6 +134,7 @@ Rectangle {
     Connections {
         target: controller
         function onLibraryRevealRequested(folder, mediaIndex, folderIndex) {
+            root.activePreviewMediaId = 0
             root.syncingReveal = true
             root.showFolders = true
             root.currentFolder = folder
@@ -146,6 +151,7 @@ Rectangle {
             })
         }
         function onLibraryNavigationRestored(folder, search, folderIndex) {
+            root.activePreviewMediaId = 0
             root.syncingReveal = true
             root.showFolders = true
             root.currentFolder = folder
@@ -166,11 +172,34 @@ Rectangle {
             if (Number(controller.selectedMediaId || 0) <= 0)
                 root.prepareFullscreen = false
         }
+        function onSettingsChanged() {
+            if (!controller.settings.hover_previews)
+                root.activePreviewMediaId = 0
+        }
         function onLibrarySelectionRequested(mediaIndex) {
             if (mediaIndex >= 0) {
                 libraryGrid.positionViewAtIndex(mediaIndex, GridView.Visible)
             }
         }
+    }
+
+    onVisibleChanged: {
+        if (!visible)
+            activePreviewMediaId = 0
+    }
+    onCompactLibraryChanged: {
+        activePreviewMediaId = 0
+        Qt.callLater(function() {
+            const selectedIndex = libraryModel.indexOf(
+                Number(controller.selectedMediaId || 0)
+            )
+            if (selectedIndex >= 0) {
+                libraryGrid.positionViewAtIndex(
+                    selectedIndex,
+                    GridView.Contain
+                )
+            }
+        })
     }
 
     FolderDialog {
@@ -827,28 +856,45 @@ Rectangle {
                         id: libraryGrid
                         visible: controller.settings.library_root && count > 0
                         anchors.fill: parent
-                        anchors.leftMargin: 20; anchors.rightMargin: 14; anchors.topMargin: 4; anchors.bottomMargin: 12
+                        anchors.leftMargin: Theme.libraryGridInset
+                        anchors.rightMargin: Theme.libraryGridInset
+                        anchors.topMargin: 8
+                        anchors.bottomMargin: 8
                         clip: true
                         model: libraryModel
-                        property int columns: Math.max(1, Math.floor(width / 236))
+                        readonly property bool compactDensity:
+                            root.compactLibrary
+                        readonly property int tileGap: compactDensity
+                            ? Theme.libraryGridGapCompact
+                            : Theme.libraryGridGapDefault
+                        readonly property int minimumTileWidth: compactDensity
+                            ? Theme.libraryTileMinCompact
+                            : Theme.libraryTileMinDefault
+                        property int columns: Math.max(
+                            1,
+                            Math.floor(
+                                (width + tileGap)
+                                / (minimumTileWidth + tileGap)
+                            )
+                        )
                         readonly property real tileContentWidth: Math.max(
                             0,
-                            cellWidth - 12
+                            cellWidth - tileGap
                         )
                         readonly property real tilePosterHeight: Math.max(
-                            132,
-                            tileContentWidth * 0.58
+                            96,
+                            Math.round(tileContentWidth * 9 / 16)
                         )
-                        // Title, metadata, margins, and the inter-row gutter.
-                        readonly property real tileChromeHeight: 64
+                        readonly property real tileChromeHeight: compactDensity
+                            ? Theme.libraryTileChromeCompact
+                            : Theme.libraryTileChromeDefault
                         cellWidth: width / columns
-                        cellHeight: Math.max(
-                            220,
-                            Math.ceil(tilePosterHeight + tileChromeHeight)
+                        cellHeight: Math.ceil(
+                            tilePosterHeight + tileChromeHeight + tileGap
                         )
                         cacheBuffer: cellHeight * (
                             controller.settings.performance_mode === "maximum"
-                                ? 4 : 2
+                                ? 3 : 2
                         )
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -873,8 +919,8 @@ Rectangle {
                             clip: true
                             MediaTile {
                                 anchors.fill: parent
-                                anchors.rightMargin: 12
-                                anchors.bottomMargin: 8
+                                anchors.rightMargin: libraryGrid.tileGap
+                                anchors.bottomMargin: libraryGrid.tileGap
                                 mediaId: tileCell.mediaId
                                 name: tileCell.name
                                 thumbnailUrl: tileCell.thumbnailUrl
@@ -886,10 +932,114 @@ Rectangle {
                                 folder: root.showFolders ? "" : tileCell.folder
                                 postedCount: tileCell.postedCount
                                 selected: controller.selectedMediaId === tileCell.mediaId
+                                compact: libraryGrid.compactDensity
+                                previewActive:
+                                    root.activePreviewMediaId === tileCell.mediaId
                                 onChosen: controller.selectMedia(mediaId)
                                 onPlaybackRequested: root.playMedia(mediaId)
                                 onNavigationRequested:
                                     controller.navigateSelection(direction)
+                                onPreviewRequested: function(mediaId) {
+                                    root.activePreviewMediaId = mediaId
+                                }
+                                onPreviewReleased: function(mediaId) {
+                                    if (root.activePreviewMediaId === mediaId)
+                                        root.activePreviewMediaId = 0
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: libraryFooter
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Theme.workspaceFooterHeight
+                    color: "transparent"
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        width: parent.width
+                        height: 1
+                        color: Theme.border
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 12
+                        spacing: 12
+
+                        Text {
+                            text: libraryGrid.count.toLocaleString()
+                                + " VISIBLE"
+                            color: Theme.mutedSoft
+                            font.pixelSize: 10
+                            font.family: Theme.monoFamily
+                            font.weight: Font.Medium
+                            font.letterSpacing: 0.45
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        Text {
+                            visible: controller.selectedMediaId > 0
+                            text: "1 SELECTED"
+                            color: Theme.textSoft
+                            font.pixelSize: 10
+                            font.family: Theme.monoFamily
+                            font.weight: Font.Medium
+                            font.letterSpacing: 0.45
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        Text {
+                            visible: root.compactLibrary
+                            text: "COMPACT"
+                            color: Theme.accentText
+                            font.pixelSize: 10
+                            font.family: Theme.monoFamily
+                            font.weight: Font.Medium
+                            font.letterSpacing: 0.45
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        RowLayout {
+                            spacing: 5
+                            Layout.alignment: Qt.AlignVCenter
+
+                            AppIcon {
+                                Layout.preferredWidth: 13
+                                Layout.preferredHeight: 13
+                                name: controller.scanning
+                                    || controller.thumbnailJobCount > 0
+                                    ? "activity"
+                                    : libraryModel.thumbnailIssueCount > 0
+                                        ? "warning" : "check"
+                                strokeWidth: 1.8
+                                iconColor: controller.scanning
+                                    || controller.thumbnailJobCount > 0
+                                    || libraryModel.thumbnailIssueCount > 0
+                                    ? Theme.warning : Theme.success
+                            }
+                            Text {
+                                text: controller.scanning
+                                    ? "INDEXING LIBRARY"
+                                    : controller.thumbnailJobCount > 0
+                                        ? controller.thumbnailJobCount
+                                            + (controller.thumbnailJobCount === 1
+                                                ? " THUMBNAIL WORKING"
+                                                : " THUMBNAILS WORKING")
+                                        : libraryModel.thumbnailIssueCount > 0
+                                            ? libraryModel.thumbnailIssueCount
+                                                + (libraryModel.thumbnailIssueCount === 1
+                                                    ? " THUMBNAIL UNAVAILABLE"
+                                                    : " THUMBNAILS UNAVAILABLE")
+                                            : "THUMBNAILS READY"
+                                color: Theme.mutedSoft
+                                font.pixelSize: 10
+                                font.family: Theme.monoFamily
+                                font.weight: Font.Medium
+                                font.letterSpacing: 0.45
                             }
                         }
                     }

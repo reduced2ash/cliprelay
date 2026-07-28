@@ -44,10 +44,55 @@ def test_library_grid_height_tracks_responsive_tile_width() -> None:
     source = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
 
     assert "readonly property real tilePosterHeight" in source
-    assert "Math.ceil(tilePosterHeight + tileChromeHeight)" in source
+    assert "tilePosterHeight + tileChromeHeight + tileGap" in source
     assert "cellHeight: 220" not in source
     assert "height: libraryGrid.cellHeight" in source
     assert "clip: true" in source
+
+
+def test_library_canvas_uses_workbench_density_and_one_hover_preview() -> None:
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    tile = (QML_DIR / "MediaTile.qml").read_text(encoding="utf-8")
+    settings = (QML_DIR / "SettingsPage.qml").read_text(encoding="utf-8")
+    actions = (QML_DIR / "WorkbenchActionRegistry.qml").read_text(
+        encoding="utf-8"
+    )
+    theme = (QML_DIR / "Theme.qml").read_text(encoding="utf-8")
+
+    assert "property int activePreviewMediaId: 0" in page
+    assert 'controller.settings.library_density || "default"' in page
+    assert "Theme.libraryTileMinDefault" in page
+    assert "Theme.libraryTileMinCompact" in page
+    assert "Theme.libraryGridGapDefault" in page
+    assert "Theme.libraryGridGapCompact" in page
+    assert "Layout.preferredHeight: Theme.workspaceFooterHeight" in page
+    assert '"THUMBNAILS READY"' in page
+    assert "controller.thumbnailJobCount" in page
+    assert "libraryModel.thumbnailIssueCount" in page
+    assert "root.activePreviewMediaId === tileCell.mediaId" in page
+    assert "root.activePreviewMediaId = mediaId" in page
+
+    assert "property bool compact: false" in tile
+    assert "property bool previewActive: false" in tile
+    assert "signal previewRequested(int mediaId)" in tile
+    assert "signal previewReleased(int mediaId)" in tile
+    assert "interval: Theme.libraryPreviewDelay" in tile
+    assert "root.previewActive" in tile
+    assert "scale: tileTap.pressed" not in tile
+    assert "Image.PreserveAspectFit" in tile
+    assert "VideoOutput.PreserveAspectFit" in tile
+    assert 'fields.push(root.mediaUnchecked ? "Unchecked"' in tile
+
+    assert 'text: "Library density"' in settings
+    assert 'model: ["Default", "Compact"]' in settings
+    assert '"library_density"' in settings
+    assert '"id": "density_default"' in actions
+    assert '"id": "density_compact"' in actions
+    assert 'setSetting("library_density", "compact")' in actions
+
+    assert "readonly property int libraryGridInset: 14" in theme
+    assert "readonly property int libraryTileRadius: 4" in theme
+    assert "readonly property int libraryPreviewDelay: 350" in theme
 
 
 def test_folder_explorer_is_compact_hierarchical_and_keyboard_navigable() -> None:

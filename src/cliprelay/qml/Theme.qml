@@ -91,6 +91,18 @@ QtObject {
     readonly property int radiusWorkbench: 4
     readonly property int focusWidth: 2
 
+    // The media index continues the compact upper-workbench vocabulary.
+    // Density changes geometry only; the tile state language stays identical.
+    readonly property int libraryGridInset: 14
+    readonly property int libraryGridGapDefault: 12
+    readonly property int libraryGridGapCompact: 8
+    readonly property int libraryTileMinDefault: 236
+    readonly property int libraryTileMinCompact: 176
+    readonly property int libraryTileChromeDefault: 58
+    readonly property int libraryTileChromeCompact: 48
+    readonly property int libraryTileRadius: 4
+    readonly property int libraryPreviewDelay: 350
+
     readonly property string monoFamily: Qt.platform.os === "windows"
         ? "Cascadia Mono" : Qt.platform.os === "osx"
             ? "Menlo" : "monospace"

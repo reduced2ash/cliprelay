@@ -74,6 +74,8 @@ class LibraryModel(DictListModel):
         ThumbnailStateRole: b"thumbnailState",
     }
 
+    thumbnailSummaryChanged = Signal()
+
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
@@ -84,6 +86,18 @@ class LibraryModel(DictListModel):
         self.has_more = False
         self.generation = 0
         self._thumbnail_states: dict[int, str] = {}
+
+    @Property(int, notify=thumbnailSummaryChanged)
+    def thumbnailIssueCount(self) -> int:
+        return sum(
+            1
+            for row in self.rows
+            if row.get("thumbnailState") == "failed"
+        )
+
+    def replace(self, rows: list[dict[str, Any]]) -> None:
+        super().replace(rows)
+        self.thumbnailSummaryChanged.emit()
 
     def _map(self, row: dict[str, Any]) -> dict[str, Any]:
         checked = float(row["duration"]) > 0
@@ -197,6 +211,7 @@ class LibraryModel(DictListModel):
         self.beginInsertRows(QModelIndex(), first, first + len(mapped) - 1)
         self.rows.extend(mapped)
         self.endInsertRows()
+        self.thumbnailSummaryChanged.emit()
         return True
 
     def load_more(self) -> bool:
@@ -210,6 +225,7 @@ class LibraryModel(DictListModel):
         self.beginInsertRows(QModelIndex(), first, first + len(mapped) - 1)
         self.rows.extend(mapped)
         self.endInsertRows()
+        self.thumbnailSummaryChanged.emit()
         return True
 
     def find_index(self, media_id: int) -> int:
@@ -232,6 +248,8 @@ class LibraryModel(DictListModel):
             roles.append(self.ThumbnailStateRole)
         model_index = self.index(index, 0)
         self.dataChanged.emit(model_index, model_index, roles)
+        if role_name == "thumbnailUrl":
+            self.thumbnailSummaryChanged.emit()
 
     def set_thumbnail_state(self, media_id: int, state: str) -> None:
         self._thumbnail_states[media_id] = state
@@ -245,6 +263,7 @@ class LibraryModel(DictListModel):
             model_index,
             [self.ThumbnailStateRole],
         )
+        self.thumbnailSummaryChanged.emit()
 
     def clear_thumbnail(self, media_id: int, state: str = "idle") -> None:
         self._thumbnail_states[media_id] = state
@@ -259,6 +278,7 @@ class LibraryModel(DictListModel):
             model_index,
             [self.ThumbnailRole, self.ThumbnailStateRole],
         )
+        self.thumbnailSummaryChanged.emit()
 
 
 class FolderModel(DictListModel):

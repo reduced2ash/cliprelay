@@ -15,16 +15,21 @@ def test_performance_settings_validate_and_default_safely(
 
     assert settings.get("performance_mode") == "automatic"
     assert settings.get("export_encoder") == "auto"
+    assert settings.get("library_density") == "default"
 
     settings.set("performance_mode", "maximum")
     settings.set("export_encoder", "hardware")
+    settings.set("library_density", "compact")
     assert settings.as_dict()["performance_mode"] == "maximum"
     assert settings.as_dict()["export_encoder"] == "hardware"
+    assert settings.as_dict()["library_density"] == "compact"
 
     settings.set("performance_mode", "turbo")
     settings.set("export_encoder", "mystery")
+    settings.set("library_density", "poster-wall")
     assert settings.get("performance_mode") == "automatic"
     assert settings.get("export_encoder") == "auto"
+    assert settings.get("library_density") == "default"
 
 
 def media_payload(path: Path, root: Path, name: str = "sample.mp4") -> dict:
@@ -296,6 +301,32 @@ def test_large_library_model_is_paginated_without_filesystem_access(tmp_path: Pa
     assert model.rows[0]["mediaUrl"].startswith("file:")
     assert model.load_more()
     assert len(model.rows) == 480
+
+
+def test_library_model_reports_visible_thumbnail_failures(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    root = tmp_path / "library"
+    root.mkdir()
+    video = root / "sample.mp4"
+    video.write_bytes(b"video")
+    media_id = database.upsert_media(media_payload(video, root))
+    model = LibraryModel(database)
+    model.refresh()
+
+    summary_events: list[int] = []
+    model.thumbnailSummaryChanged.connect(
+        lambda: summary_events.append(model.thumbnailIssueCount)
+    )
+    assert model.thumbnailIssueCount == 0
+
+    model.set_thumbnail_state(media_id, "failed")
+    assert model.thumbnailIssueCount == 1
+
+    model.set_thumbnail_state(media_id, "queued")
+    assert model.thumbnailIssueCount == 0
+    assert summary_events[-2:] == [1, 0]
 
 
 def test_command_search_is_bounded_and_uses_indexed_media_and_folders(

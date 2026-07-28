@@ -138,6 +138,26 @@ QtObject {
             "enabled": appController.settings.sort_mode !== "size"
         },
         {
+            "id": "density_default",
+            "label": "Use default library density",
+            "detail": "Show readable thumbnails with complete metadata",
+            "category": "View",
+            "icon": "grid",
+            "shortcut": "",
+            "keywords": "library grid tiles density default comfortable",
+            "enabled": appController.settings.library_density !== "default"
+        },
+        {
+            "id": "density_compact",
+            "label": "Use compact library density",
+            "detail": "Fit more video thumbnails in the library",
+            "category": "View",
+            "icon": "grid",
+            "shortcut": "",
+            "keywords": "library grid tiles density compact dense",
+            "enabled": appController.settings.library_density !== "compact"
+        },
+        {
             "id": "go_library",
             "label": "Go to Library",
             "detail": "Open the video library workspace",
@@ -253,6 +273,10 @@ QtObject {
             appController.scanLibrary()
         } else if (actionId.indexOf("sort_") === 0) {
             libraryPage.setSortMode(actionId.substring(5))
+        } else if (actionId === "density_default") {
+            appController.setSetting("library_density", "default")
+        } else if (actionId === "density_compact") {
+            appController.setSetting("library_density", "compact")
         } else if (actionId === "go_library") {
             hostWindow.currentPage = 0
         } else if (actionId === "go_history") {

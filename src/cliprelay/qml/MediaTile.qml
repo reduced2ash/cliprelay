@@ -1,6 +1,8 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import QtMultimedia
 import "."
 
@@ -17,9 +19,23 @@ Item {
     required property string folder
     required property int postedCount
     property bool selected: false
+    property bool compact: false
+    property bool previewActive: false
+    readonly property bool mediaUnchecked:
+        durationLabel === "Unchecked" || resolution === "Unchecked"
+    readonly property string metadataLabel: {
+        var fields = [root.sizeLabel]
+        fields.push(root.mediaUnchecked ? "Unchecked" : root.resolution)
+        if (!root.compact && root.folder.length > 0)
+            fields.push(root.folder)
+        return fields.join("  ·  ")
+    }
+
     signal chosen(int mediaId)
     signal playbackRequested(int mediaId)
     signal navigationRequested(int direction)
+    signal previewRequested(int mediaId)
+    signal previewReleased(int mediaId)
 
     function requestThumbnail() {
         if (
@@ -34,64 +50,89 @@ Item {
         }
     }
 
+    function releasePreview() {
+        hoverDelay.stop()
+        root.previewReleased(root.mediaId)
+    }
+
     Component.onCompleted: Qt.callLater(root.requestThumbnail)
+    Component.onDestruction: root.releasePreview()
     onMediaIdChanged: Qt.callLater(root.requestThumbnail)
     onThumbnailUrlChanged: Qt.callLater(root.requestThumbnail)
 
-    implicitHeight: poster.height + metaColumn.implicitHeight + 10
+    implicitHeight: poster.height + (
+        compact
+            ? Theme.libraryTileChromeCompact
+            : Theme.libraryTileChromeDefault
+    )
     activeFocusOnTab: true
-    scale: tileTap.pressed ? 0.99 : 1
     Accessible.role: Accessible.ListItem
-    Accessible.name: name + ", " + durationLabel + ", " + resolution
-    Behavior on scale { NumberAnimation { duration: Theme.quickMotion; easing.type: Easing.OutQuart } }
+    Accessible.name: name + ", " + metadataLabel
 
     Rectangle {
         id: poster
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: Math.max(132, width * 0.58)
-        radius: Theme.radiusMd
+        height: Math.max(96, Math.round(width * 9 / 16))
+        radius: Theme.libraryTileRadius
         color: Theme.mediaWell
-        border.width: root.selected || root.activeFocus ? 2 : 1
+        border.width: root.selected || root.activeFocus
+            ? Theme.focusWidth : 1
         border.color: root.selected || root.activeFocus
             ? Theme.accent
-            : (hover.hovered ? Theme.borderStrong : Theme.border)
+            : tileHover.hovered ? Theme.borderStrong : Theme.border
         clip: true
-        Behavior on border.color { ColorAnimation { duration: Theme.fastMotion } }
+        Behavior on border.color {
+            ColorAnimation { duration: Theme.quickMotion }
+        }
 
         Image {
             id: thumbnail
             anchors.fill: parent
-            anchors.margins: 2
+            anchors.margins: root.selected || root.activeFocus ? 2 : 1
             source: root.thumbnailUrl
+            sourceSize.width: Math.max(
+                1,
+                Math.ceil(width * Screen.devicePixelRatio)
+            )
+            sourceSize.height: Math.max(
+                1,
+                Math.ceil(height * Screen.devicePixelRatio)
+            )
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             cache: true
             visible: !previewLoader.active
             onStatusChanged: {
-                if (status === Image.Error) Qt.callLater(root.requestThumbnail)
+                if (status === Image.Error)
+                    Qt.callLater(root.requestThumbnail)
             }
 
             Rectangle {
                 anchors.fill: parent
                 color: Theme.raised
                 visible: thumbnail.status !== Image.Ready
+
                 Column {
                     anchors.centerIn: parent
-                    spacing: 8
+                    spacing: root.compact ? 5 : 7
+
                     AppIcon {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        width: 23
-                        height: 23
+                        width: root.compact ? 18 : 22
+                        height: width
                         name: root.thumbnailState === "failed"
-                            || thumbnail.status === Image.Error ? "warning" : "media"
+                            || thumbnail.status === Image.Error
+                            ? "warning" : "media"
                         strokeWidth: 1.6
                         iconColor: root.thumbnailState === "failed"
-                            || thumbnail.status === Image.Error ? Theme.warning : Theme.mutedSoft
+                            || thumbnail.status === Image.Error
+                            ? Theme.warning : Theme.mutedSoft
                     }
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
+                        visible: poster.width >= 156
                         text: root.thumbnailState === "failed"
                             || thumbnail.status === Image.Error
                             ? "Thumbnail unavailable"
@@ -99,11 +140,14 @@ Item {
                                 ? "Creating thumbnail"
                                 : root.thumbnailState === "ready"
                                     ? "Loading thumbnail"
-                                    : "Thumbnail queued"
+                                    : root.thumbnailState === "queued"
+                                        ? "Thumbnail queued"
+                                        : "Thumbnail pending"
                         color: Theme.muted
-                        font.pixelSize: Theme.textXs
+                        font.pixelSize: root.compact ? 10 : Theme.textXs
                     }
                 }
+
                 AppProgressBar {
                     visible: root.thumbnailState === "generating"
                         || root.thumbnailState === "queued"
@@ -111,9 +155,9 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    anchors.leftMargin: 20
-                    anchors.rightMargin: 20
-                    anchors.bottomMargin: 14
+                    anchors.leftMargin: root.compact ? 12 : 20
+                    anchors.rightMargin: root.compact ? 12 : 20
+                    anchors.bottomMargin: root.compact ? 8 : 12
                 }
             }
         }
@@ -121,9 +165,10 @@ Item {
         Loader {
             id: previewLoader
             anchors.fill: parent
-            anchors.margins: 2
+            anchors.margins: root.selected || root.activeFocus ? 2 : 1
             active: controller.settings.hover_previews
-                && hover.hovered && root.previewUrl.length > 0
+                && root.previewActive
+                && root.previewUrl.length > 0
             sourceComponent: Component {
                 Item {
                     MediaPlayer {
@@ -144,67 +189,75 @@ Item {
         }
 
         Rectangle {
+            visible: !root.mediaUnchecked
+                && root.durationLabel.length > 0
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.margins: 8
-            width: durationText.implicitWidth + 12
-            height: 24
-            radius: 5
+            anchors.margins: root.compact ? 5 : 7
+            width: durationText.implicitWidth + (root.compact ? 8 : 10)
+            height: root.compact ? 18 : 20
+            radius: Theme.radiusWorkbench
             color: Theme.overlay
+
             Text {
                 id: durationText
                 anchors.centerIn: parent
                 text: root.durationLabel
                 color: Theme.mediaText
-                font.pixelSize: Theme.textXs
-                font.family: Qt.platform.os === "windows" ? "Consolas" : "Menlo"
+                font.pixelSize: root.compact ? 10 : Theme.textXs
+                font.family: Theme.monoFamily
             }
         }
 
         Rectangle {
-            visible: root.postedCount > 0
-            anchors.left: parent.left
+            visible: root.selected
+            anchors.right: parent.right
             anchors.top: parent.top
-            anchors.margins: 8
-            width: postedText.implicitWidth + 32
-            height: 24
-            radius: 5
-            color: Theme.successSoft
-            Row {
+            anchors.margins: root.compact ? 5 : 7
+            width: root.compact ? 20 : 22
+            height: width
+            radius: Theme.radiusWorkbench
+            color: Theme.accent
+
+            AppIcon {
                 anchors.centerIn: parent
-                spacing: 4
-                AppIcon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 12
-                    height: 12
-                    name: "check"
-                    strokeWidth: 2.2
-                    iconColor: Theme.success
-                }
-                Text {
-                    id: postedText
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Posted " + root.postedCount
-                    color: Theme.success
-                    font.pixelSize: Theme.textXs
-                    font.weight: Font.DemiBold
-                }
+                width: 13
+                height: 13
+                name: "check"
+                strokeWidth: 2.3
+                iconColor: Theme.accentContent
             }
         }
 
-        HoverHandler { id: hover }
+        HoverHandler {
+            id: tileHover
+            onHoveredChanged: {
+                if (
+                    hovered
+                    && controller.settings.hover_previews
+                ) {
+                    hoverDelay.restart()
+                } else {
+                    root.releasePreview()
+                }
+            }
+        }
         TapHandler {
-            id: tileTap
             onTapped: {
                 root.forceActiveFocus()
                 root.chosen(root.mediaId)
             }
         }
         Timer {
-            interval: 350
-            running: controller.settings.hover_previews
-                && hover.hovered && root.previewUrl.length === 0
-            onTriggered: controller.ensurePreview(root.mediaId)
+            id: hoverDelay
+            interval: Theme.libraryPreviewDelay
+            repeat: false
+            onTriggered: {
+                if (!tileHover.hovered)
+                    return
+                controller.ensurePreview(root.mediaId)
+                root.previewRequested(root.mediaId)
+            }
         }
     }
 
@@ -213,24 +266,66 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: poster.bottom
-        anchors.topMargin: 8
-        spacing: 3
+        anchors.topMargin: root.compact ? 5 : 7
+        spacing: root.compact ? 1 : 2
+
         Text {
+            id: nameText
             text: root.name
             color: root.selected ? Theme.text : Theme.textSoft
-            font.pixelSize: Theme.textSm
+            font.pixelSize: root.compact ? Theme.textXs : Theme.textSm
             font.weight: root.selected ? Font.DemiBold : Font.Medium
             elide: Text.ElideMiddle
             Layout.fillWidth: true
         }
-        Text {
-            text: root.sizeLabel + "  ·  " + root.resolution + (root.folder.length ? "  ·  " + root.folder : "")
-            color: Theme.muted
-            font.pixelSize: Theme.textXs
-            elide: Text.ElideMiddle
+
+        RowLayout {
             Layout.fillWidth: true
+            spacing: 5
+
+            AppIcon {
+                visible: root.mediaUnchecked
+                Layout.preferredWidth: 12
+                Layout.preferredHeight: 12
+                name: "activity"
+                strokeWidth: 1.5
+                iconColor: Theme.mutedSoft
+            }
+            Text {
+                id: metadataText
+                text: root.metadataLabel
+                color: Theme.muted
+                font.pixelSize: root.compact ? 10 : Theme.textXs
+                font.family: Theme.monoFamily
+                elide: Text.ElideMiddle
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                visible: root.postedCount > 0
+                spacing: 2
+
+                AppIcon {
+                    Layout.preferredWidth: 11
+                    Layout.preferredHeight: 11
+                    name: "check"
+                    strokeWidth: 2
+                    iconColor: Theme.success
+                }
+                Text {
+                    text: root.postedCount.toLocaleString()
+                    color: Theme.success
+                    font.pixelSize: root.compact ? 10 : Theme.textXs
+                    font.family: Theme.monoFamily
+                }
+            }
         }
     }
+
+    ToolTip.visible: tileHover.hovered
+        && (nameText.truncated || metadataText.truncated)
+    ToolTip.text: root.folder.length
+        ? root.folder + "/" + root.name : root.name
+    ToolTip.delay: 600
 
     Keys.onSpacePressed: function(event) {
         root.playbackRequested(root.mediaId)

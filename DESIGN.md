@@ -119,11 +119,12 @@ Depth is tonal. Higher surfaces become slightly lighter and more chromatic; shad
 
 ### Media Tiles
 
-- **Corner Style:** 8px media frame; text sits below without an enclosing card.
+- **Corner Style:** 4px technical media frame; text sits below without an enclosing card.
 - **Background:** Night Ink letterbox around `PreserveAspectFit` content.
 - **State:** One-pixel Hairline Plum outline at rest, Active Surface on hover, 2px Relay Persimmon outline when selected.
 - **Preview:** Hover begins muted playback after 350ms; Space or click provides the same action.
 - **Thumbnail state:** Visible tiles enter a bounded background queue and state their exact phase: queued, creating, loading, or unavailable.
+- **Density:** Default uses readable metadata and 12px gaps; Compact uses a smaller target width and 8px gaps without changing global workspace scale.
 
 ### Inputs / Fields
 

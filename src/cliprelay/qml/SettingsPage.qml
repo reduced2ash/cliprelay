@@ -169,6 +169,40 @@ Rectangle {
                     color: Theme.muted; font.pixelSize: Theme.textXs; wrapMode: Text.Wrap
                     Layout.fillWidth: true; Layout.topMargin: 4
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 18
+                    spacing: 14
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+                        Text {
+                            text: "Library density"
+                            color: Theme.text
+                            font.pixelSize: Theme.textSm
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            text: "Compact fits more videos without changing the rest of the interface."
+                            color: Theme.muted
+                            font.pixelSize: Theme.textXs
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                    AppComboBox {
+                        Layout.preferredWidth: 190
+                        model: ["Default", "Compact"]
+                        currentIndex:
+                            controller.settings.library_density === "compact"
+                                ? 1 : 0
+                        onActivated: controller.setSetting(
+                            "library_density",
+                            currentIndex === 1 ? "compact" : "default"
+                        )
+                        Accessible.name: "Library density"
+                    }
+                }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 28; Layout.bottomMargin: 28 }
                 Text { text: "PERFORMANCE"; color: Theme.accentText; font.pixelSize: Theme.textXs; font.letterSpacing: 1.3 }

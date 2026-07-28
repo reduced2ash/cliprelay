@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
     "ui_scale": 1.0,
     "theme_mode": "relay",
     "performance_mode": "automatic",
+    "library_density": "default",
     "export_encoder": "auto",
     "sidebar_collapsed": False,
     "prepare_expanded": False,
@@ -59,6 +60,10 @@ class Settings:
             value = str(value)
             if value not in {"automatic", "maximum"}:
                 value = "automatic"
+        if key == "library_density":
+            value = str(value)
+            if value not in {"default", "compact"}:
+                value = "default"
         if key == "export_encoder":
             value = str(value)
             if value not in {"auto", "hardware", "software"}:

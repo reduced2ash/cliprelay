@@ -99,6 +99,7 @@ class AppController(QObject):
     telegramStateChanged = Signal()
     telegramDialogsChanged = Signal()
     commandSearchChanged = Signal()
+    thumbnailActivityChanged = Signal()
     navigationRequested = Signal(str)
     libraryRevealRequested = Signal(str, int, int)
     libraryNavigationRestored = Signal(str, str, int)
@@ -326,6 +327,10 @@ class AppController(QObject):
     @Property(bool, notify=scanStateChanged)
     def scanning(self) -> bool:
         return self._scanning
+
+    @Property(int, notify=thumbnailActivityChanged)
+    def thumbnailJobCount(self) -> int:
+        return len(self._thumbnail_jobs)
 
     @Property(bool, notify=randomStateChanged)
     def randomPicking(self) -> bool:
@@ -1871,6 +1876,7 @@ class AppController(QObject):
         self.library_model.set_thumbnail_state(media_id, "queued")
         task = asyncio.create_task(self._ensure_thumbnail_async(media_id))
         self._thumbnail_jobs[media_id] = task
+        self.thumbnailActivityChanged.emit()
         task.add_done_callback(
             lambda completed, selected_id=media_id: self._thumbnail_job_done(
                 selected_id,
@@ -1881,6 +1887,7 @@ class AppController(QObject):
     def _thumbnail_job_done(self, media_id: int, task: asyncio.Task) -> None:
         if self._thumbnail_jobs.get(media_id) is task:
             self._thumbnail_jobs.pop(media_id, None)
+            self.thumbnailActivityChanged.emit()
         if not task.cancelled() and (error := task.exception()):
             LOGGER.debug("Thumbnail task failed for %s: %s", media_id, error)
 
