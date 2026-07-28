@@ -10,13 +10,24 @@ Rectangle {
     required property var folderTreeModel
     property int activityWidth: 68
     property int explorerWidth: 204
+    property int currentPage: 0
     property bool activityCollapsed: true
     property bool showFolders: true
     property string currentFolder: ""
     property string libraryRoot: ""
+    readonly property bool libraryPageActive: currentPage === 0
+    readonly property string pageName: currentPage === 1
+        ? "History" : currentPage === 2 ? "Settings" : "Library"
+    readonly property string pageIcon: currentPage === 1
+        ? "history" : currentPage === 2 ? "settings" : "library"
+    readonly property string pageDetail: currentPage === 1
+        ? "Recorded relays and delivery outcomes"
+        : currentPage === 2
+            ? "Application preferences and integrations"
+            : ""
     readonly property bool hasLibrary: libraryRoot.length > 0
     readonly property bool showExplorer:
-        hasLibrary && showFolders
+        libraryPageActive && hasLibrary && showFolders
     readonly property bool compactActions: width < 1220
     readonly property bool narrowActions: width < 1040
     readonly property string libraryName: {
@@ -58,14 +69,14 @@ Rectangle {
                 AppIcon {
                     Layout.preferredWidth: 16
                     Layout.preferredHeight: 16
-                    name: "library"
+                    name: root.pageIcon
                     strokeWidth: 1.75
                     iconColor: Theme.accentText
                 }
                 Text {
                     visible: !root.activityCollapsed
                     Layout.fillWidth: true
-                    text: "LIBRARY"
+                    text: root.pageName.toUpperCase()
                     color: Theme.textSoft
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
@@ -144,6 +155,7 @@ Rectangle {
             clip: true
 
             RowLayout {
+                visible: root.libraryPageActive
                 anchors.fill: parent
                 anchors.leftMargin: 12
                 anchors.rightMargin: 9
@@ -248,6 +260,42 @@ Rectangle {
                     enabled: root.actionRegistry.action("rescan").enabled
                     onClicked:
                         root.actionRegistry.triggerAction("rescan")
+                }
+            }
+
+            RowLayout {
+                visible: !root.libraryPageActive
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 7
+
+                AppIcon {
+                    Layout.preferredWidth: 15
+                    Layout.preferredHeight: 15
+                    name: root.pageIcon
+                    strokeWidth: 1.7
+                    iconColor: Theme.accentText
+                }
+                Text {
+                    text: root.pageName
+                    color: Theme.accentText
+                    font.pixelSize: Theme.textWorkbench
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    text: "/"
+                    color: Theme.mutedSoft
+                    font.pixelSize: Theme.textWorkbench
+                    font.family: Theme.monoFamily
+                }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: root.pageDetail
+                    color: Theme.muted
+                    font.pixelSize: Theme.textWorkbench
+                    elide: Text.ElideRight
                 }
             }
         }

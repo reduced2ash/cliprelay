@@ -187,12 +187,11 @@ ApplicationWindow {
 
                 LibraryContextToolbar {
                     id: libraryContextToolbar
-                    visible: window.currentPage === 0
                     Layout.fillWidth: true
-                    Layout.preferredHeight: visible
-                        ? Theme.workbenchContextHeight : 0
+                    Layout.preferredHeight: Theme.workbenchContextHeight
                     activityWidth: window.navCollapsed ? 68 : 204
                     explorerWidth: 204
+                    currentPage: window.currentPage
                     activityCollapsed: window.navCollapsed
                     showFolders: libraryPage.showFolders
                     currentFolder: libraryPage.currentFolder
