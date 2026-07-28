@@ -223,7 +223,8 @@ ApplicationWindow {
                             anchors.rightMargin:
                                 window.navCollapsed ? 10 : 14
                             anchors.topMargin: 8
-                            anchors.bottomMargin: 12
+                            anchors.bottomMargin:
+                                Theme.workspaceFooterHeight + 5
                             spacing: 5
 
                             NavButton {
@@ -270,17 +271,31 @@ ApplicationWindow {
                                         "toggle_sidebar"
                                     )
                             }
+                        }
+
+                        Rectangle {
+                            id: sidebarFooter
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: Theme.workspaceFooterHeight
+                            color: "transparent"
 
                             Rectangle {
-                                Layout.fillWidth: true
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
                                 height: 1
                                 color: Theme.border
                             }
-                            ColumnLayout {
-                                Layout.fillWidth: true
+
+                            Column {
+                                visible: !window.navCollapsed
+                                anchors.left: parent.left
+                                anchors.leftMargin: 14
+                                anchors.verticalCenter: parent.verticalCenter
                                 spacing: 3
                                 Text {
-                                    visible: !window.navCollapsed
                                     text: controller.counts.media
                                         + (controller.counts.media === 1
                                             ? " video"
@@ -289,7 +304,6 @@ ApplicationWindow {
                                     font.pixelSize: Theme.textSm
                                 }
                                 Text {
-                                    visible: !window.navCollapsed
                                     text: controller.counts.posts
                                         + (controller.counts.posts === 1
                                             ? " relay"
@@ -298,48 +312,48 @@ ApplicationWindow {
                                     color: Theme.muted
                                     font.pixelSize: Theme.textXs
                                 }
-                                Item {
-                                    visible: window.navCollapsed
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 36
+                            }
 
-                                    Row {
-                                        anchors.centerIn: parent
-                                        spacing: 5
-                                        AppIcon {
-                                            anchors.verticalCenter:
-                                                parent.verticalCenter
-                                            width: 15
-                                            height: 15
-                                            name: "media"
-                                            strokeWidth: 1.7
-                                            iconColor: Theme.muted
-                                        }
-                                        Text {
-                                            anchors.verticalCenter:
-                                                parent.verticalCenter
-                                            text: String(
-                                                controller.counts.media
-                                            )
-                                            color: Theme.text
-                                            font.pixelSize: 10
-                                            font.family: Theme.monoFamily
-                                            font.weight: Font.Medium
-                                        }
+                            Item {
+                                visible: window.navCollapsed
+                                anchors.fill: parent
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 5
+                                    AppIcon {
+                                        anchors.verticalCenter:
+                                            parent.verticalCenter
+                                        width: 15
+                                        height: 15
+                                        name: "media"
+                                        strokeWidth: 1.7
+                                        iconColor: Theme.muted
                                     }
-                                    HoverHandler {
-                                        id: videoCountHover
+                                    Text {
+                                        anchors.verticalCenter:
+                                            parent.verticalCenter
+                                        text: String(
+                                            controller.counts.media
+                                        )
+                                        color: Theme.text
+                                        font.pixelSize: 10
+                                        font.family: Theme.monoFamily
+                                        font.weight: Font.Medium
                                     }
-                                    ToolTip.visible:
-                                        videoCountHover.hovered
-                                    ToolTip.text:
-                                        controller.counts.media
-                                        + (controller.counts.media === 1
-                                            ? " video"
-                                            : " videos")
-                                        + " in library"
-                                    ToolTip.delay: 450
                                 }
+                                HoverHandler {
+                                    id: videoCountHover
+                                }
+                                ToolTip.visible:
+                                    videoCountHover.hovered
+                                ToolTip.text:
+                                    controller.counts.media
+                                    + (controller.counts.media === 1
+                                        ? " video"
+                                        : " videos")
+                                    + " in library"
+                                ToolTip.delay: 450
                             }
                         }
                     }

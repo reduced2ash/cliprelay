@@ -698,7 +698,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 40
+                        Layout.preferredHeight:
+                            Theme.workspaceFooterHeight
                         color: "transparent"
                         border.width: 0
 
@@ -723,8 +724,10 @@ Rectangle {
                                     + " VISIBLE"
                                 color: Theme.mutedSoft
                                 font.pixelSize: 10
+                                font.family: Theme.monoFamily
                                 font.weight: Font.Medium
                                 font.letterSpacing: 0.45
+                                Layout.alignment: Qt.AlignVCenter
                             }
                             AppButton {
                                 text: "Reset shuffle history"

@@ -87,6 +87,7 @@ QtObject {
     readonly property int workbenchTitleHeight: 40
     readonly property int workbenchContextHeight: 42
     readonly property int workbenchControlHeight: 30
+    readonly property int workspaceFooterHeight: 40
     readonly property int radiusWorkbench: 4
     readonly property int focusWidth: 2
 

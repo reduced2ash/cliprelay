@@ -172,9 +172,11 @@ def test_upper_workbench_uses_two_compact_bands_and_one_search_surface() -> None
 
 def test_workspace_context_keeps_sidebar_geometry_stable_on_every_page() -> None:
     main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
     context = (QML_DIR / "LibraryContextToolbar.qml").read_text(
         encoding="utf-8"
     )
+    theme = (QML_DIR / "Theme.qml").read_text(encoding="utf-8")
 
     assert "currentPage: window.currentPage" in main
     assert "Layout.preferredHeight: Theme.workbenchContextHeight" in main
@@ -183,6 +185,10 @@ def test_workspace_context_keeps_sidebar_geometry_stable_on_every_page() -> None
     assert '? "History" : currentPage === 2 ? "Settings" : "Library"' in context
     assert "libraryPageActive && hasLibrary && showFolders" in context
     assert "visible: !root.libraryPageActive" in context
+    assert "readonly property int workspaceFooterHeight: 40" in theme
+    assert "id: sidebarFooter" in main
+    assert "height: Theme.workspaceFooterHeight" in main
+    assert "Layout.preferredHeight:\n                            Theme.workspaceFooterHeight" in page
 
 
 def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> None:
