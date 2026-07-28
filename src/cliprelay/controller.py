@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -94,6 +96,9 @@ class AppController(QObject):
     timelineStateChanged = Signal()
     selectionNavigationChanged = Signal()
     navigationHistoryChanged = Signal()
+    workspaceTabsChanged = Signal()
+    activeWorkspaceChanged = Signal()
+    workspaceDraftRestoreRequested = Signal("QVariantMap")
     countsChanged = Signal()
     publishStateChanged = Signal()
     telegramStateChanged = Signal()
@@ -162,6 +167,11 @@ class AppController(QObject):
         self._navigation_forward: list[_NavigationState] = []
         self._navigation_restoring = False
         self._pending_navigation_focus_media_id = 0
+        self._workspace_tabs: list[dict[str, Any]] = []
+        self._closed_workspace_tabs: list[dict[str, Any]] = []
+        self._active_workspace_id = ""
+        self._workspace_switching = False
+        self._pending_workspace_restore = False
         self._scanning = False
         self._random_picking = False
         self._random_folder_options_cache: list[dict[str, Any]] = []
@@ -198,8 +208,10 @@ class AppController(QObject):
         self._counts_refresh_task: asyncio.Task | None = None
         self._shuffle_reset_task: asyncio.Task | None = None
         self._root_activation_task: asyncio.Task | None = None
+        self._queued_root_activation: str | Path | None = None
         self._full_refresh_generation = 0
         self._root_activation_generation = 0
+        self._root_activation_applied_generation = 0
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -245,10 +257,17 @@ class AppController(QObject):
         self._watcher_timer.setSingleShot(True)
         self._watcher_timer.setInterval(1000)
         self._watcher_timer.timeout.connect(self._start_watcher)
+        self._workspace_persist_timer = QTimer(self)
+        self._workspace_persist_timer.setSingleShot(True)
+        self._workspace_persist_timer.setInterval(300)
+        self._workspace_persist_timer.timeout.connect(
+            self._persist_workspaces
+        )
         self._filesystemChanged.connect(self._schedule_rescan)
         self._scanProgress.connect(self._on_scan_progress)
         self._manifestProgress.connect(self._on_manifest_progress)
         self._mediaIndexed.connect(self._on_media_indexed)
+        self._initialize_workspaces()
         root = self._setting("library_root")
         active_root = root if root and Path(root).is_dir() else None
         if self._runtime_model_workers:
@@ -291,6 +310,649 @@ class AppController(QObject):
     def _store_setting(self, key: str, value: Any) -> None:
         self.settings_store.set(key, value)
         self._settings_cache[key] = self.settings_store.get(key, value)
+
+    @staticmethod
+    def _workspace_title(root: str) -> str:
+        if not root:
+            return "New workspace"
+        path = Path(root)
+        return path.name or path.anchor or "Library"
+
+    @staticmethod
+    def _navigation_to_dict(state: _NavigationState) -> dict[str, Any]:
+        return {
+            "folder": state.folder,
+            "search": state.search,
+            "mediaId": state.media_id,
+        }
+
+    @staticmethod
+    def _navigation_from_value(value: Any) -> _NavigationState | None:
+        if not isinstance(value, dict):
+            return None
+        try:
+            return _NavigationState(
+                folder=str(value.get("folder") or ""),
+                search=str(value.get("search") or ""),
+                media_id=max(0, int(value.get("mediaId") or 0)),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _new_workspace(
+        self,
+        root: str = "",
+        *,
+        title: str = "",
+    ) -> dict[str, Any]:
+        normalized_root = ""
+        if root:
+            normalized_root = str(Path(root).expanduser().resolve())
+        return {
+            "id": uuid.uuid4().hex,
+            "title": title.strip() or self._workspace_title(normalized_root),
+            "customTitle": bool(title.strip()),
+            "root": normalized_root,
+            "folder": "",
+            "search": "",
+            "sortMode": str(self._setting("sort_mode", "newest")),
+            "selectedMediaId": 0,
+            "selectedMediaName": "",
+            "navigationBack": [],
+            "navigationForward": [],
+            "randomFolderMode": "all",
+            "randomFolders": [],
+            "draft": {},
+        }
+
+    def _normalize_workspace(
+        self,
+        value: Any,
+        seen_ids: set[str],
+    ) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        raw_root = str(value.get("root") or "")
+        root = (
+            str(Path(raw_root).expanduser().resolve())
+            if raw_root
+            else ""
+        )
+        workspace_id = str(value.get("id") or "")
+        if not workspace_id or workspace_id in seen_ids:
+            workspace_id = uuid.uuid4().hex
+        seen_ids.add(workspace_id)
+        sort_mode = str(value.get("sortMode") or "newest")
+        if sort_mode not in {"newest", "oldest", "name", "duration", "size"}:
+            sort_mode = "newest"
+        random_mode = (
+            "selected"
+            if value.get("randomFolderMode") == "selected"
+            else "all"
+        )
+        random_folders = value.get("randomFolders")
+        if not isinstance(random_folders, list):
+            random_folders = []
+        navigation_back = [
+            self._navigation_to_dict(state)
+            for item in value.get("navigationBack", [])
+            if (state := self._navigation_from_value(item)) is not None
+        ][-200:]
+        navigation_forward = [
+            self._navigation_to_dict(state)
+            for item in value.get("navigationForward", [])
+            if (state := self._navigation_from_value(item)) is not None
+        ][-200:]
+        draft = value.get("draft")
+        if not isinstance(draft, dict):
+            draft = {}
+        title = str(value.get("title") or "").strip()
+        custom_title = bool(value.get("customTitle")) and bool(title)
+        try:
+            selected_media_id = max(
+                0,
+                int(value.get("selectedMediaId") or 0),
+            )
+        except (TypeError, ValueError):
+            selected_media_id = 0
+        return {
+            "id": workspace_id,
+            "title": title or self._workspace_title(root),
+            "customTitle": custom_title,
+            "root": root,
+            "folder": str(value.get("folder") or ""),
+            "search": str(value.get("search") or ""),
+            "sortMode": sort_mode,
+            "selectedMediaId": selected_media_id,
+            "selectedMediaName": str(
+                value.get("selectedMediaName") or ""
+            ),
+            "navigationBack": navigation_back,
+            "navigationForward": navigation_forward,
+            "randomFolderMode": random_mode,
+            "randomFolders": list(
+                dict.fromkeys(
+                    str(folder)
+                    for folder in random_folders
+                    if isinstance(folder, str)
+                )
+            ),
+            "draft": copy.deepcopy(draft),
+        }
+
+    def _initialize_workspaces(self) -> None:
+        seen_ids: set[str] = set()
+        raw_tabs = self._setting("workspace_tabs", [])
+        if isinstance(raw_tabs, list):
+            self._workspace_tabs = [
+                workspace
+                for value in raw_tabs
+                if (
+                    workspace := self._normalize_workspace(
+                        value,
+                        seen_ids,
+                    )
+                ) is not None
+            ]
+        if not self._workspace_tabs:
+            initial = self._new_workspace(
+                str(self._setting("library_root") or "")
+            )
+            initial["sortMode"] = str(
+                self._setting("sort_mode", "newest")
+            )
+            initial["randomFolderMode"] = self._random_folder_mode()
+            initial["randomFolders"] = self._stored_random_folders()
+            self._workspace_tabs = [initial]
+
+        active_id = str(self._setting("active_workspace_id") or "")
+        if not any(
+            workspace["id"] == active_id
+            for workspace in self._workspace_tabs
+        ):
+            active_id = self._workspace_tabs[0]["id"]
+        self._active_workspace_id = active_id
+
+        closed_values = self._setting("closed_workspace_tabs", [])
+        closed_seen = set(seen_ids)
+        if isinstance(closed_values, list):
+            self._closed_workspace_tabs = [
+                workspace
+                for value in closed_values[-10:]
+                if (
+                    workspace := self._normalize_workspace(
+                        value,
+                        closed_seen,
+                    )
+                ) is not None
+            ]
+
+        active = self._active_workspace()
+        if active:
+            self._settings_cache["library_root"] = active["root"]
+            self._settings_cache["sort_mode"] = active["sortMode"]
+            self._settings_cache["random_folder_mode"] = (
+                active["randomFolderMode"]
+            )
+            self._settings_cache["random_folders"] = list(
+                active["randomFolders"]
+            )
+            self._navigation_back = [
+                state
+                for item in active["navigationBack"]
+                if (state := self._navigation_from_value(item)) is not None
+            ]
+            self._navigation_forward = [
+                state
+                for item in active["navigationForward"]
+                if (state := self._navigation_from_value(item)) is not None
+            ]
+            self.library_model.folder = active["folder"]
+            self.library_model.search = active["search"]
+            self.library_model.sort_mode = active["sortMode"]
+            self._pending_navigation_focus_media_id = max(
+                0,
+                int(active["selectedMediaId"]),
+            )
+            self._workspace_switching = True
+            try:
+                self._set_selected(self._workspace_media_row(active))
+            finally:
+                self._workspace_switching = False
+            self._pending_workspace_restore = True
+        self._workspace_switching = True
+        try:
+            self._persist_workspaces()
+        finally:
+            self._workspace_switching = False
+
+    def _active_workspace(self) -> dict[str, Any] | None:
+        return next(
+            (
+                workspace
+                for workspace in self._workspace_tabs
+                if workspace["id"] == self._active_workspace_id
+            ),
+            None,
+        )
+
+    def _workspace_for_id(
+        self,
+        workspace_id: str,
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                workspace
+                for workspace in self._workspace_tabs
+                if workspace["id"] == workspace_id
+            ),
+            None,
+        )
+
+    def _sync_active_workspace_state(self) -> None:
+        workspace = self._active_workspace()
+        if not workspace or self._workspace_switching:
+            return
+        workspace["root"] = str(self._setting("library_root") or "")
+        workspace["folder"] = str(self.library_model.folder or "")
+        workspace["search"] = str(self.library_model.search or "")
+        workspace["sortMode"] = str(
+            self.library_model.sort_mode
+            or self._setting("sort_mode", "newest")
+        )
+        workspace["selectedMediaId"] = max(0, int(self._selected_id))
+        workspace["selectedMediaName"] = str(
+            self._selected.get("name") or ""
+        )
+        workspace["navigationBack"] = [
+            self._navigation_to_dict(state)
+            for state in self._navigation_back[-200:]
+        ]
+        workspace["navigationForward"] = [
+            self._navigation_to_dict(state)
+            for state in self._navigation_forward[-200:]
+        ]
+        workspace["randomFolderMode"] = self._random_folder_mode()
+        workspace["randomFolders"] = self._stored_random_folders()
+
+    def _schedule_workspace_persist(
+        self,
+        *,
+        notify: bool = True,
+    ) -> None:
+        if self._workspace_switching or self._shutting_down:
+            return
+        self._sync_active_workspace_state()
+        if notify:
+            self.workspaceTabsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    @Slot()
+    def _persist_workspaces(self) -> None:
+        self._sync_active_workspace_state()
+        self._store_setting(
+            "workspace_tabs",
+            copy.deepcopy(self._workspace_tabs),
+        )
+        self._store_setting(
+            "active_workspace_id",
+            self._active_workspace_id,
+        )
+        self._store_setting(
+            "closed_workspace_tabs",
+            copy.deepcopy(self._closed_workspace_tabs[-10:]),
+        )
+
+    def _workspace_public(
+        self,
+        workspace: dict[str, Any],
+        index: int,
+    ) -> dict[str, Any]:
+        return {
+            "id": workspace["id"],
+            "title": workspace["title"],
+            "root": workspace["root"],
+            "folder": workspace["folder"],
+            "search": workspace["search"],
+            "sortMode": workspace["sortMode"],
+            "selectedMediaName": workspace["selectedMediaName"],
+            "active": workspace["id"] == self._active_workspace_id,
+            "index": index,
+            "canClose": len(self._workspace_tabs) > 1,
+            "hasBack": bool(workspace["navigationBack"]),
+            "hasForward": bool(workspace["navigationForward"]),
+        }
+
+    @Property("QVariantList", notify=workspaceTabsChanged)
+    def workspaceTabs(self) -> list[dict[str, Any]]:
+        self._sync_active_workspace_state()
+        return [
+            self._workspace_public(workspace, index)
+            for index, workspace in enumerate(self._workspace_tabs)
+        ]
+
+    @Property(str, notify=activeWorkspaceChanged)
+    def activeWorkspaceId(self) -> str:
+        return self._active_workspace_id
+
+    @Property("QVariantMap", notify=activeWorkspaceChanged)
+    def activeWorkspaceDraft(self) -> dict[str, Any]:
+        workspace = self._active_workspace()
+        return (
+            copy.deepcopy(workspace["draft"])
+            if workspace
+            else {}
+        )
+
+    @Property("QVariantMap", notify=activeWorkspaceChanged)
+    def activeWorkspace(self) -> dict[str, Any]:
+        workspace = self._active_workspace()
+        if not workspace:
+            return {}
+        return self._workspace_public(
+            workspace,
+            self._workspace_tabs.index(workspace),
+        )
+
+    @Property(int, notify=workspaceTabsChanged)
+    def workspaceCount(self) -> int:
+        return len(self._workspace_tabs)
+
+    @Property(int, notify=workspaceTabsChanged)
+    def closedWorkspaceCount(self) -> int:
+        return len(self._closed_workspace_tabs)
+
+    def _workspace_media_row(
+        self,
+        workspace: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        media_id = max(0, int(workspace["selectedMediaId"]))
+        if media_id <= 0:
+            return None
+        row = self.database.get_media(media_id)
+        if not row or not bool(row.get("valid", 1)):
+            return None
+        path = Path(str(row.get("path") or ""))
+        if not path.is_file():
+            return None
+        root = str(workspace["root"] or "")
+        row_root = str(row.get("root_path") or "")
+        if not root or not row_root:
+            return None
+        if (
+            Path(root).expanduser().resolve()
+            != Path(row_root).expanduser().resolve()
+        ):
+            return None
+        return row
+
+    def _activate_workspace_runtime(
+        self,
+        workspace: dict[str, Any],
+        *,
+        scan_new_root: bool = False,
+    ) -> None:
+        self._workspace_switching = True
+        try:
+            for task in self._thumbnail_jobs.values():
+                task.cancel()
+            self._thumbnail_jobs.clear()
+            for task in self._preview_jobs.values():
+                task.cancel()
+            self._preview_jobs.clear()
+            self.thumbnailActivityChanged.emit()
+            self._active_workspace_id = workspace["id"]
+            self._store_setting("library_root", workspace["root"])
+            self._store_setting("sort_mode", workspace["sortMode"])
+            self._store_setting(
+                "random_folder_mode",
+                workspace["randomFolderMode"],
+            )
+            self._store_setting(
+                "random_folders",
+                list(workspace["randomFolders"]),
+            )
+            self._navigation_back = [
+                state
+                for item in workspace["navigationBack"]
+                if (state := self._navigation_from_value(item)) is not None
+            ]
+            self._navigation_forward = [
+                state
+                for item in workspace["navigationForward"]
+                if (state := self._navigation_from_value(item)) is not None
+            ]
+            self._pending_navigation_focus_media_id = max(
+                0,
+                int(workspace["selectedMediaId"]),
+            )
+            self._cancel_load_more()
+            self.library_model.folder = workspace["folder"]
+            self.library_model.search = workspace["search"]
+            self.library_model.sort_mode = workspace["sortMode"]
+            self._set_selected(self._workspace_media_row(workspace))
+            self._invalidate_random_folder_options(clear=True)
+            self._stop_watcher(wait=False)
+            root = workspace["root"]
+            active_root = root if root and Path(root).is_dir() else None
+            self._pending_workspace_restore = True
+            if self._can_use_model_workers():
+                self.database.set_active_root(active_root)
+                self._queue_root_activation(active_root)
+            else:
+                self.database.activate_root(active_root)
+                self.refresh_all()
+            if active_root:
+                self._watcher_timer.start()
+                if scan_new_root:
+                    self._auto_scan_timer.start()
+            self.navigationRequested.emit("library")
+            self.libraryNavigationRestored.emit(
+                workspace["folder"],
+                workspace["search"],
+                -1,
+            )
+            self.workspaceDraftRestoreRequested.emit(
+                copy.deepcopy(workspace["draft"])
+            )
+        finally:
+            self._workspace_switching = False
+
+        self.activeWorkspaceChanged.emit()
+        self.workspaceTabsChanged.emit()
+        self.navigationHistoryChanged.emit()
+        self.randomFoldersChanged.emit()
+        self.settingsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    def _finish_pending_workspace_restore(self) -> None:
+        if not self._pending_workspace_restore:
+            return
+        self._pending_workspace_restore = False
+        workspace = self._active_workspace()
+        if not workspace:
+            return
+        self.libraryNavigationRestored.emit(
+            workspace["folder"],
+            workspace["search"],
+            self.folder_model.find_index(workspace["folder"]),
+        )
+
+    @Slot(str)
+    def activateWorkspace(self, workspace_id: str) -> None:
+        workspace = self._workspace_for_id(str(workspace_id))
+        if not workspace or workspace["id"] == self._active_workspace_id:
+            return
+        self._sync_active_workspace_state()
+        self._activate_workspace_runtime(workspace)
+
+    @Slot(int)
+    def activateWorkspaceAt(self, index: int) -> None:
+        if 0 <= index < len(self._workspace_tabs):
+            self.activateWorkspace(self._workspace_tabs[index]["id"])
+
+    @Slot(int)
+    def cycleWorkspace(self, direction: int) -> None:
+        if len(self._workspace_tabs) < 2:
+            return
+        current = next(
+            (
+                index
+                for index, workspace in enumerate(self._workspace_tabs)
+                if workspace["id"] == self._active_workspace_id
+            ),
+            0,
+        )
+        target = (current + (-1 if direction < 0 else 1)) % len(
+            self._workspace_tabs
+        )
+        self.activateWorkspaceAt(target)
+
+    @Slot("QVariant")
+    def createWorkspace(self, root: Any) -> None:
+        if isinstance(root, QUrl):
+            root = root.toLocalFile()
+        normalized = str(Path(str(root)).expanduser().resolve()) if root else ""
+        if normalized and not Path(normalized).is_dir():
+            self.toast.emit("error", "Choose an existing folder.")
+            return
+        self._sync_active_workspace_state()
+        workspace = self._new_workspace(normalized)
+        self._workspace_tabs.append(workspace)
+        self._activate_workspace_runtime(
+            workspace,
+            scan_new_root=bool(normalized),
+        )
+
+    @Slot(str)
+    def duplicateWorkspace(self, workspace_id: str) -> None:
+        source = self._workspace_for_id(str(workspace_id))
+        if not source:
+            return
+        self._sync_active_workspace_state()
+        duplicate = copy.deepcopy(source)
+        duplicate["id"] = uuid.uuid4().hex
+        duplicate["title"] = f"{source['title']} copy"
+        duplicate["customTitle"] = True
+        source_index = self._workspace_tabs.index(source)
+        self._workspace_tabs.insert(source_index + 1, duplicate)
+        self._activate_workspace_runtime(duplicate)
+
+    def _remember_closed_workspace(
+        self,
+        workspace: dict[str, Any],
+    ) -> None:
+        self._closed_workspace_tabs.append(copy.deepcopy(workspace))
+        if len(self._closed_workspace_tabs) > 10:
+            del self._closed_workspace_tabs[:-10]
+
+    @Slot(str)
+    def closeWorkspace(self, workspace_id: str) -> None:
+        workspace = self._workspace_for_id(str(workspace_id))
+        if not workspace:
+            return
+        if workspace["id"] == self._active_workspace_id:
+            self._sync_active_workspace_state()
+        index = self._workspace_tabs.index(workspace)
+        self._remember_closed_workspace(workspace)
+        self._workspace_tabs.remove(workspace)
+        if not self._workspace_tabs:
+            self._workspace_tabs.append(self._new_workspace())
+        if workspace["id"] == self._active_workspace_id:
+            target = self._workspace_tabs[
+                min(index, len(self._workspace_tabs) - 1)
+            ]
+            self._activate_workspace_runtime(target)
+            return
+        self.workspaceTabsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    @Slot(str)
+    def closeOtherWorkspaces(self, workspace_id: str) -> None:
+        keep = self._workspace_for_id(str(workspace_id))
+        if not keep or len(self._workspace_tabs) <= 1:
+            return
+        self._sync_active_workspace_state()
+        for workspace in self._workspace_tabs:
+            if workspace is not keep:
+                self._remember_closed_workspace(workspace)
+        self._workspace_tabs = [keep]
+        if keep["id"] != self._active_workspace_id:
+            self._activate_workspace_runtime(keep)
+            return
+        self.workspaceTabsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    @Slot(str)
+    def closeWorkspacesToRight(self, workspace_id: str) -> None:
+        workspace = self._workspace_for_id(str(workspace_id))
+        if not workspace:
+            return
+        index = self._workspace_tabs.index(workspace)
+        closing = self._workspace_tabs[index + 1:]
+        if not closing:
+            return
+        self._sync_active_workspace_state()
+        for item in closing:
+            self._remember_closed_workspace(item)
+        active_was_closed = any(
+            item["id"] == self._active_workspace_id for item in closing
+        )
+        self._workspace_tabs = self._workspace_tabs[:index + 1]
+        if active_was_closed:
+            self._activate_workspace_runtime(workspace)
+            return
+        self.workspaceTabsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    @Slot()
+    def reopenClosedWorkspace(self) -> None:
+        if not self._closed_workspace_tabs:
+            return
+        self._sync_active_workspace_state()
+        workspace = self._closed_workspace_tabs.pop()
+        if self._workspace_for_id(workspace["id"]):
+            workspace["id"] = uuid.uuid4().hex
+        active = self._active_workspace()
+        index = (
+            self._workspace_tabs.index(active) + 1
+            if active in self._workspace_tabs
+            else len(self._workspace_tabs)
+        )
+        self._workspace_tabs.insert(index, workspace)
+        self._activate_workspace_runtime(workspace)
+
+    @Slot(str, str)
+    def renameWorkspace(self, workspace_id: str, title: str) -> None:
+        workspace = self._workspace_for_id(str(workspace_id))
+        if not workspace:
+            return
+        normalized = " ".join(str(title or "").strip().split())[:80]
+        workspace["title"] = (
+            normalized or self._workspace_title(workspace["root"])
+        )
+        workspace["customTitle"] = bool(normalized)
+        self.workspaceTabsChanged.emit()
+        self._workspace_persist_timer.start()
+
+    @Slot(str)
+    def revealWorkspaceRoot(self, workspace_id: str) -> None:
+        workspace = self._workspace_for_id(str(workspace_id))
+        if not workspace or not workspace["root"]:
+            self.toast.emit("info", "This workspace does not have a root folder yet.")
+            return
+        self.revealPath(workspace["root"])
+
+    @Slot("QVariantMap")
+    def saveActiveWorkspaceDraft(self, draft: dict[str, Any]) -> None:
+        workspace = self._active_workspace()
+        if not workspace or not isinstance(draft, dict):
+            return
+        normalized = copy.deepcopy(draft)
+        if workspace["draft"] == normalized:
+            return
+        workspace["draft"] = normalized
+        self._workspace_persist_timer.start()
 
     @Property("QVariantMap", notify=selectedMediaChanged)
     def selectedMedia(self) -> dict[str, Any]:
@@ -474,39 +1136,54 @@ class AppController(QObject):
         root: str | Path | None,
     ) -> None:
         self._root_activation_generation += 1
-        generation = self._root_activation_generation
+        self._queued_root_activation = root
         if self._root_activation_task:
-            self._root_activation_task.cancel()
+            return
+        self._start_root_activation_task()
+
+    def _start_root_activation_task(self) -> None:
+        if self._root_activation_task or self._shutting_down:
+            return
         task = asyncio.create_task(
-            self._activate_root_async(root, generation)
+            self._activate_root_async()
         )
         self._root_activation_task = task
-        task.add_done_callback(
-            lambda completed: self._simple_task_done(
-                "_root_activation_task",
-                completed,
-            )
-        )
+        task.add_done_callback(self._root_activation_done)
+
+    def _root_activation_done(self, task: asyncio.Task) -> None:
+        if self._root_activation_task is task:
+            self._root_activation_task = None
+        if not task.cancelled() and (error := task.exception()):
+            LOGGER.debug("Root activation task failed: %s", error)
+        if (
+            not self._shutting_down
+            and self._root_activation_applied_generation
+                != self._root_activation_generation
+        ):
+            self._start_root_activation_task()
 
     async def _activate_root_async(
         self,
-        root: str | Path | None,
-        generation: int,
     ) -> None:
         try:
-            await asyncio.to_thread(
-                self.database.activate_root,
-                root,
-            )
-            if (
-                self._shutting_down
-                or generation != self._root_activation_generation
-            ):
+            while not self._shutting_down:
+                generation = self._root_activation_generation
+                root = self._queued_root_activation
+                await asyncio.to_thread(
+                    self.database.activate_root,
+                    root,
+                )
+                if generation != self._root_activation_generation:
+                    continue
+                self._root_activation_applied_generation = generation
+                self.refresh_all()
                 return
-            self.refresh_all()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            self._root_activation_applied_generation = (
+                self._root_activation_generation
+            )
             LOGGER.warning("Could not activate library root: %s", exc)
             self.toast.emit("error", "The library database could not be updated.")
 
@@ -530,6 +1207,7 @@ class AppController(QObject):
         self.history_model.refresh()
         self._refresh_counts()
         self._invalidate_random_folder_options()
+        self._finish_pending_workspace_restore()
 
     def _queue_full_model_refresh(self) -> None:
         self._full_refresh_generation += 1
@@ -588,6 +1266,7 @@ class AppController(QObject):
             self._counts_cache = counts
             self.countsChanged.emit()
             self._invalidate_random_folder_options()
+            self._finish_pending_workspace_restore()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -750,6 +1429,7 @@ class AppController(QObject):
         if self._selected_id != previous_id:
             self.randomStateChanged.emit()
             self._queue_selection_neighbors()
+            self._schedule_workspace_persist()
 
     def _navigation_state(self) -> _NavigationState:
         return _NavigationState(
@@ -782,6 +1462,7 @@ class AppController(QObject):
             changed = True
         if changed:
             self.navigationHistoryChanged.emit()
+            self._schedule_workspace_persist()
 
     def _clear_navigation_history(self) -> None:
         changed = bool(self._navigation_back or self._navigation_forward)
@@ -790,6 +1471,7 @@ class AppController(QObject):
         self._pending_navigation_focus_media_id = 0
         if changed:
             self.navigationHistoryChanged.emit()
+            self._schedule_workspace_persist()
 
     def _resolve_navigation_state(
         self,
@@ -892,9 +1574,11 @@ class AppController(QObject):
             self._append_navigation_state(destination, current)
             self._restore_navigation_state(candidate)
             self.navigationHistoryChanged.emit()
+            self._schedule_workspace_persist()
             return
         if changed:
             self.navigationHistoryChanged.emit()
+            self._schedule_workspace_persist()
 
     def _queue_selection_neighbors(self) -> None:
         self._selection_navigation_generation += 1
@@ -1123,6 +1807,8 @@ class AppController(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        self._workspace_persist_timer.stop()
+        self._persist_workspaces()
         self._shutting_down = True
         self._rescan_timer.stop()
         self._auto_scan_timer.stop()
@@ -1252,12 +1938,26 @@ class AppController(QObject):
                 self.processor.set_export_dir(str(value))
                 self.indexer.export_dir = Path(str(value)).resolve()
             if key == "library_root":
-                root = str(value)
+                root = str(self._setting("library_root") or "")
                 if str(previous_value or "") != root:
                     self._store_setting("random_folder_mode", "all")
                     self._store_setting("random_folders", [])
                     self._invalidate_random_folder_options(clear=True)
                     self._clear_navigation_history()
+                    workspace = self._active_workspace()
+                    if workspace:
+                        workspace["root"] = root
+                        workspace["folder"] = ""
+                        workspace["search"] = ""
+                        workspace["selectedMediaId"] = 0
+                        workspace["selectedMediaName"] = ""
+                        workspace["navigationBack"] = []
+                        workspace["navigationForward"] = []
+                        workspace["randomFolderMode"] = "all"
+                        workspace["randomFolders"] = []
+                        workspace["draft"] = {}
+                        if not workspace["customTitle"]:
+                            workspace["title"] = self._workspace_title(root)
                 active_root = (
                     root
                     if root and Path(root).is_dir()
@@ -1270,11 +1970,13 @@ class AppController(QObject):
                     self.database.activate_root(active_root)
                 self._set_selected(None)
                 self.library_model.folder = ""
+                self.library_model.search = ""
                 if not self._can_use_model_workers():
                     self.refresh_all()
                 self._stop_watcher(wait=False)
                 self._watcher_timer.start()
                 self._auto_scan_timer.start()
+                self._schedule_workspace_persist()
                 if not bool(self._setting("auto_index")):
                     self.toast.emit(
                         "success",
@@ -1307,6 +2009,7 @@ class AppController(QObject):
                 self.library_model.sort_mode = str(value)
                 self._refresh_library_model_only()
                 self._queue_selection_neighbors()
+                self._schedule_workspace_persist()
             self.settingsChanged.emit()
         except Exception as exc:
             self.toast.emit("error", str(exc))
@@ -1321,6 +2024,7 @@ class AppController(QObject):
         self.library_model.search = value
         self._refresh_library_model_only()
         self._queue_selection_neighbors()
+        self._schedule_workspace_persist()
 
     @Slot(str)
     @Slot(str, str)
@@ -1445,6 +2149,7 @@ class AppController(QObject):
         self.library_model.folder = value
         self._refresh_library_model_only()
         self._queue_selection_neighbors()
+        self._schedule_workspace_persist()
 
     @Slot(str, bool)
     def setRandomFolderEnabled(self, folder: str, enabled: bool) -> None:
@@ -1463,6 +2168,7 @@ class AppController(QObject):
         self.random_folder_model.set_selected(folder, enabled)
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
+        self._schedule_workspace_persist()
 
     @Slot()
     def clearRandomFolders(self) -> None:
@@ -1476,6 +2182,7 @@ class AppController(QObject):
         self.random_folder_model.sync_selected(set())
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
+        self._schedule_workspace_persist()
 
     @Slot()
     def selectAllRandomFolders(self) -> None:
@@ -1491,6 +2198,7 @@ class AppController(QObject):
         )
         self.settingsChanged.emit()
         self.randomFoldersChanged.emit()
+        self._schedule_workspace_persist()
 
     @Slot()
     def loadRandomFolderOptions(self) -> None:

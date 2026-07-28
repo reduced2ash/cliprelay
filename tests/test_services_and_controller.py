@@ -774,6 +774,111 @@ async def test_navigation_history_restores_mixed_folder_and_video_states(
 
 
 @pytest.mark.asyncio
+async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    roots = [tmp_path / "library-a", tmp_path / "library-b"]
+    media: list[list[int]] = [[], []]
+    for root_index, library_root in enumerate(roots):
+        library_root.mkdir()
+        for file_index in range(2):
+            source = library_root / f"clip-{file_index}.mp4"
+            source.write_bytes(f"{root_index}-{file_index}".encode())
+            media[root_index].append(database.upsert_media({
+                "root_path": str(library_root),
+                "path": str(source),
+                "name": source.name,
+                "relative_path": source.name,
+                "folder": "",
+                "duration": 5,
+                "width": 640,
+                "height": 360,
+                "size_bytes": source.stat().st_size,
+                "video_codec": "h264",
+                "audio_codec": "aac",
+                "frame_rate": 30,
+                "mtime": 100 - file_index,
+            }))
+
+    settings = Settings(database)
+    settings.set("library_root", str(roots[0]))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    first_workspace = controller.activeWorkspaceId
+    controller.selectMedia(media[0][0])
+    controller.selectMedia(media[0][1])
+    controller.saveActiveWorkspaceDraft({
+        "mediaId": media[0][1],
+        "caption": "first workspace",
+    })
+
+    controller.createWorkspace(str(roots[1]))
+    second_workspace = controller.activeWorkspaceId
+    assert second_workspace != first_workspace
+    assert controller.settings["library_root"] == str(roots[1])
+    controller.selectMedia(media[1][0])
+    controller.selectMedia(media[1][1])
+    controller.saveActiveWorkspaceDraft({
+        "mediaId": media[1][1],
+        "caption": "second workspace",
+    })
+
+    controller.navigateBack()
+    assert controller.selectedMediaId == media[1][0]
+
+    controller.activateWorkspace(first_workspace)
+    assert controller.settings["library_root"] == str(roots[0])
+    assert controller.selectedMediaId == media[0][1]
+    assert controller.activeWorkspaceDraft["caption"] == "first workspace"
+    controller.navigateBack()
+    assert controller.selectedMediaId == media[0][0]
+
+    controller.activateWorkspace(second_workspace)
+    assert controller.selectedMediaId == media[1][0]
+    assert controller.canNavigateForward
+    assert controller.activeWorkspaceDraft["caption"] == "second workspace"
+
+    controller.renameWorkspace(second_workspace, "Reference clips")
+    assert controller.activeWorkspace["title"] == "Reference clips"
+    controller.duplicateWorkspace(second_workspace)
+    duplicate_id = controller.activeWorkspaceId
+    assert controller.workspaceCount == 3
+    assert controller.activeWorkspace["title"] == "Reference clips copy"
+    controller.closeWorkspace(duplicate_id)
+    assert controller.workspaceCount == 2
+    assert controller.closedWorkspaceCount == 1
+    controller.reopenClosedWorkspace()
+    assert controller.activeWorkspaceId == duplicate_id
+    assert controller.workspaceCount == 3
+    controller.shutdown()
+
+    restored = AppController(
+        database,
+        Settings(database),
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    assert restored.workspaceCount == 3
+    assert restored.activeWorkspaceId == duplicate_id
+    assert restored.settings["library_root"] == str(roots[1])
+    assert restored.activeWorkspaceDraft["caption"] == "second workspace"
+    restored.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_select_generates_thumbnail_and_reveals_nested_file(
     monkeypatch, tmp_path: Path
 ) -> None:

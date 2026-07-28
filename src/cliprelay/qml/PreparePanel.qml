@@ -16,6 +16,7 @@ Rectangle {
     property string activeAction: ""
     property bool lastSubmitXEnabled: true
     property int studioTab: 0
+    property bool restoringDraft: false
     property bool telegramConnected: telegramMode.currentIndex === 0
         ? Boolean(controller.settings.botConfigured)
         : Boolean(controller.settings.personalConfigured)
@@ -71,7 +72,83 @@ Rectangle {
         videoEditor.togglePlayback()
     }
 
+    function captureDraft() {
+        if (Number(controller.selectedMediaId || 0) <= 0)
+            return {}
+        return {
+            mediaId: Number(controller.selectedMediaId || 0),
+            trimStart: root.trimStart,
+            trimEnd: root.trimEnd,
+            sameCaption: root.sameCaption,
+            studioTab: root.studioTab,
+            telegramModeIndex: telegramMode.currentIndex,
+            destination: destinationField.text,
+            caption: captionArea.text,
+            xCaption: xCaptionArea.text,
+            compressionIndex: compressionBox.currentIndex,
+            targetSize: targetField.text,
+            cleanupIndex: cleanupBox.currentIndex,
+            edits: videoEditor.editSpec()
+        }
+    }
+
+    function restoreDraft(draft) {
+        if (!draft
+                || Number(draft.mediaId || 0)
+                    !== Number(controller.selectedMediaId || 0))
+            return
+        root.restoringDraft = true
+        var duration = Math.max(
+            0,
+            Number(controller.selectedMedia.duration || 0)
+        )
+        root.trimStart = Math.max(
+            0,
+            Math.min(duration, Number(draft.trimStart || 0))
+        )
+        root.trimEnd = Math.max(
+            root.trimStart,
+            Math.min(duration, Number(draft.trimEnd || duration))
+        )
+        root.sameCaption = draft.sameCaption === undefined
+            ? true : Boolean(draft.sameCaption)
+        root.studioTab = Math.max(
+            0,
+            Math.min(1, Number(draft.studioTab || 0))
+        )
+        telegramMode.currentIndex = Math.max(
+            0,
+            Math.min(1, Number(draft.telegramModeIndex || 0))
+        )
+        destinationField.text = String(draft.destination || "")
+        captionArea.text = String(draft.caption || "")
+        xCaptionArea.text = String(draft.xCaption || "")
+        compressionBox.currentIndex = Math.max(
+            0,
+            Math.min(6, Number(draft.compressionIndex || 0))
+        )
+        targetField.text = String(draft.targetSize || "")
+        cleanupBox.currentIndex = Math.max(
+            0,
+            Math.min(2, Number(draft.cleanupIndex || 0))
+        )
+        videoEditor.loadEditSpec(draft.edits || {})
+        cropPreset.currentIndex = videoEditor.editor.cropEnabled ? 0 : 1
+        root.restoringDraft = false
+        Qt.callLater(videoEditor.startAutoplay)
+    }
+
     onStudioModeChanged: root.resetScrollPositions()
+
+    Timer {
+        interval: 900
+        repeat: true
+        running: Number(controller.selectedMediaId || 0) > 0
+        onTriggered: {
+            if (!root.restoringDraft)
+                controller.saveActiveWorkspaceDraft(root.captureDraft())
+        }
+    }
 
     Shortcut {
         sequence: "Escape"
@@ -101,6 +178,15 @@ Rectangle {
             if (!controller.publishState.active)
                 root.activeAction = ""
         }
+
+        function onWorkspaceDraftRestoreRequested(draft) {
+            root.restoreDraft(draft)
+        }
+    }
+
+    Component.onCompleted: {
+        root.loadedMediaId = Number(controller.selectedMediaId || 0)
+        root.restoreDraft(controller.activeWorkspaceDraft)
     }
 
     Rectangle {

@@ -8,6 +8,10 @@ release.
 
 ### Added
 
+- Persistent, full-width workspace tabs with independent library roots,
+  Prepare drafts, random-source filters, and browser-style navigation history.
+- Workspace context actions for rename, duplicate, reveal, close variants, and
+  reopening recently closed tabs.
 - Theme-matched frameless window chrome with platform-aware controls,
   keyboard-accessible window actions, and a compact native-scale title bar.
 - System window movement with a direct geometry fallback, plus all eight edge

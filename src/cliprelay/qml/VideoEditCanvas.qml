@@ -144,6 +144,37 @@ Item {
         }
     }
 
+    function loadEditSpec(spec) {
+        root.reset()
+        if (!spec)
+            return
+        var crop = spec.crop
+        if (crop && Boolean(crop.enabled)) {
+            cropEnabled = true
+            cropX = bounded(Number(crop.x || 0), 0, 1)
+            cropY = bounded(Number(crop.y || 0), 0, 1)
+            cropWidth = bounded(Number(crop.width || 1), 0.04, 1 - cropX)
+            cropHeight = bounded(Number(crop.height || 1), 0.04, 1 - cropY)
+        }
+        var overlays = spec.overlays || []
+        for (var index = 0; index < overlays.length; ++index) {
+            var overlay = overlays[index]
+            if (!overlay || overlay.type !== "rectangle")
+                continue
+            var width = bounded(Number(overlay.width || 0.2), 0.04, 1)
+            var height = bounded(Number(overlay.height || 0.2), 0.04, 1)
+            shapes.append({
+                shapeX: bounded(Number(overlay.x || 0), 0, 1 - width),
+                shapeY: bounded(Number(overlay.y || 0), 0, 1 - height),
+                shapeWidth: width,
+                shapeHeight: height,
+                shapeKind: Math.abs(width - height) < 0.015
+                    ? "Square" : "Rectangle"
+            })
+        }
+        selectedShapeIndex = -1
+    }
+
     function beginCropGesture(sceneX, sceneY, mode) {
         gestureStartX = sceneX
         gestureStartY = sceneY

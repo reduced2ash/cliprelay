@@ -65,10 +65,7 @@ def test_library_canvas_uses_workbench_density_and_one_hover_preview() -> None:
     assert "Theme.libraryTileMinCompact" in page
     assert "Theme.libraryGridGapDefault" in page
     assert "Theme.libraryGridGapCompact" in page
-    assert "Layout.preferredHeight: Theme.workspaceFooterHeight" in page
-    assert '"THUMBNAILS READY"' in page
-    assert "controller.thumbnailJobCount" in page
-    assert "libraryModel.thumbnailIssueCount" in page
+    assert "id: libraryFooter" not in page
     assert "root.activePreviewMediaId === tileCell.mediaId" in page
     assert "root.activePreviewMediaId = mediaId" in page
 
@@ -270,10 +267,46 @@ def test_workspace_context_keeps_sidebar_geometry_stable_on_every_page() -> None
     assert '? "History" : currentPage === 2 ? "Settings" : "Library"' in context
     assert "libraryPageActive && hasLibrary && showFolders" in context
     assert "visible: !root.libraryPageActive" in context
-    assert "readonly property int workspaceFooterHeight: 40" in theme
-    assert "id: sidebarFooter" in main
-    assert "height: Theme.workspaceFooterHeight" in main
-    assert "Layout.preferredHeight:\n                            Theme.workspaceFooterHeight" in page
+    assert "readonly property int workspaceTabHeight: 34" in theme
+    assert "WorkspaceTabBar {" in main
+    assert "Layout.preferredHeight: Theme.workspaceTabHeight" in main
+    assert "id: sidebarFooter" not in main
+    assert "id: libraryFooter" not in page
+
+
+def test_global_workspace_tabs_are_compact_contextual_and_browser_like() -> None:
+    main = (QML_DIR / "Main.qml").read_text(encoding="utf-8")
+    bar = (QML_DIR / "WorkspaceTabBar.qml").read_text(encoding="utf-8")
+    page = (QML_DIR / "LibraryPage.qml").read_text(encoding="utf-8")
+    actions = (QML_DIR / "WorkbenchActionRegistry.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "WorkspaceTabBar {" in main
+    assert "StandardKey.Close" in main
+    assert "controller.activeWorkspaceId" in main
+    assert '"Ctrl+Tab"' in main
+    assert '"Ctrl+Shift+Tab"' in main
+    assert 'Qt.platform.os === "osx" ? "Meta+T" : "Ctrl+T"' in main
+    assert "libraryPage.captureWorkspaceDraft()" in main
+
+    assert "implicitHeight: Theme.workspaceTabHeight" in bar
+    assert "model: root.appController.workspaceTabs" in bar
+    assert "Qt.RightButton" in bar
+    assert 'text: "Rename workspace"' in bar
+    assert 'text: "Duplicate workspace"' in bar
+    assert 'text: "Close other workspaces"' in bar
+    assert 'text: "Close workspaces to the right"' in bar
+    assert 'text: "Reopen closed workspace"' in bar
+    assert "root.libraryPage.activateWorkspace(" in bar
+    assert "root.libraryPage.closeWorkspace(" in bar
+
+    assert "function captureWorkspaceDraft()" in page
+    assert "function chooseNewWorkspaceFolder()" in page
+    assert "controller.createWorkspace(selectedFolder)" in page
+    assert '"id": "new_workspace"' in actions
+    assert '"id": "close_workspace"' in actions
+    assert '"id": "reopen_workspace"' in actions
 
 
 def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> None:

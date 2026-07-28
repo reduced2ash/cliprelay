@@ -76,6 +76,37 @@ QtObject {
             "enabled": true
         },
         {
+            "id": "new_workspace",
+            "label": "New workspace",
+            "detail": "Open another root folder in its own tab",
+            "category": "Workspaces",
+            "icon": "plus",
+            "shortcut": Qt.platform.os === "osx" ? "⌘T" : "Ctrl+T",
+            "keywords": "new tab workspace root folder",
+            "enabled": true
+        },
+        {
+            "id": "close_workspace",
+            "label": "Close workspace",
+            "detail": "Close the active workspace tab",
+            "category": "Workspaces",
+            "icon": "close",
+            "shortcut": Qt.platform.os === "osx" ? "⌘W" : "Ctrl+W",
+            "keywords": "close tab workspace",
+            "enabled": appController.workspaceCount > 0
+        },
+        {
+            "id": "reopen_workspace",
+            "label": "Reopen closed workspace",
+            "detail": "Restore the most recently closed workspace tab",
+            "category": "Workspaces",
+            "icon": "history",
+            "shortcut": Qt.platform.os === "osx"
+                ? "⇧⌘T" : "Ctrl+Shift+T",
+            "keywords": "reopen restore closed tab workspace",
+            "enabled": appController.closedWorkspaceCount > 0
+        },
+        {
             "id": "rescan",
             "label": appController.scanning
                 ? "Library scan in progress" : "Rescan library",
@@ -269,6 +300,12 @@ QtObject {
             libraryPage.toggleFolders()
         } else if (actionId === "choose_folder") {
             libraryPage.chooseLibraryFolder()
+        } else if (actionId === "new_workspace") {
+            libraryPage.chooseNewWorkspaceFolder()
+        } else if (actionId === "close_workspace") {
+            libraryPage.closeWorkspace(appController.activeWorkspaceId)
+        } else if (actionId === "reopen_workspace") {
+            libraryPage.reopenClosedWorkspace()
         } else if (actionId === "rescan") {
             appController.scanLibrary()
         } else if (actionId.indexOf("sort_") === 0) {

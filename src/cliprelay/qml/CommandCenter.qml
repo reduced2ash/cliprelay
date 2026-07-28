@@ -25,6 +25,7 @@ Item {
     ]
     readonly property var quickActionIds: [
         "pick_random",
+        "new_workspace",
         "choose_folder",
         "rescan",
         "toggle_folders"
@@ -63,10 +64,11 @@ Item {
         }
         const categoryOrder = {
             "Library": 0,
-            "Navigation": 1,
-            "View": 2,
-            "Sort": 3,
-            "Theme": 4
+            "Workspaces": 1,
+            "Navigation": 2,
+            "View": 3,
+            "Sort": 4,
+            "Theme": 5
         }
         rows.sort(function(left, right) {
             const leftOrder = categoryOrder[left.category] === undefined

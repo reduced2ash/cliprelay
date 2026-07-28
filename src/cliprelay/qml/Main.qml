@@ -98,8 +98,41 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: [StandardKey.Close]
+        onActivated: libraryPage.closeWorkspace(
+            controller.activeWorkspaceId
+        )
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx"
+            ? "Meta+Shift+W" : "Ctrl+Shift+W"
         onActivated: nativeWindow.closeWindow()
     }
+    Shortcut {
+        sequence: Qt.platform.os === "osx" ? "Meta+T" : "Ctrl+T"
+        onActivated: libraryPage.chooseNewWorkspaceFolder()
+    }
+    Shortcut {
+        sequence: Qt.platform.os === "osx"
+            ? "Meta+Shift+T" : "Ctrl+Shift+T"
+        enabled: controller.closedWorkspaceCount > 0
+        onActivated: libraryPage.reopenClosedWorkspace()
+    }
+    Shortcut {
+        sequence: "Ctrl+Tab"
+        onActivated: {
+            libraryPage.captureWorkspaceDraft()
+            controller.cycleWorkspace(1)
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+Tab"
+        onActivated: {
+            libraryPage.captureWorkspaceDraft()
+            controller.cycleWorkspace(-1)
+        }
+    }
+
+    onClosing: libraryPage.captureWorkspaceDraft()
 
     Connections {
         target: controller
@@ -227,8 +260,7 @@ ApplicationWindow {
                             anchors.rightMargin:
                                 window.navCollapsed ? 10 : 14
                             anchors.topMargin: 8
-                            anchors.bottomMargin:
-                                Theme.workspaceFooterHeight + 5
+                            anchors.bottomMargin: 5
                             spacing: 5
 
                             NavButton {
@@ -277,89 +309,6 @@ ApplicationWindow {
                             }
                         }
 
-                        Rectangle {
-                            id: sidebarFooter
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: Theme.workspaceFooterHeight
-                            color: "transparent"
-
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                height: 1
-                                color: Theme.border
-                            }
-
-                            Column {
-                                visible: !window.navCollapsed
-                                anchors.left: parent.left
-                                anchors.leftMargin: 14
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-                                Text {
-                                    text: controller.counts.media
-                                        + (controller.counts.media === 1
-                                            ? " video"
-                                            : " videos")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.textSm
-                                }
-                                Text {
-                                    text: controller.counts.posts
-                                        + (controller.counts.posts === 1
-                                            ? " relay"
-                                            : " relays")
-                                        + " recorded"
-                                    color: Theme.muted
-                                    font.pixelSize: Theme.textXs
-                                }
-                            }
-
-                            Item {
-                                visible: window.navCollapsed
-                                anchors.fill: parent
-
-                                Row {
-                                    anchors.centerIn: parent
-                                    spacing: 5
-                                    AppIcon {
-                                        anchors.verticalCenter:
-                                            parent.verticalCenter
-                                        width: 15
-                                        height: 15
-                                        name: "media"
-                                        strokeWidth: 1.7
-                                        iconColor: Theme.muted
-                                    }
-                                    Text {
-                                        anchors.verticalCenter:
-                                            parent.verticalCenter
-                                        text: String(
-                                            controller.counts.media
-                                        )
-                                        color: Theme.text
-                                        font.pixelSize: 10
-                                        font.family: Theme.monoFamily
-                                        font.weight: Font.Medium
-                                    }
-                                }
-                                HoverHandler {
-                                    id: videoCountHover
-                                }
-                                ToolTip.visible:
-                                    videoCountHover.hovered
-                                ToolTip.text:
-                                    controller.counts.media
-                                    + (controller.counts.media === 1
-                                        ? " video"
-                                        : " videos")
-                                    + " in library"
-                                ToolTip.delay: 450
-                            }
-                        }
                     }
 
                     Rectangle {
@@ -383,6 +332,14 @@ ApplicationWindow {
                         HistoryPage { }
                         SettingsPage { }
                     }
+                }
+
+                WorkspaceTabBar {
+                    id: workspaceTabBar
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Theme.workspaceTabHeight
+                    appController: controller
+                    libraryPage: libraryPage
                 }
             }
 

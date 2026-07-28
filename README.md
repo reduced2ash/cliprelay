@@ -29,6 +29,7 @@ status guidance.
 ## What it does
 
 - Finds videos recursively without freezing large libraries.
+- Keeps multiple independent library roots open as persistent workspace tabs.
 - Browses videos in flat or folder views with uncropped thumbnails and previews.
 - Picks random videos from the whole library or selected folder subtrees.
 - Avoids repeats until the current random pool has been exhausted.
@@ -42,6 +43,7 @@ status guidance.
 
 1. Install ClipRelay from the latest release.
 2. Choose the top-level folder containing your video archive.
+   Use the bottom `+` button when you want another root open at the same time.
 3. Select a video or use **Pick random**.
 4. Adjust the cut, crop, masks, and compression in Prepare.
 5. Choose Telegram, X, or both, then complete the relevant action.

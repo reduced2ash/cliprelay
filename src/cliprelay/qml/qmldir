@@ -23,6 +23,7 @@ WorkbenchActionRegistry 1.0 WorkbenchActionRegistry.qml
 WorkbenchActivityButton 1.0 WorkbenchActivityButton.qml
 CommandCenter 1.0 CommandCenter.qml
 LibraryContextToolbar 1.0 LibraryContextToolbar.qml
+WorkspaceTabBar 1.0 WorkspaceTabBar.qml
 MediaTile 1.0 MediaTile.qml
 FolderTreeRow 1.0 FolderTreeRow.qml
 PreparePanel 1.0 PreparePanel.qml

@@ -40,6 +40,10 @@ ColumnLayout {
         return editCanvas.editSpec()
     }
 
+    function loadEditSpec(spec) {
+        editCanvas.loadEditSpec(spec)
+    }
+
     function togglePlayback() {
         if (controller.selectedMediaChecking)
             return

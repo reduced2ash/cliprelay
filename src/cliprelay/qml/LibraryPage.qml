@@ -16,6 +16,7 @@ Rectangle {
     property Item randomSourceTrigger
     property bool prepareFullscreen: false
     property int activePreviewMediaId: 0
+    property bool creatingWorkspace: false
     property bool commandShortcutsEnabled: !randomSourcePopup.opened
     readonly property bool randomSourcesOpen: randomSourcePopup.opened
     readonly property bool compactLibrary:
@@ -43,7 +44,50 @@ Rectangle {
     }
 
     function chooseLibraryFolder() {
+        root.creatingWorkspace = false
+        libraryDialog.title = "Choose your video library"
         libraryDialog.open()
+    }
+
+    function chooseNewWorkspaceFolder() {
+        root.captureWorkspaceDraft()
+        root.creatingWorkspace = true
+        libraryDialog.title = "Open a folder in a new workspace"
+        libraryDialog.open()
+    }
+
+    function captureWorkspaceDraft() {
+        controller.saveActiveWorkspaceDraft(preparePanel.captureDraft())
+    }
+
+    function activateWorkspace(workspaceId) {
+        root.captureWorkspaceDraft()
+        controller.activateWorkspace(workspaceId)
+    }
+
+    function closeWorkspace(workspaceId) {
+        root.captureWorkspaceDraft()
+        controller.closeWorkspace(workspaceId)
+    }
+
+    function duplicateWorkspace(workspaceId) {
+        root.captureWorkspaceDraft()
+        controller.duplicateWorkspace(workspaceId)
+    }
+
+    function closeOtherWorkspaces(workspaceId) {
+        root.captureWorkspaceDraft()
+        controller.closeOtherWorkspaces(workspaceId)
+    }
+
+    function closeWorkspacesToRight(workspaceId) {
+        root.captureWorkspaceDraft()
+        controller.closeWorkspacesToRight(workspaceId)
+    }
+
+    function reopenClosedWorkspace() {
+        root.captureWorkspaceDraft()
+        controller.reopenClosedWorkspace()
     }
 
     function setSortMode(mode) {
@@ -202,10 +246,24 @@ Rectangle {
         })
     }
 
+    Component.onCompleted: {
+        root.currentFolder = String(controller.activeWorkspace.folder || "")
+        root.searchText = String(controller.activeWorkspace.search || "")
+    }
+
     FolderDialog {
         id: libraryDialog
         title: "Choose your video library"
-        onAccepted: controller.setSetting("library_root", selectedFolder)
+        onAccepted: {
+            root.currentFolder = ""
+            root.searchText = ""
+            if (root.creatingWorkspace)
+                controller.createWorkspace(selectedFolder)
+            else
+                controller.setSetting("library_root", selectedFolder)
+            root.creatingWorkspace = false
+        }
+        onRejected: root.creatingWorkspace = false
     }
 
     Popup {
@@ -751,51 +809,6 @@ Rectangle {
                         ScrollBar.vertical: AppScrollBar { }
                     }
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight:
-                            Theme.workspaceFooterHeight
-                        color: "transparent"
-                        border.width: 0
-
-                        Rectangle {
-                            anchors.top: parent.top
-                            width: parent.width
-                            height: 1
-                            color: Theme.border
-                        }
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 5
-                            spacing: 6
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: folderModel.visibleCount.toLocaleString()
-                                    + " / "
-                                    + folderModel.totalCount.toLocaleString()
-                                    + " VISIBLE"
-                                color: Theme.mutedSoft
-                                font.pixelSize: 11
-                                font.weight: Font.Medium
-                                Layout.alignment: Qt.AlignVCenter
-                            }
-                            AppButton {
-                                text: "Reset shuffle history"
-                                iconName: "refresh"
-                                toolTipText: text
-                                kind: "ghost"
-                                compact: true
-                                Layout.minimumWidth: 40
-                                Layout.preferredWidth: 40
-                                Layout.maximumWidth: 40
-                                Layout.preferredHeight: 40
-                                onClicked: controller.resetShuffle()
-                            }
-                        }
-                    }
                 }
             }
 
@@ -949,91 +962,6 @@ Rectangle {
                     }
                 }
 
-                Rectangle {
-                    id: libraryFooter
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Theme.workspaceFooterHeight
-                    color: "transparent"
-
-                    Rectangle {
-                        anchors.top: parent.top
-                        width: parent.width
-                        height: 1
-                        color: Theme.border
-                    }
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 12
-                        spacing: 12
-
-                        Text {
-                            text: libraryGrid.count.toLocaleString()
-                                + " VISIBLE"
-                            color: Theme.mutedSoft
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-                        Text {
-                            visible: controller.selectedMediaId > 0
-                            text: "1 SELECTED"
-                            color: Theme.textSoft
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-                        Text {
-                            visible: root.compactLibrary
-                            text: "COMPACT"
-                            color: Theme.accentText
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        RowLayout {
-                            spacing: 5
-                            Layout.alignment: Qt.AlignVCenter
-
-                            AppIcon {
-                                Layout.preferredWidth: 13
-                                Layout.preferredHeight: 13
-                                name: controller.scanning
-                                    || controller.thumbnailJobCount > 0
-                                    ? "activity"
-                                    : libraryModel.thumbnailIssueCount > 0
-                                        ? "warning" : "check"
-                                strokeWidth: 1.8
-                                iconColor: controller.scanning
-                                    || controller.thumbnailJobCount > 0
-                                    || libraryModel.thumbnailIssueCount > 0
-                                    ? Theme.warning : Theme.success
-                            }
-                            Text {
-                                text: controller.scanning
-                                    ? "INDEXING LIBRARY"
-                                    : controller.thumbnailJobCount > 0
-                                        ? controller.thumbnailJobCount
-                                            + (controller.thumbnailJobCount === 1
-                                                ? " THUMBNAIL WORKING"
-                                                : " THUMBNAILS WORKING")
-                                        : libraryModel.thumbnailIssueCount > 0
-                                            ? libraryModel.thumbnailIssueCount
-                                                + (libraryModel.thumbnailIssueCount === 1
-                                                    ? " THUMBNAIL UNAVAILABLE"
-                                                    : " THUMBNAILS UNAVAILABLE")
-                                            : "THUMBNAILS READY"
-                                color: Theme.mutedSoft
-                                font.pixelSize: 11
-                                font.weight: Font.Medium
-                            }
-                        }
-                    }
-                }
             }
 
             Rectangle {

@@ -9,6 +9,9 @@ from .paths import default_export_dir
 
 DEFAULTS: dict[str, Any] = {
     "library_root": "",
+    "workspace_tabs": [],
+    "active_workspace_id": "",
+    "closed_workspace_tabs": [],
     "export_dir": str(default_export_dir()),
     "fast_random": True,
     "auto_index": False,

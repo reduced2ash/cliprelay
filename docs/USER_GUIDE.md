@@ -18,6 +18,17 @@ The title-bar command center searches videos and folders without rescanning the
 library. Start a query with `>` to browse app commands, or press
 `Cmd+Shift+P` / `Ctrl+Shift+P` to open command mode directly.
 
+## Workspaces
+
+The compact rail at the bottom keeps multiple library roots open at once.
+Each workspace remembers its own open folder, search, sort, selected video,
+random-source filter, Prepare draft, and back/forward navigation history.
+
+Use the `+` button or `Cmd+T` / `Ctrl+T` to open another root. Right-click a
+tab to rename, duplicate, reveal, close, or reopen workspaces. Middle-click
+also closes a tab. The title-bar back and forward buttons always operate on
+the active tab only.
+
 ## Random selection
 
 **Pick random** uses the local filename manifest instead of walking the folder
@@ -26,8 +37,8 @@ more folders, including their descendants.
 
 When repeat avoidance is enabled, a selected video is removed from the current
 random pool. The pool resets after all eligible videos have been seen. Use
-**Previous random** to walk backward through valid picks from the current app
-session, or **Reset shuffle** to reset the pool and session trail.
+the title-bar back button to return to the prior random pick, folder, or video,
+or **Reset shuffle** to reset repeat avoidance.
 
 The **From** picker supports search and a selected-only view. Selecting a
 folder updates it in place, so long folder lists keep their current scroll
@@ -59,13 +70,18 @@ live playback and editing state while providing a larger editor.
 | `Space` | Play or pause the selected video |
 | `←` / `→` | Select the previous or next video |
 | `R` | Pick a random video |
-| `Shift+R` | Return to the previous random pick |
 | `Cmd+K` / `Ctrl+K` | Focus the command center |
 | `Cmd+F` / `Ctrl+F` | Focus video and folder search |
 | `Cmd+Shift+P` / `Ctrl+Shift+P` | Open command mode |
 | `Cmd+1` / `Ctrl+1` | Open Library |
 | `Cmd+2` / `Ctrl+2` | Open History |
 | `Cmd+,` / `Ctrl+,` | Open Settings |
+| `Cmd+T` / `Ctrl+T` | Open a new workspace |
+| `Cmd+W` / `Ctrl+W` | Close the active workspace |
+| `Cmd+Shift+T` / `Ctrl+Shift+T` | Reopen the last closed workspace |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle workspace tabs |
+| `Cmd+[` / `Alt+←` | Go back in the active workspace |
+| `Cmd+]` / `Alt+→` | Go forward in the active workspace |
 | `Cmd+M` / `Ctrl+M` | Minimize the window |
 | `Control+Cmd+F` / `F11` | Enter or exit full screen |
 | `Escape` | Exit full screen |
