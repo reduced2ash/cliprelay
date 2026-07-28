@@ -883,6 +883,67 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
     restored.shutdown()
 
 
+def test_restored_workspace_preloads_before_event_loop_starts(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    media_ids: list[int] = []
+    for index in range(2):
+        source = library_root / f"clip-{index}.mp4"
+        source.write_bytes(b"video")
+        media_ids.append(database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": source.name,
+            "relative_path": source.name,
+            "folder": "",
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": 100 - index,
+        }))
+
+    workspace_id = "restored-workspace"
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("performance_mode", "maximum")
+    settings.set("workspace_tabs", [{
+        "id": workspace_id,
+        "root": str(library_root),
+        "selectedMediaId": media_ids[0],
+    }])
+    settings.set("active_workspace_id", workspace_id)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    controller: AppController | None = None
+    try:
+        controller = AppController(
+            database,
+            settings,
+            MemorySecrets(),
+            LibraryModel(database),
+            FolderModel(database),
+            HistoryModel(database),
+        )
+
+        assert controller.selectedMediaId == media_ids[0]
+        assert media_ids[1] in controller._thumbnail_jobs
+        assert media_ids[1] in controller._preview_jobs
+    finally:
+        if controller is not None:
+            controller.shutdown()
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
 @pytest.mark.asyncio
 async def test_select_generates_thumbnail_and_reveals_nested_file(
     monkeypatch, tmp_path: Path

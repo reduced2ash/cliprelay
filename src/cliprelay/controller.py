@@ -299,6 +299,22 @@ class AppController(QObject):
     def _maximum_performance(self) -> bool:
         return self._setting("performance_mode") == "maximum"
 
+    @staticmethod
+    def _create_task(coroutine: Any) -> asyncio.Task | None:
+        """Queue work on the configured loop, even before it starts running."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                coroutine.close()
+                return None
+        if loop.is_closed():
+            coroutine.close()
+            return None
+        return loop.create_task(coroutine)
+
     def _effective_export_encoder(self) -> str:
         preference = str(self._setting("export_encoder", "auto"))
         if preference == "hardware":
@@ -2617,8 +2633,10 @@ class AppController(QObject):
             or media_id in self._thumbnail_jobs
         ):
             return
+        task = self._create_task(self._ensure_thumbnail_async(media_id))
+        if task is None:
+            return
         self.library_model.set_thumbnail_state(media_id, "queued")
-        task = asyncio.create_task(self._ensure_thumbnail_async(media_id))
         self._thumbnail_jobs[media_id] = task
         self.thumbnailActivityChanged.emit()
         task.add_done_callback(
@@ -2706,11 +2724,14 @@ class AppController(QObject):
         self._timeline_generation += 1
         generation = self._timeline_generation
         self._timeline_media_id = media_id
-        self._timeline_loading = True
-        self.timelineStateChanged.emit()
-        task = asyncio.create_task(
+        task = self._create_task(
             self._ensure_timeline_async(media_id, generation)
         )
+        if task is None:
+            self._timeline_media_id = 0
+            return
+        self._timeline_loading = True
+        self.timelineStateChanged.emit()
         self._timeline_task = task
         task.add_done_callback(
             lambda completed, selected_id=media_id, request=generation:
@@ -2954,7 +2975,9 @@ class AppController(QObject):
             or self._shutting_down
         ):
             return
-        task = asyncio.create_task(self._ensure_preview_async(media_id))
+        task = self._create_task(self._ensure_preview_async(media_id))
+        if task is None:
+            return
         self._preview_jobs[media_id] = task
         task.add_done_callback(
             lambda completed, preview_id=media_id: self._preview_job_done(
