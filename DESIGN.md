@@ -81,9 +81,9 @@ The palette uses dark red-violet-tinted neutrals so photography carries the colo
 
 **Display Font:** Native system sans (`SF Pro` on macOS, `Segoe UI` on Windows)
 **Body Font:** Native system sans
-**Label/Mono Font:** Native system monospaced font for timecode and sizes
+**Precision Font:** Native system monospaced font for timecodes only
 
-**Character:** Native, compact, and unforced. One family keeps the interface fast and familiar; tabular numerals make media metadata stable.
+**Character:** Native, compact, and unforced. Interface labels, media metadata, and footer status use the native system sans; tabular numerals keep changing values stable without making routine information look like code.
 
 ### Hierarchy
 
@@ -123,7 +123,7 @@ Depth is tonal. Higher surfaces become slightly lighter and more chromatic; shad
 - **Background:** Night Ink letterbox around `PreserveAspectFit` content.
 - **State:** One-pixel Hairline Plum outline at rest, Active Surface on hover, 2px Relay Persimmon outline when selected.
 - **Preview:** Hover begins muted playback after 350ms; Space or click provides the same action.
-- **Thumbnail state:** Visible tiles enter a bounded background queue and state their exact phase: queued, creating, loading, or unavailable.
+- **Thumbnail state:** Visible tiles enter a bounded background queue without placing loading copy over the media. A quiet progress line indicates active work, failures retain a warning glyph, and aggregate state remains available in the library footer.
 - **Density:** Default uses readable metadata and 12px gaps; Compact uses a smaller target width and 8px gaps without changing global workspace scale.
 
 ### Inputs / Fields

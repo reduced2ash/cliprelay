@@ -86,35 +86,6 @@ ColumnLayout {
             fillMode: VideoOutput.PreserveAspectFit
         }
 
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            z: 1
-            color: Theme.mediaWell
-            visible: previewPlayer.playbackState === MediaPlayer.StoppedState
-                && prepareThumbnail.status !== Image.Ready
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 8
-                AppIcon {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: root.studioMode ? 32 : 25
-                    height: width
-                    name: "media"
-                    iconColor: Theme.mediaMuted
-                }
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: controller.selectedMediaChecking
-                        ? "Checking video"
-                        : "Preparing preview"
-                    color: Theme.mediaMuted
-                    font.pixelSize: Theme.textXs
-                }
-            }
-        }
-
         Image {
             id: prepareThumbnail
             anchors.fill: parent

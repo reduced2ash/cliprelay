@@ -62,8 +62,9 @@ well; selection and keyboard focus use the two-pixel accent treatment.
 Selection also receives a check glyph so focus and selection are distinguishable.
 
 Unchecked media states move out of the thumbnail and into metadata. Thumbnail
-states use precise language: pending, queued, creating, loading, and
-unavailable.
+work stays visually quiet inside the media well: an unobtrusive progress line
+shows active work, failures retain a warning glyph, and aggregate state remains
+visible in the library footer.
 
 ## Density
 

@@ -109,56 +109,33 @@ Item {
                     Qt.callLater(root.requestThumbnail)
             }
 
-            Rectangle {
-                anchors.fill: parent
-                color: Theme.raised
-                visible: thumbnail.status !== Image.Ready
+            AppIcon {
+                anchors.centerIn: parent
+                width: root.compact ? 18 : 22
+                height: width
+                visible: !previewLoader.active
+                    && (
+                        root.thumbnailState === "failed"
+                        || thumbnail.status === Image.Error
+                    )
+                name: "warning"
+                strokeWidth: 1.6
+                iconColor: Theme.warning
+            }
 
-                Column {
-                    anchors.centerIn: parent
-                    spacing: root.compact ? 5 : 7
-
-                    AppIcon {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: root.compact ? 18 : 22
-                        height: width
-                        name: root.thumbnailState === "failed"
-                            || thumbnail.status === Image.Error
-                            ? "warning" : "media"
-                        strokeWidth: 1.6
-                        iconColor: root.thumbnailState === "failed"
-                            || thumbnail.status === Image.Error
-                            ? Theme.warning : Theme.mutedSoft
-                    }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        visible: poster.width >= 156
-                        text: root.thumbnailState === "failed"
-                            || thumbnail.status === Image.Error
-                            ? "Thumbnail unavailable"
-                            : root.thumbnailState === "generating"
-                                ? "Creating thumbnail"
-                                : root.thumbnailState === "ready"
-                                    ? "Loading thumbnail"
-                                    : root.thumbnailState === "queued"
-                                        ? "Thumbnail queued"
-                                        : "Thumbnail pending"
-                        color: Theme.muted
-                        font.pixelSize: root.compact ? 10 : Theme.textXs
-                    }
-                }
-
-                AppProgressBar {
-                    visible: root.thumbnailState === "generating"
+            AppProgressBar {
+                visible: !previewLoader.active
+                    && (
+                        root.thumbnailState === "generating"
                         || root.thumbnailState === "queued"
-                    indeterminate: true
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: root.compact ? 12 : 20
-                    anchors.rightMargin: root.compact ? 12 : 20
-                    anchors.bottomMargin: root.compact ? 8 : 12
-                }
+                    )
+                indeterminate: true
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: root.compact ? 12 : 20
+                anchors.rightMargin: root.compact ? 12 : 20
+                anchors.bottomMargin: root.compact ? 8 : 12
             }
         }
 
@@ -295,8 +272,7 @@ Item {
                 id: metadataText
                 text: root.metadataLabel
                 color: Theme.muted
-                font.pixelSize: root.compact ? 10 : Theme.textXs
-                font.family: Theme.monoFamily
+                font.pixelSize: root.compact ? 11 : Theme.textXs
                 elide: Text.ElideMiddle
                 Layout.fillWidth: true
             }
@@ -314,8 +290,7 @@ Item {
                 Text {
                     text: root.postedCount.toLocaleString()
                     color: Theme.success
-                    font.pixelSize: root.compact ? 10 : Theme.textXs
-                    font.family: Theme.monoFamily
+                    font.pixelSize: root.compact ? 11 : Theme.textXs
                 }
             }
         }

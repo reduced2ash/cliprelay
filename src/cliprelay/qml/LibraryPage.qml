@@ -778,10 +778,8 @@ Rectangle {
                                     + folderModel.totalCount.toLocaleString()
                                     + " VISIBLE"
                                 color: Theme.mutedSoft
-                                font.pixelSize: 10
-                                font.family: Theme.monoFamily
+                                font.pixelSize: 11
                                 font.weight: Font.Medium
-                                font.letterSpacing: 0.45
                                 Layout.alignment: Qt.AlignVCenter
                             }
                             AppButton {
@@ -974,30 +972,24 @@ Rectangle {
                             text: libraryGrid.count.toLocaleString()
                                 + " VISIBLE"
                             color: Theme.mutedSoft
-                            font.pixelSize: 10
-                            font.family: Theme.monoFamily
+                            font.pixelSize: 11
                             font.weight: Font.Medium
-                            font.letterSpacing: 0.45
                             Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
                             visible: controller.selectedMediaId > 0
                             text: "1 SELECTED"
                             color: Theme.textSoft
-                            font.pixelSize: 10
-                            font.family: Theme.monoFamily
+                            font.pixelSize: 11
                             font.weight: Font.Medium
-                            font.letterSpacing: 0.45
                             Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
                             visible: root.compactLibrary
                             text: "COMPACT"
                             color: Theme.accentText
-                            font.pixelSize: 10
-                            font.family: Theme.monoFamily
+                            font.pixelSize: 11
                             font.weight: Font.Medium
-                            font.letterSpacing: 0.45
                             Layout.alignment: Qt.AlignVCenter
                         }
 
@@ -1036,10 +1028,8 @@ Rectangle {
                                                     : " THUMBNAILS UNAVAILABLE")
                                             : "THUMBNAILS READY"
                                 color: Theme.mutedSoft
-                                font.pixelSize: 10
-                                font.family: Theme.monoFamily
+                                font.pixelSize: 11
                                 font.weight: Font.Medium
-                                font.letterSpacing: 0.45
                             }
                         }
                     }

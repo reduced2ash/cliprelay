@@ -82,6 +82,15 @@ def test_library_canvas_uses_workbench_density_and_one_hover_preview() -> None:
     assert "Image.PreserveAspectFit" in tile
     assert "VideoOutput.PreserveAspectFit" in tile
     assert 'fields.push(root.mediaUnchecked ? "Unchecked"' in tile
+    assert tile.count("font.family: Theme.monoFamily") == 1
+    assert "Thumbnail queued" not in tile
+    assert "Thumbnail pending" not in tile
+    assert "Preparing preview" not in (
+        QML_DIR / "PrepareVideoEditor.qml"
+    ).read_text(encoding="utf-8")
+
+    assert "font.family: Theme.monoFamily" not in page
+    assert "font.pixelSize: 11" in page
 
     assert 'text: "Library density"' in settings
     assert 'model: ["Default", "Compact"]' in settings
