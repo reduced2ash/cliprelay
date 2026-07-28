@@ -189,9 +189,15 @@ def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> 
     workbench_button = (QML_DIR / "WorkbenchButton.qml").read_text(
         encoding="utf-8"
     )
+    app_button = (QML_DIR / "AppButton.qml").read_text(encoding="utf-8")
 
     assert "contentItem: Item {" in workbench_button
     assert "anchors.centerIn: parent" in workbench_button
+    assert "readonly property real resolvedVerticalPadding" in app_button
+    assert "topPadding: resolvedVerticalPadding" in app_button
+    assert "bottomPadding: resolvedVerticalPadding" in app_button
+    assert "Math.floor((height - 20) / 2)" in app_button
+    assert "verticalAlignment: Text.AlignVCenter" in app_button
 
     for filename in (
         "WorkbenchButton.qml",

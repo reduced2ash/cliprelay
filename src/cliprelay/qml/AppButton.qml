@@ -11,13 +11,17 @@ Button {
     property bool compact: false
     property string toolTipText: text
     property bool iconOnly: compact
+    readonly property real resolvedVerticalPadding: Math.max(
+        4,
+        Math.min(10, Math.floor((height - 20) / 2))
+    )
 
     implicitHeight: Theme.controlHeight
     implicitWidth: Math.max(iconOnly ? Theme.controlHeight : 104, contentRow.implicitWidth + (iconOnly ? 20 : 30))
     leftPadding: iconOnly ? 10 : 15
     rightPadding: iconOnly ? 10 : 15
-    topPadding: 10
-    bottomPadding: 10
+    topPadding: resolvedVerticalPadding
+    bottomPadding: resolvedVerticalPadding
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.46
@@ -67,6 +71,7 @@ Button {
             Layout.alignment: Qt.AlignVCenter
             horizontalAlignment: control.iconName.length > 0
                 ? Text.AlignLeft : Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
         Item { Layout.fillWidth: true; visible: control.iconOnly }
     }
