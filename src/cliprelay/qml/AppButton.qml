@@ -15,9 +15,17 @@ Button {
         4,
         Math.min(10, Math.floor((height - 20) / 2))
     )
+    readonly property color resolvedIconColor: kind === "primary"
+        ? Theme.accentContent
+        : kind === "danger"
+            ? Theme.error
+            : hovered ? Theme.text : Theme.textSoft
 
     implicitHeight: Theme.controlHeight
-    implicitWidth: Math.max(iconOnly ? Theme.controlHeight : 104, contentRow.implicitWidth + (iconOnly ? 20 : 30))
+    implicitWidth: Math.max(
+        iconOnly ? Theme.controlHeight : 104,
+        contentFrame.implicitWidth + (iconOnly ? 20 : 30)
+    )
     leftPadding: iconOnly ? 10 : 15
     rightPadding: iconOnly ? 10 : 15
     topPadding: resolvedVerticalPadding
@@ -30,50 +38,64 @@ Button {
     Accessible.role: Accessible.Button
     Accessible.name: text
 
-    contentItem: RowLayout {
-        id: contentRow
-        spacing: 7
+    contentItem: Item {
+        id: contentFrame
         clip: true
-        Item { Layout.fillWidth: true; visible: control.iconOnly }
+
+        implicitWidth: control.iconOnly ? 20 : contentRow.implicitWidth
+        implicitHeight: control.iconOnly ? 20 : contentRow.implicitHeight
+
         AppIcon {
-            visible: control.iconName.length > 0
-            Layout.preferredWidth: control.iconOnly ? 20 : 17
-            Layout.preferredHeight: control.iconOnly ? 20 : 17
+            anchors.centerIn: parent
+            width: 20
+            height: 20
+            visible: control.iconOnly && control.iconName.length > 0
             name: control.iconName
-            strokeWidth: control.iconOnly ? 1.9 : 1.75
-            iconColor: control.kind === "primary"
-                ? Theme.accentContent
-                : control.kind === "danger"
-                    ? Theme.error
-                    : control.hovered ? Theme.text : Theme.textSoft
-            Layout.alignment: Qt.AlignVCenter
+            strokeWidth: 1.9
+            iconColor: control.resolvedIconColor
         }
-        Text {
-            visible: control.iconName.length === 0 && control.leadingText.length > 0
-            text: control.leadingText
-            color: control.kind === "primary"
-                ? Theme.accentContent : Theme.textSoft
-            font.pixelSize: 17
-            Layout.alignment: Qt.AlignVCenter
-        }
-        Text {
+
+        RowLayout {
+            id: contentRow
+            anchors.fill: parent
             visible: !control.iconOnly
-            text: control.text
-            color: control.kind === "primary"
-                ? Theme.accentContent
-                : control.kind === "danger" ? Theme.error : Theme.text
-            font.pixelSize: Theme.textSm
-            font.weight: Font.DemiBold
-            elide: Text.ElideRight
-            clip: true
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-            Layout.alignment: Qt.AlignVCenter
-            horizontalAlignment: control.iconName.length > 0
-                ? Text.AlignLeft : Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            spacing: 7
+
+            AppIcon {
+                visible: control.iconName.length > 0
+                Layout.preferredWidth: 17
+                Layout.preferredHeight: 17
+                name: control.iconName
+                strokeWidth: 1.75
+                iconColor: control.resolvedIconColor
+                Layout.alignment: Qt.AlignVCenter
+            }
+            Text {
+                visible: control.iconName.length === 0
+                    && control.leadingText.length > 0
+                text: control.leadingText
+                color: control.kind === "primary"
+                    ? Theme.accentContent : Theme.textSoft
+                font.pixelSize: 17
+                Layout.alignment: Qt.AlignVCenter
+            }
+            Text {
+                text: control.text
+                color: control.kind === "primary"
+                    ? Theme.accentContent
+                    : control.kind === "danger" ? Theme.error : Theme.text
+                font.pixelSize: Theme.textSm
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+                clip: true
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.alignment: Qt.AlignVCenter
+                horizontalAlignment: control.iconName.length > 0
+                    ? Text.AlignLeft : Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
         }
-        Item { Layout.fillWidth: true; visible: control.iconOnly }
     }
 
     background: Rectangle {

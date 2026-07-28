@@ -198,6 +198,10 @@ def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> 
     assert "bottomPadding: resolvedVerticalPadding" in app_button
     assert "Math.floor((height - 20) / 2)" in app_button
     assert "verticalAlignment: Text.AlignVCenter" in app_button
+    assert "contentItem: Item {" in app_button
+    assert "anchors.centerIn: parent" in app_button
+    assert "visible: control.iconOnly && control.iconName.length > 0" in app_button
+    assert "Item { Layout.fillWidth: true; visible: control.iconOnly }" not in app_button
 
     for filename in (
         "WorkbenchButton.qml",
