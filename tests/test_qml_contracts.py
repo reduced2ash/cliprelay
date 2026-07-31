@@ -164,6 +164,9 @@ def test_global_media_shortcuts_and_random_source_tree_are_window_wide() -> None
     assert 'text: "RANDOM SOURCES"' in page
     assert 'placeholderText: "Filter source tree"' in page
     assert "delegate: RandomSourceTreeRow {" in page
+    assert "id: randomFolderRow" in page
+    assert "required property string folderPath" not in page
+    assert "randomFolderRow.folderPath" in page
     assert "randomFolderModel.toggleExpanded(folderPath)" in page
     assert "randomFolderModel.collapseAll()" in page
     assert "randomFolderModel.expandAll()" in page

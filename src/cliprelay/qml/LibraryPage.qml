@@ -680,29 +680,27 @@ Rectangle {
                     ScrollBar.vertical: AppScrollBar { }
 
                     delegate: RandomSourceTreeRow {
-                        required property string folderPath
-                        required property string folderName
-                        required property string folderDetail
-                        required property int videoCount
-                        required property int directVideoCount
-                        required property int folderSelectionState
-                        required property int folderDepth
-                        required property bool folderHasChildren
-                        required property bool folderExpanded
+                        id: randomFolderRow
                         width: ListView.view.width
                         onSelectionRequested: function(enabled) {
                             controller.setRandomFolderEnabled(
-                                folderPath,
+                                randomFolderRow.folderPath,
                                 enabled
                             )
                         }
                         onToggleRequested:
-                            root.toggleRandomFolderBranch(folderPath)
+                            root.toggleRandomFolderBranch(
+                                randomFolderRow.folderPath
+                            )
                         onMoveFocusRequested:
-                            root.focusRandomFolderIndex(index + delta)
+                            root.focusRandomFolderIndex(
+                                randomFolderRow.index + delta
+                            )
                         onParentFocusRequested: {
                             const parentIndex =
-                                randomFolderModel.parentIndex(folderPath)
+                                randomFolderModel.parentIndex(
+                                    randomFolderRow.folderPath
+                                )
                             if (parentIndex >= 0)
                                 root.focusRandomFolderIndex(parentIndex)
                         }
