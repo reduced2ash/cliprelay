@@ -14,6 +14,28 @@ a compact desktop inspector with VS Code-like structure, native interaction,
 flat tonal layers, and restrained use of the active theme accent. Pitch Black
 is the primary visual reference; Relay and Full White receive exact parity.
 
+## Reference Mockups
+
+These mockups were generated from fresh Pitch Black screenshots of the current
+live build. They preserve the existing ClipRelay shell and change the Prepare
+workspace described by this plan.
+
+### Docked Edit
+
+![Docked Prepare Edit inspector](mockups/prepare-inspector/docked-edit.png)
+
+### Full-screen Edit
+
+![Full-screen Prepare Edit inspector](mockups/prepare-inspector/fullscreen-edit.png)
+
+### Full-screen Publish
+
+![Full-screen Prepare Publish inspector](mockups/prepare-inspector/fullscreen-publish.png)
+
+The mockups establish hierarchy, density, and responsive composition. The
+written interaction, accessibility, performance, and state requirements remain
+authoritative where a static image cannot express behavior.
+
 ## Product Decisions
 
 This plan locks the following decisions for the production-ready first pass:
