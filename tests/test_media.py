@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,7 @@ from cliprelay.media import (
     MediaError,
     MediaIndexer,
     MediaProcessor,
+    ScanCancelled,
     normalize_edit_spec,
 )
 
@@ -366,6 +370,118 @@ def test_manifest_is_batched_persistent_and_preserves_verified_metadata(
     removed.write_bytes(b"video")
     indexer.refresh_manifest(library, check_changes=False)
     assert database.get_media_by_path(removed)["valid"] == 1
+
+
+def test_cancelled_manifest_keeps_partial_results_without_invalidating(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "library"
+    library.mkdir()
+    removed = library / "removed.mp4"
+    removed.write_bytes(b"old")
+    database = Database(tmp_path / "db.sqlite3")
+    database.activate_root(library)
+    indexer = MediaIndexer(database, tmp_path / "exports")
+    indexer.refresh_manifest(library)
+    removed.unlink()
+    for index in range(20):
+        (library / f"new-{index:02}.mp4").write_bytes(b"new")
+
+    cancel_event = threading.Event()
+
+    def cancel_after_first_file(discovered: int, _name: str) -> None:
+        if discovered == 1:
+            cancel_event.set()
+
+    with pytest.raises(ScanCancelled):
+        indexer.refresh_manifest(
+            library,
+            progress=cancel_after_first_file,
+            cancel_event=cancel_event,
+        )
+
+    assert database.get_media_by_path(removed)["valid"] == 1
+    assert len(database.manifest_paths(library)) >= 1
+
+
+def test_cancelled_detail_scan_never_invalidates_unvisited_rows(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "library"
+    library.mkdir()
+    removed = library / "removed.mp4"
+    removed.write_bytes(b"old")
+    database = Database(tmp_path / "db.sqlite3")
+    database.activate_root(library)
+    indexer = MediaIndexer(database, tmp_path / "exports")
+    removed_metadata = indexer.minimal_metadata(removed, library)
+    assert removed_metadata
+    removed_metadata["duration"] = 2
+    database.upsert_media(removed_metadata)
+    removed.unlink()
+    candidates = []
+    for index in range(20):
+        candidate = library / f"new-{index:02}.mp4"
+        candidate.write_bytes(b"new")
+        candidates.append(candidate)
+
+    cancel_event = threading.Event()
+
+    def cancel_after_first_file(
+        done: int,
+        _total: int,
+        _name: str,
+    ) -> None:
+        if done == 1:
+            cancel_event.set()
+
+    with pytest.raises(ScanCancelled):
+        indexer.scan(
+            library,
+            verify_media=False,
+            generate_thumbnails=False,
+            progress=cancel_after_first_file,
+            candidates=candidates,
+            cancel_event=cancel_event,
+        )
+
+    assert database.get_media_by_path(removed)["valid"] == 1
+
+
+def test_cancellation_terminates_an_active_scan_subprocess(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    indexer = MediaIndexer(database, tmp_path / "exports")
+    cancel_event = threading.Event()
+    outcome: list[BaseException] = []
+
+    def run_slow_process() -> None:
+        try:
+            indexer._with_scan_cancel_context(
+                cancel_event,
+                lambda: indexer._run_scan_process(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(30)",
+                    ],
+                    timeout=35,
+                ),
+            )
+        except BaseException as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=run_slow_process)
+    worker.start()
+    time.sleep(0.2)
+    assert worker.is_alive()
+    cancel_event.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], ScanCancelled)
 
 
 @pytest.mark.asyncio

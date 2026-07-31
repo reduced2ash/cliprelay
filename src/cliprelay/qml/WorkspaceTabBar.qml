@@ -129,10 +129,15 @@ Rectangle {
                         AppIcon {
                             Layout.preferredWidth: 14
                             Layout.preferredHeight: 14
-                            name: "folder"
+                            name: tabDelegate.modelData.scanning
+                                ? (tabDelegate.modelData.scanCancelling
+                                    ? "square" : "refresh")
+                                : "folder"
                             strokeWidth: 1.7
-                            iconColor: tabDelegate.active
-                                ? Theme.accentText : Theme.muted
+                            iconColor: tabDelegate.modelData.scanning
+                                ? Theme.accentText
+                                : tabDelegate.active
+                                    ? Theme.accentText : Theme.muted
                         }
 
                         Item {
@@ -276,9 +281,13 @@ Rectangle {
                             tabDelegate.modelData.selectedMediaName || ""
                         )
                         const path = String(tabDelegate.modelData.root || "")
+                        const scan = tabDelegate.modelData.scanning
+                            ? (tabDelegate.modelData.scanCancelling
+                                ? "Stopping scan\n" : "Scanning\n")
+                            : ""
                         if (selected.length)
-                            return selected + "\n" + path
-                        return path.length ? path : "No root folder"
+                            return scan + selected + "\n" + path
+                        return scan + (path.length ? path : "No root folder")
                     }
                     ToolTip.delay: 600
                 }
@@ -394,6 +403,21 @@ Rectangle {
             onTriggered: root.appController.revealWorkspaceRoot(
                 root.contextWorkspaceId
             )
+        }
+        AppMenuItem {
+            text: root.appController.scanCancelling
+                ? "Stopping scan…" : "Stop library scan"
+            iconName: "square"
+            visible: {
+                const rows = root.appController.workspaceTabs
+                for (let index = 0; index < rows.length; ++index) {
+                    if (rows[index].id === root.contextWorkspaceId)
+                        return Boolean(rows[index].scanning)
+                }
+                return false
+            }
+            enabled: !root.appController.scanCancelling
+            onTriggered: root.appController.cancelScan()
         }
 
         MenuSeparator { }

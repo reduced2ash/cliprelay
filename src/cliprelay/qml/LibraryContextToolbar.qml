@@ -248,17 +248,29 @@ Rectangle {
 
                 WorkbenchButton {
                     visible: root.hasLibrary
-                    text: root.appController.scanning
-                        ? "Scanning…" : "Rescan"
-                    iconName: "refresh"
+                    text: root.appController.activeWorkspaceScanning
+                        ? (root.appController.scanCancelling
+                            ? "Stopping…" : "Stop scan")
+                        : "Rescan"
+                    iconName: root.appController.activeWorkspaceScanning
+                        ? "square" : "refresh"
                     iconOnly: root.compactActions
-                    toolTipText: root.appController.scanning
-                        ? root.appController.scanMessage
-                        : "Rescan library"
+                    toolTipText:
+                        root.appController.activeWorkspaceScanning
+                            ? root.appController.scanMessage
+                            : root.appController.scanning
+                                ? "Stop the other library scan and scan this root"
+                                : "Rescan library"
                     kind: "ghost"
-                    enabled: root.actionRegistry.action("rescan").enabled
-                    onClicked:
-                        root.actionRegistry.triggerAction("rescan")
+                    enabled: root.appController.activeWorkspaceScanning
+                        ? !root.appController.scanCancelling
+                        : root.actionRegistry.action("rescan").enabled
+                    onClicked: {
+                        if (root.appController.activeWorkspaceScanning)
+                            root.appController.cancelScan()
+                        else
+                            root.actionRegistry.triggerAction("rescan")
+                    }
                 }
             }
 

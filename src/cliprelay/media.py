@@ -51,6 +51,12 @@ class ProcessingCancelled(MediaError):
     pass
 
 
+class ScanCancelled(MediaError):
+    """Raised when a library scan is cooperatively stopped."""
+
+    pass
+
+
 def _looks_like_transport_stream(path: Path) -> bool:
     """Distinguish MPEG transport streams from source files such as TypeScript."""
     try:
@@ -174,6 +180,7 @@ class MediaIndexer:
         self.ffmpeg = ffmpeg_path()
         self._thumbnail_lock_guard = threading.Lock()
         self._thumbnail_locks: dict[str, threading.Lock] = {}
+        self._scan_context = threading.local()
 
     @property
     def available(self) -> bool:
@@ -191,15 +198,18 @@ class MediaIndexer:
         self,
         root: Path,
         deep_scan: bool = False,
+        cancel_event: threading.Event | None = None,
     ) -> Iterable[Path]:
         export_dir = self.export_dir.resolve()
         export_inside_root = is_within(export_dir, root)
         pending = [root]
         while pending:
+            self._raise_if_scan_cancelled(cancel_event)
             current = pending.pop()
             try:
                 with os.scandir(current) as entries:
                     for entry in entries:
+                        self._raise_if_scan_cancelled(cancel_event)
                         path = Path(entry.path)
                         try:
                             if entry.is_dir(follow_symlinks=False):
@@ -222,18 +232,113 @@ class MediaIndexer:
         self,
         root: Path,
         deep_scan: bool = False,
+        cancel_event: threading.Event | None = None,
     ) -> Iterable[tuple[Path, os.stat_result]]:
-        for path in self.iter_candidate_paths(root, deep_scan):
+        for path in self.iter_candidate_paths(root, deep_scan, cancel_event):
             try:
                 yield path, path.stat()
             except OSError:
                 continue
 
-    def iter_candidates(self, root: Path, deep_scan: bool = False) -> Iterable[Path]:
-        yield from self.iter_candidate_paths(root, deep_scan)
+    def iter_candidates(
+        self,
+        root: Path,
+        deep_scan: bool = False,
+        cancel_event: threading.Event | None = None,
+    ) -> Iterable[Path]:
+        yield from self.iter_candidate_paths(root, deep_scan, cancel_event)
 
-    def discover(self, root: Path, deep_scan: bool = False) -> list[Path]:
-        return list(self.iter_candidates(root, deep_scan))
+    def discover(
+        self,
+        root: Path,
+        deep_scan: bool = False,
+        cancel_event: threading.Event | None = None,
+    ) -> list[Path]:
+        return list(self.iter_candidates(root, deep_scan, cancel_event))
+
+    @staticmethod
+    def _raise_if_scan_cancelled(
+        cancel_event: threading.Event | None,
+    ) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ScanCancelled("Library scan stopped.")
+
+    def _current_scan_cancel_event(self) -> threading.Event | None:
+        return getattr(self._scan_context, "cancel_event", None)
+
+    def _with_scan_cancel_context(
+        self,
+        cancel_event: threading.Event | None,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> Any:
+        previous = self._current_scan_cancel_event()
+        self._scan_context.cancel_event = cancel_event
+        try:
+            self._raise_if_scan_cancelled(cancel_event)
+            return callback(*args)
+        finally:
+            if previous is None:
+                try:
+                    del self._scan_context.cancel_event
+                except AttributeError:
+                    pass
+            else:
+                self._scan_context.cancel_event = previous
+
+    def _run_scan_process(
+        self,
+        command: list[str],
+        *,
+        timeout: float,
+        text: bool = False,
+    ) -> subprocess.CompletedProcess[Any]:
+        cancel_event = self._current_scan_cancel_event()
+        if cancel_event is None:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=text,
+                timeout=timeout,
+                check=False,
+            )
+
+        self._raise_if_scan_cancelled(cancel_event)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+        )
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                self._raise_if_scan_cancelled(cancel_event)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    process.kill()
+                    process.communicate()
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(
+                        timeout=min(0.1, remaining)
+                    )
+                    return subprocess.CompletedProcess(
+                        command,
+                        process.returncode,
+                        stdout,
+                        stderr,
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+        except ScanCancelled:
+            process.terminate()
+            try:
+                process.communicate(timeout=0.75)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+            raise
 
     def probe(self, path: Path, root: Path) -> dict[str, Any] | None:
         if not self.ffprobe:
@@ -244,8 +349,10 @@ class MediaIndexer:
                 str(self.ffprobe), "-v", "error", "-print_format", "json",
                 "-show_format", "-show_streams", str(path),
             ]
-            completed = subprocess.run(
-                command, capture_output=True, text=True, timeout=35, check=False,
+            completed = self._run_scan_process(
+                command,
+                text=True,
+                timeout=35,
             )
             if completed.returncode != 0:
                 return None
@@ -329,6 +436,7 @@ class MediaIndexer:
         batch_size: int = 256,
         progress: Callable[[int, str], None] | None = None,
         check_changes: bool = True,
+        cancel_event: threading.Event | None = None,
     ) -> ScanResult:
         root = Path(root_path).expanduser().resolve()
         if not root.is_dir():
@@ -341,6 +449,7 @@ class MediaIndexer:
         last_progress = 0.0
 
         def flush() -> None:
+            self._raise_if_scan_cancelled(cancel_event)
             if not batch:
                 return
             nonlocal first_committed
@@ -351,7 +460,8 @@ class MediaIndexer:
                 batch_ready(added)
             batch.clear()
 
-        for path in self.iter_candidate_paths(root, False):
+        for path in self.iter_candidate_paths(root, False, cancel_event):
+            self._raise_if_scan_cancelled(cancel_event)
             result.discovered += 1
             now = time.monotonic()
             if progress and (
@@ -383,6 +493,7 @@ class MediaIndexer:
             if not first_committed or len(batch) >= max(1, batch_size):
                 flush()
         flush()
+        self._raise_if_scan_cancelled(cancel_event)
         result.skipped = self.database.invalidate_absent(str(root), present_paths)
         if progress:
             progress(result.discovered, "")
@@ -437,16 +548,23 @@ class MediaIndexer:
         generate_thumbnails: bool = True,
         item_ready: Callable[[int], None] | None = None,
         candidates: Iterable[Path] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> ScanResult:
         root = Path(root_path).expanduser().resolve()
         if not root.is_dir():
             raise MediaError("The selected library folder is unavailable.")
         trusted_manifest = candidates is not None
-        candidate_paths = (
-            list(candidates)
-            if candidates is not None
-            else self.discover(root, deep_scan and verify_media)
-        )
+        if candidates is not None:
+            candidate_paths = []
+            for candidate in candidates:
+                self._raise_if_scan_cancelled(cancel_event)
+                candidate_paths.append(candidate)
+        else:
+            candidate_paths = self.discover(
+                root,
+                deep_scan and verify_media,
+                cancel_event,
+            )
         result = ScanResult(discovered=len(candidate_paths))
         valid_paths: list[str] = []
         to_probe: list[Path] = []
@@ -457,6 +575,7 @@ class MediaIndexer:
             for state in state_map.values()
         }
         for path in candidate_paths:
+            self._raise_if_scan_cancelled(cancel_event)
             cached = state_map.get(str(path))
             if trusted_manifest and cached:
                 needs_probe = (
@@ -487,6 +606,7 @@ class MediaIndexer:
         completed_count = 0
         if to_probe and not verify_media:
             for path in to_probe:
+                self._raise_if_scan_cancelled(cancel_event)
                 completed_count += 1
                 metadata = self.minimal_metadata(path, root)
                 if metadata:
@@ -496,7 +616,12 @@ class MediaIndexer:
                     if item_ready:
                         item_ready(media_id)
                     if generate_thumbnails:
-                        self.ensure_thumbnail(media_id, metadata)
+                        self._with_scan_cancel_context(
+                            cancel_event,
+                            self.ensure_thumbnail,
+                            media_id,
+                            metadata,
+                        )
                         if item_ready:
                             item_ready(media_id)
                 else:
@@ -504,10 +629,30 @@ class MediaIndexer:
                 if progress:
                     progress(completed_count, total, path.name)
         elif to_probe:
-            with ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="media-probe") as pool:
-                futures = {pool.submit(self.probe, path, root): path for path in to_probe}
-                for future in as_completed(futures):
-                    path = futures[future]
+            pool = ThreadPoolExecutor(
+                max_workers=self.workers,
+                thread_name_prefix="media-probe",
+            )
+            paths = iter(to_probe)
+            futures: dict[Any, Path] = {}
+
+            def submit_probe(path: Path) -> None:
+                future = pool.submit(
+                    self._with_scan_cancel_context,
+                    cancel_event,
+                    self.probe,
+                    path,
+                    root,
+                )
+                futures[future] = path
+
+            for _ in range(min(len(to_probe), self.workers * 2)):
+                submit_probe(next(paths))
+            try:
+                while futures:
+                    self._raise_if_scan_cancelled(cancel_event)
+                    future = next(as_completed(tuple(futures)))
+                    path = futures.pop(future)
                     completed_count += 1
                     try:
                         metadata = future.result()
@@ -518,34 +663,68 @@ class MediaIndexer:
                             if item_ready:
                                 item_ready(media_id)
                             if generate_thumbnails:
-                                self.ensure_thumbnail(media_id, metadata)
+                                self._with_scan_cancel_context(
+                                    cancel_event,
+                                    self.ensure_thumbnail,
+                                    media_id,
+                                    metadata,
+                                )
                                 if item_ready:
                                     item_ready(media_id)
                         else:
                             result.failed += 1
+                    except ScanCancelled:
+                        raise
                     except Exception:
                         result.failed += 1
                     if progress:
                         progress(completed_count, total, path.name)
+                    next_path = next(paths, None)
+                    if next_path is not None:
+                        submit_probe(next_path)
+            finally:
+                if cancel_event is not None and cancel_event.is_set():
+                    for future in futures:
+                        future.cancel()
+                pool.shutdown(
+                    wait=True,
+                    cancel_futures=bool(
+                        cancel_event is not None and cancel_event.is_set()
+                    ),
+                )
         if cached_thumbnail_ids:
             thumbnail_workers = min(self.workers, 4)
-            with ThreadPoolExecutor(
+            pool = ThreadPoolExecutor(
                 max_workers=thumbnail_workers,
                 thread_name_prefix="media-thumbnail",
-            ) as pool:
-                futures = {
-                    pool.submit(
-                        self.ensure_thumbnail,
-                        media_id,
-                        state_by_id.get(media_id),
-                    ): media_id
-                    for media_id in cached_thumbnail_ids
-                }
-                for future in as_completed(futures):
-                    media_id = futures[future]
+            )
+            media_ids = iter(cached_thumbnail_ids)
+            futures: dict[Any, int] = {}
+
+            def submit_thumbnail(media_id: int) -> None:
+                future = pool.submit(
+                    self._with_scan_cancel_context,
+                    cancel_event,
+                    self.ensure_thumbnail,
+                    media_id,
+                    state_by_id.get(media_id),
+                )
+                futures[future] = media_id
+
+            for _ in range(
+                min(len(cached_thumbnail_ids), thumbnail_workers * 2)
+            ):
+                submit_thumbnail(next(media_ids))
+            try:
+                while futures:
+                    self._raise_if_scan_cancelled(cancel_event)
+                    future = next(as_completed(tuple(futures)))
+                    media_id = futures.pop(future)
                     completed_count += 1
                     try:
                         thumbnail = future.result()
+                    except ScanCancelled:
+                        raise
                     except Exception:
                         thumbnail = None
                     media = self.database.get_media(media_id)
@@ -557,6 +736,20 @@ class MediaIndexer:
                             total,
                             str((media or {}).get("name") or "thumbnail"),
                         )
+                    next_media_id = next(media_ids, None)
+                    if next_media_id is not None:
+                        submit_thumbnail(next_media_id)
+            finally:
+                if cancel_event is not None and cancel_event.is_set():
+                    for future in futures:
+                        future.cancel()
+                pool.shutdown(
+                    wait=True,
+                    cancel_futures=bool(
+                        cancel_event is not None and cancel_event.is_set()
+                    ),
+                )
+        self._raise_if_scan_cancelled(cancel_event)
         self.database.invalidate_missing(str(root), valid_paths)
         return result
 
@@ -586,12 +779,14 @@ class MediaIndexer:
                 "-vf", "scale=640:360:force_original_aspect_ratio=decrease",
                 "-q:v", "3", str(output),
             ]
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                timeout=60,
-                check=False,
-            )
+            try:
+                completed = self._run_scan_process(
+                    command,
+                    timeout=60,
+                )
+            except ScanCancelled:
+                output.unlink(missing_ok=True)
+                raise
             if (
                 completed.returncode == 0
                 and output.is_file()

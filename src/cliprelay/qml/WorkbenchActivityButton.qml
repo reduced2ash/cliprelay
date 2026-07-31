@@ -12,11 +12,14 @@ WorkbenchButton {
         const rows = []
         if (appController.scanning) {
             rows.push({
-                "title": "Library scan",
+                "title": appController.scanRootName.length
+                    ? "Library scan  ·  " + appController.scanRootName
+                    : "Library scan",
                 "detail": appController.scanMessage || "Updating the index",
                 "icon": "refresh",
                 "progress": appController.scanProgress,
-                "indeterminate": appController.scanProgress < 0
+                "indeterminate": appController.scanProgress < 0,
+                "cancellable": true
             })
         }
         if (appController.randomPicking) {
@@ -100,7 +103,7 @@ WorkbenchButton {
         objectName: "activityPopup"
         x: root.width - width
         y: root.height + 5
-        width: 310
+        width: 326
         height: Math.min(
             286,
             activityColumn.implicitHeight + 2
@@ -212,6 +215,23 @@ WorkbenchButton {
                                     indeterminate:
                                         taskRow.modelData.indeterminate
                                 }
+                            }
+                            WorkbenchButton {
+                                visible: Boolean(
+                                    taskRow.modelData.cancellable
+                                )
+                                Layout.preferredWidth: 28
+                                Layout.preferredHeight: 28
+                                text: root.appController.scanCancelling
+                                    ? "Stopping scan" : "Stop scan"
+                                iconName: "square"
+                                iconOnly: true
+                                kind: "ghost"
+                                enabled:
+                                    !root.appController.scanCancelling
+                                toolTipText: text
+                                onClicked:
+                                    root.appController.cancelScan()
                             }
                         }
 

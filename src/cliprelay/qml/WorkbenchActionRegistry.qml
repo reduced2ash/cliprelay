@@ -108,15 +108,29 @@ QtObject {
         },
         {
             "id": "rescan",
-            "label": appController.scanning
-                ? "Library scan in progress" : "Rescan library",
+            "label": appController.activeWorkspaceScanning
+                ? "Current library is scanning" : "Rescan library",
             "detail": "Refresh the filename manifest and media index",
             "category": "Library",
             "icon": "refresh",
             "shortcut": "",
             "keywords": "scan refresh index update",
-            "enabled": !appController.scanning
+            "enabled": !appController.activeWorkspaceScanning
                 && Boolean(appController.settings.library_root)
+        },
+        {
+            "id": "cancel_scan",
+            "label": appController.scanCancelling
+                ? "Stopping library scan" : "Stop library scan",
+            "detail": appController.scanRootName.length
+                ? "Stop scanning " + appController.scanRootName
+                : "Stop the active background scan",
+            "category": "Library",
+            "icon": "square",
+            "shortcut": "",
+            "keywords": "stop cancel scan index background task",
+            "enabled": appController.scanning
+                && !appController.scanCancelling
         },
         {
             "id": "sort_newest",
@@ -388,6 +402,8 @@ QtObject {
             libraryPage.reopenClosedWorkspace()
         } else if (actionId === "rescan") {
             appController.scanLibrary()
+        } else if (actionId === "cancel_scan") {
+            appController.cancelScan()
         } else if (actionId.indexOf("folder_sort_") === 0) {
             libraryPage.setFolderSortMode(actionId.substring(12))
         } else if (actionId.indexOf("sort_") === 0) {

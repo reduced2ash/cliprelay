@@ -18,7 +18,7 @@ from watchdog.events import (
 
 from cliprelay.controller import AppController, _WatchHandler
 from cliprelay.database import Database, EXACT_FOLDER_SCOPE_PREFIX
-from cliprelay.media import ExportResult
+from cliprelay.media import ExportResult, ScanCancelled, ScanResult
 from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel
 from cliprelay.settings import Settings
 from cliprelay.telegram import TelegramBotService, TelegramError
@@ -971,6 +971,199 @@ async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
     assert restored.settings["folder_sort_mode"] == "name_desc"
     assert restored.activeWorkspaceDraft["caption"] == "second workspace"
     restored.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scan_can_be_stopped_without_waiting_for_worker_completion(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    started = threading.Event()
+    worker_stopped = threading.Event()
+    messages: list[tuple[str, str]] = []
+    controller.toast.connect(
+        lambda level, message: messages.append((level, message))
+    )
+
+    def slow_manifest(
+        _root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        assert cancel_event is not None
+        started.set()
+        while not cancel_event.wait(0.01):
+            pass
+        worker_stopped.set()
+        raise ScanCancelled("stopped")
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", slow_manifest)
+    controller.scanLibrary()
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    assert controller.scanning
+    assert controller.activeWorkspaceScanning
+    assert controller.scanRoot == str(library_root)
+    controller.cancelScan()
+    assert controller.scanCancelling
+
+    for _ in range(100):
+        if not controller.scanning:
+            break
+        await asyncio.sleep(0.01)
+
+    assert worker_stopped.is_set()
+    assert not controller.scanning
+    assert any("Videos found so far" in message for _, message in messages)
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_new_workspace_preempts_old_scan_and_starts_its_root(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    first_root = tmp_path / "library-a"
+    second_root = tmp_path / "library-b"
+    first_root.mkdir()
+    second_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(first_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    first_started = threading.Event()
+    first_stopped = threading.Event()
+    calls: list[str] = []
+
+    def root_manifest(
+        root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        normalized = str(Path(root).resolve())
+        calls.append(normalized)
+        if normalized == str(first_root):
+            assert cancel_event is not None
+            first_started.set()
+            while not cancel_event.wait(0.01):
+                pass
+            first_stopped.set()
+            raise ScanCancelled("superseded")
+        return ScanResult(discovered=3, indexed=3)
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", root_manifest)
+    controller._request_library_refresh(False, reason="manual")
+    for _ in range(100):
+        if first_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    first_workspace_id = controller.activeWorkspaceId
+    controller.createWorkspace(str(second_root))
+    second_workspace_id = controller.activeWorkspaceId
+    assert second_workspace_id != first_workspace_id
+
+    for _ in range(200):
+        if not controller.scanning and len(calls) >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert first_stopped.is_set()
+    assert calls == [str(first_root), str(second_root)]
+    assert controller.settings["library_root"] == str(second_root)
+    assert not controller.scanning
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_switching_tabs_keeps_scan_but_closing_last_root_tab_stops_it(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    first_root = tmp_path / "library-a"
+    second_root = tmp_path / "library-b"
+    first_root.mkdir()
+    second_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(first_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def slow_manifest(
+        _root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        assert cancel_event is not None
+        started.set()
+        while not cancel_event.wait(0.01):
+            pass
+        stopped.set()
+        raise ScanCancelled("closed")
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", slow_manifest)
+    first_workspace_id = controller.activeWorkspaceId
+    second_workspace = controller._new_workspace(str(second_root))
+    controller._workspace_tabs.append(second_workspace)
+    controller._request_library_refresh(False, reason="manual")
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    controller.activateWorkspace(second_workspace["id"])
+    await asyncio.sleep(0.05)
+    assert controller.scanning
+    assert not controller.activeWorkspaceScanning
+    assert not stopped.is_set()
+
+    controller.closeWorkspace(first_workspace_id)
+    for _ in range(100):
+        if stopped.is_set() and not controller.scanning:
+            break
+        await asyncio.sleep(0.01)
+
+    assert stopped.is_set()
+    assert not controller.scanning
+    controller.shutdown()
 
 
 def test_restored_workspace_preloads_before_event_loop_starts(

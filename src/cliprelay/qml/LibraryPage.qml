@@ -877,7 +877,7 @@ Rectangle {
                 spacing: 0
 
                 ColumnLayout {
-                    visible: controller.scanning
+                    visible: controller.activeWorkspaceScanning
                     Layout.fillWidth: true
                     Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.bottomMargin: 10
                     spacing: 4
@@ -907,7 +907,9 @@ Rectangle {
                     }
 
                     AppEmptyState {
-                        visible: controller.settings.library_root && !controller.scanning && libraryGrid.count === 0
+                        visible: controller.settings.library_root
+                            && !controller.activeWorkspaceScanning
+                            && libraryGrid.count === 0
                         anchors.centerIn: parent
                         width: Math.min(420, parent.width - 48)
                         iconName: root.searchText.length ? "search" : "media"

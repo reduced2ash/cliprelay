@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from .media import (
     MediaIndexer,
     MediaProcessor,
     ProcessingCancelled,
+    ScanCancelled,
     normalize_edit_spec,
 )
 from .paths import ffmpeg_path, ffprobe_path, is_within
@@ -52,6 +54,14 @@ class _NavigationState:
     folder: str
     search: str
     media_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ScanRequest:
+    workspace_id: str
+    root: str
+    include_index: bool
+    reason: str
 
 
 class _WatchHandler(FileSystemEventHandler):
@@ -111,9 +121,9 @@ class AppController(QObject):
     librarySelectionRequested = Signal(int)
     toast = Signal(str, str)
     _filesystemChanged = Signal()
-    _scanProgress = Signal(int, int, str)
-    _manifestProgress = Signal(int, str)
-    _mediaIndexed = Signal(int)
+    _scanProgress = Signal(int, int, int, str)
+    _manifestProgress = Signal(int, int, str)
+    _mediaIndexed = Signal(int, int)
 
     def __init__(
         self,
@@ -174,6 +184,14 @@ class AppController(QObject):
         self._workspace_switching = False
         self._pending_workspace_restore = False
         self._scanning = False
+        self._scan_cancelling = False
+        self._scan_generation = 0
+        self._scan_workspace_id = ""
+        self._scan_root = ""
+        self._scan_include_index = False
+        self._scan_cancel_event: threading.Event | None = None
+        self._scan_cancel_reason = ""
+        self._pending_scan_request: _ScanRequest | None = None
         self._random_picking = False
         self._random_folder_options_cache: list[dict[str, Any]] = []
         self._random_folder_options_dirty = True
@@ -184,8 +202,6 @@ class AppController(QObject):
         self._command_search_loading = False
         self._command_search_generation = 0
         self._command_search_task: asyncio.Task | None = None
-        self._pending_refresh = False
-        self._pending_index = False
         self._shutting_down = False
         self._thumbnail_jobs: dict[int, asyncio.Task] = {}
         maximum_performance = self._maximum_performance()
@@ -334,6 +350,22 @@ class AppController(QObject):
             return "New workspace"
         path = Path(root)
         return path.name or path.anchor or "Library"
+
+    @staticmethod
+    def _normalized_root(root: Any) -> str:
+        if not root:
+            return ""
+        try:
+            return str(Path(str(root)).expanduser().resolve())
+        except (OSError, RuntimeError, ValueError):
+            return str(root)
+
+    @classmethod
+    def _same_root(cls, first: Any, second: Any) -> bool:
+        normalized_first = cls._normalized_root(first)
+        return bool(normalized_first) and (
+            normalized_first == cls._normalized_root(second)
+        )
 
     @staticmethod
     def _navigation_to_dict(state: _NavigationState) -> dict[str, Any]:
@@ -582,6 +614,63 @@ class AppController(QObject):
             None,
         )
 
+    def _workspaces_for_root(self, root: str) -> list[dict[str, Any]]:
+        return [
+            workspace
+            for workspace in self._workspace_tabs
+            if self._same_root(workspace.get("root"), root)
+        ]
+
+    def _active_workspace_scans_root(self, root: str) -> bool:
+        workspace = self._active_workspace()
+        return bool(
+            workspace and self._same_root(workspace.get("root"), root)
+        )
+
+    def _resolve_scan_request(
+        self,
+        request: _ScanRequest,
+    ) -> _ScanRequest | None:
+        matches = self._workspaces_for_root(request.root)
+        if not matches:
+            return None
+        owner = next(
+            (
+                workspace
+                for workspace in matches
+                if workspace["id"] == request.workspace_id
+            ),
+            None,
+        )
+        if owner is None:
+            active = self._active_workspace()
+            owner = active if active in matches else matches[0]
+        return _ScanRequest(
+            workspace_id=str(owner["id"]),
+            root=self._normalized_root(request.root),
+            include_index=request.include_index,
+            reason=request.reason,
+        )
+
+    def _reconcile_scan_workspaces(self) -> None:
+        if self._pending_scan_request is not None:
+            self._pending_scan_request = self._resolve_scan_request(
+                self._pending_scan_request
+            )
+        if not self._scanning or not self._scan_root:
+            return
+        matches = self._workspaces_for_root(self._scan_root)
+        if not matches:
+            self._cancel_current_scan("workspace_closed")
+            return
+        if not any(
+            workspace["id"] == self._scan_workspace_id
+            for workspace in matches
+        ):
+            self._scan_workspace_id = str(matches[0]["id"])
+            self.scanStateChanged.emit()
+            self.workspaceTabsChanged.emit()
+
     def _sync_active_workspace_state(self) -> None:
         workspace = self._active_workspace()
         if not workspace or self._workspace_switching:
@@ -659,6 +748,12 @@ class AppController(QObject):
             "canClose": len(self._workspace_tabs) > 1,
             "hasBack": bool(workspace["navigationBack"]),
             "hasForward": bool(workspace["navigationForward"]),
+            "scanning": self._scanning and self._same_root(
+                workspace["root"],
+                self._scan_root,
+            ),
+            "scanCancelling": self._scan_cancelling
+            and self._same_root(workspace["root"], self._scan_root),
         }
 
     @Property("QVariantList", notify=workspaceTabsChanged)
@@ -789,8 +884,6 @@ class AppController(QObject):
                 self.refresh_all()
             if active_root:
                 self._watcher_timer.start()
-                if scan_new_root:
-                    self._auto_scan_timer.start()
             self.navigationRequested.emit("library")
             self.libraryNavigationRestored.emit(
                 workspace["folder"],
@@ -809,6 +902,14 @@ class AppController(QObject):
         self.randomFoldersChanged.emit()
         self.settingsChanged.emit()
         self._workspace_persist_timer.start()
+        if scan_new_root and active_root:
+            self._request_library_refresh(
+                bool(self._setting("auto_index")),
+                workspace_id=str(workspace["id"]),
+                root=str(active_root),
+                preempt=True,
+                reason="new_root",
+            )
 
     def _finish_pending_workspace_restore(self) -> None:
         if not self._pending_workspace_restore:
@@ -903,6 +1004,7 @@ class AppController(QObject):
         self._workspace_tabs.remove(workspace)
         if not self._workspace_tabs:
             self._workspace_tabs.append(self._new_workspace())
+        self._reconcile_scan_workspaces()
         if workspace["id"] == self._active_workspace_id:
             target = self._workspace_tabs[
                 min(index, len(self._workspace_tabs) - 1)
@@ -922,6 +1024,7 @@ class AppController(QObject):
             if workspace is not keep:
                 self._remember_closed_workspace(workspace)
         self._workspace_tabs = [keep]
+        self._reconcile_scan_workspaces()
         if keep["id"] != self._active_workspace_id:
             self._activate_workspace_runtime(keep)
             return
@@ -944,6 +1047,7 @@ class AppController(QObject):
             item["id"] == self._active_workspace_id for item in closing
         )
         self._workspace_tabs = self._workspace_tabs[:index + 1]
+        self._reconcile_scan_workspaces()
         if active_was_closed:
             self._activate_workspace_runtime(workspace)
             return
@@ -1034,6 +1138,31 @@ class AppController(QObject):
     @Property(bool, notify=scanStateChanged)
     def scanning(self) -> bool:
         return self._scanning
+
+    @Property(bool, notify=scanStateChanged)
+    def scanCancelling(self) -> bool:
+        return self._scan_cancelling
+
+    @Property(str, notify=scanStateChanged)
+    def scanWorkspaceId(self) -> str:
+        return self._scan_workspace_id
+
+    @Property(str, notify=scanStateChanged)
+    def scanRoot(self) -> str:
+        return self._scan_root
+
+    @Property(str, notify=scanStateChanged)
+    def scanRootName(self) -> str:
+        return self._workspace_title(self._scan_root) if self._scan_root else ""
+
+    @Property(bool, notify=scanStateChanged)
+    def activeWorkspaceScanning(self) -> bool:
+        workspace = self._active_workspace()
+        return bool(
+            self._scanning
+            and workspace
+            and self._same_root(workspace["root"], self._scan_root)
+        )
 
     @Property(int, notify=thumbnailActivityChanged)
     def thumbnailJobCount(self) -> int:
@@ -1881,14 +2010,31 @@ class AppController(QObject):
         self._publish_state = {**self._publish_state, **changes}
         self.publishStateChanged.emit()
 
-    def _set_scan(self, *, active: bool | None = None, progress: float | None = None, message: str | None = None) -> None:
+    def _set_scan(
+        self,
+        *,
+        active: bool | None = None,
+        progress: float | None = None,
+        message: str | None = None,
+        cancelling: bool | None = None,
+    ) -> None:
+        tab_state_changed = False
         if active is not None:
+            tab_state_changed = tab_state_changed or active != self._scanning
             self._scanning = active
+        if cancelling is not None:
+            tab_state_changed = (
+                tab_state_changed
+                or cancelling != self._scan_cancelling
+            )
+            self._scan_cancelling = cancelling
         if progress is not None:
             self._scan_progress = progress
         if message is not None:
             self._scan_message = message
         self.scanStateChanged.emit()
+        if tab_state_changed:
+            self.workspaceTabsChanged.emit()
 
     def _set_telegram(self, **changes: Any) -> None:
         self._telegram_state = {**self._telegram_state, **changes}
@@ -1899,14 +2045,25 @@ class AppController(QObject):
 
     @Slot()
     def _refresh_automatic(self) -> None:
-        self._request_library_refresh(bool(self._setting("auto_index")))
+        self._request_library_refresh(
+            bool(self._setting("auto_index")),
+            reason="automatic",
+        )
 
     @Slot()
     def _refresh_manifest_only(self) -> None:
-        self._request_library_refresh(False)
+        self._request_library_refresh(False, reason="watcher")
 
-    @Slot(int, int, str)
-    def _on_scan_progress(self, done: int, total: int, name: str) -> None:
+    @Slot(int, int, int, str)
+    def _on_scan_progress(
+        self,
+        generation: int,
+        done: int,
+        total: int,
+        name: str,
+    ) -> None:
+        if generation != self._scan_generation or not self._scanning:
+            return
         verifies = bool(self._setting("verify_during_index"))
         thumbnails = bool(self._setting("thumbnails_during_index"))
         if verifies and thumbnails:
@@ -1922,17 +2079,29 @@ class AppController(QObject):
             message=f"{verb} {done:,} of {total:,}: {name}",
         )
 
-    @Slot(int, str)
-    def _on_manifest_progress(self, discovered: int, name: str) -> None:
+    @Slot(int, int, str)
+    def _on_manifest_progress(
+        self,
+        generation: int,
+        discovered: int,
+        name: str,
+    ) -> None:
+        if generation != self._scan_generation or not self._scanning:
+            return
         detail = f": {name}" if name else ""
         self._set_scan(
             progress=-1.0,
             message=f"Found {discovered:,} video filenames{detail}",
         )
 
-    @Slot(int)
-    def _on_media_indexed(self, _media_id: int) -> None:
-        self._library_refresh_timer.start()
+    @Slot(int, int)
+    def _on_media_indexed(self, generation: int, _media_id: int) -> None:
+        if (
+            generation == self._scan_generation
+            and self._scanning
+            and self._active_workspace_scans_root(self._scan_root)
+        ):
+            self._library_refresh_timer.start()
 
     @Slot()
     def _refresh_indexed_media(self) -> None:
@@ -2008,6 +2177,10 @@ class AppController(QObject):
         self._library_refresh_timer.stop()
         self._watcher_timer.stop()
         self._stop_watcher()
+        self._pending_scan_request = None
+        if self._scan_cancel_event is not None:
+            self._scan_cancel_reason = "shutdown"
+            self._scan_cancel_event.set()
         for task in self._thumbnail_jobs.values():
             task.cancel()
         self._thumbnail_jobs.clear()
@@ -2167,7 +2340,18 @@ class AppController(QObject):
                     self.refresh_all()
                 self._stop_watcher(wait=False)
                 self._watcher_timer.start()
-                self._auto_scan_timer.start()
+                self._reconcile_scan_workspaces()
+                if active_root:
+                    workspace = self._active_workspace()
+                    self._request_library_refresh(
+                        bool(self._setting("auto_index")),
+                        workspace_id=(
+                            str(workspace["id"]) if workspace else ""
+                        ),
+                        root=str(active_root),
+                        preempt=True,
+                        reason="new_root",
+                    )
                 self._schedule_workspace_persist()
                 if not bool(self._setting("auto_index")):
                     self.toast.emit(
@@ -2729,7 +2913,11 @@ class AppController(QObject):
                     continue
                 if fast and not refresh_requested:
                     refresh_requested = True
-                    self._request_library_refresh(False)
+                    self._request_library_refresh(
+                        False,
+                        preempt=True,
+                        reason="random",
+                    )
                     await asyncio.sleep(0.05)
                     continue
                 break
@@ -3024,35 +3212,192 @@ class AppController(QObject):
 
     @Slot()
     def scanLibrary(self) -> None:
-        self._request_library_refresh(True)
+        self._request_library_refresh(
+            True,
+            preempt=True,
+            reason="manual",
+        )
 
-    def _request_library_refresh(self, include_index: bool) -> None:
-        root = self._setting("library_root")
-        if not root:
-            if include_index:
-                self.toast.emit("info", "Choose a library folder to begin indexing videos.")
+    @Slot()
+    def cancelScan(self) -> None:
+        self._pending_scan_request = None
+        self._cancel_current_scan("user")
+
+    @staticmethod
+    def _scan_request_priority(reason: str) -> int:
+        return {
+            "manual": 4,
+            "new_root": 4,
+            "random": 3,
+            "automatic": 2,
+            "watcher": 1,
+            "startup": 1,
+        }.get(reason, 2)
+
+    def _request_library_refresh(
+        self,
+        include_index: bool,
+        *,
+        workspace_id: str = "",
+        root: str = "",
+        preempt: bool = False,
+        reason: str = "automatic",
+    ) -> None:
+        workspace = (
+            self._workspace_for_id(str(workspace_id))
+            if workspace_id
+            else self._active_workspace()
+        )
+        requested_root = self._normalized_root(
+            root
+            or (workspace.get("root") if workspace else "")
+            or self._setting("library_root")
+        )
+        if not requested_root:
+            if include_index or reason in {"manual", "new_root"}:
+                self.toast.emit(
+                    "info",
+                    "Choose a library folder to begin indexing videos.",
+                )
             return
+        request = _ScanRequest(
+            workspace_id=str(workspace.get("id") if workspace else ""),
+            root=requested_root,
+            include_index=bool(include_index),
+            reason=reason,
+        )
+        request = self._resolve_scan_request(request)
+        if request is None:
+            return
+
         if self._scanning:
-            self._pending_refresh = True
-            self._pending_index = self._pending_index or include_index
-            return
-        task = asyncio.create_task(
-            self._refresh_library_async(str(root), include_index)
-        )
-        self._library_scan_task = task
-        task.add_done_callback(
-            lambda completed: self._simple_task_done(
-                "_library_scan_task",
-                completed,
-            )
-        )
+            same_root = self._same_root(request.root, self._scan_root)
+            if same_root and not self._scan_cancelling:
+                if request.include_index and not self._scan_include_index:
+                    self._scan_include_index = True
+                if request.workspace_id:
+                    self._scan_workspace_id = request.workspace_id
+                    self.scanStateChanged.emit()
+                return
 
-    async def _refresh_library_async(self, root: str, include_index: bool) -> None:
+            pending = self._pending_scan_request
+            if (
+                pending is None
+                or self._scan_request_priority(request.reason)
+                >= self._scan_request_priority(pending.reason)
+            ):
+                self._pending_scan_request = request
+            if preempt:
+                self._cancel_current_scan("superseded")
+            return
+
+        self._start_scan_request(request)
+
+    def _start_scan_request(self, request: _ScanRequest) -> None:
+        if self._shutting_down or self._scanning:
+            return
+        resolved = self._resolve_scan_request(request)
+        if resolved is None:
+            return
+        if not Path(resolved.root).is_dir():
+            if resolved.reason in {"manual", "new_root"}:
+                self.toast.emit(
+                    "error",
+                    "The selected library folder is unavailable.",
+                )
+            return
+
+        self._scan_generation += 1
+        generation = self._scan_generation
+        cancel_event = threading.Event()
+        self._scan_workspace_id = resolved.workspace_id
+        self._scan_root = resolved.root
+        self._scan_include_index = resolved.include_index
+        self._scan_cancel_event = cancel_event
+        self._scan_cancel_reason = ""
         self._set_scan(
             active=True,
+            cancelling=False,
             progress=-1.0,
-            message="Scanning folders for video filenames",
+            message=(
+                f"Scanning {self._workspace_title(resolved.root)} "
+                "for video filenames"
+            ),
         )
+        task = self._create_task(
+            self._refresh_library_async(
+                resolved,
+                generation,
+                cancel_event,
+            )
+        )
+        if task is None:
+            self._scan_workspace_id = ""
+            self._scan_root = ""
+            self._scan_cancel_event = None
+            self._set_scan(active=False, cancelling=False)
+            return
+        self._library_scan_task = task
+        task.add_done_callback(
+            lambda completed, scan_generation=generation:
+                self._scan_task_done(scan_generation, completed)
+        )
+
+    def _scan_task_done(
+        self,
+        _generation: int,
+        task: asyncio.Task,
+    ) -> None:
+        if self._library_scan_task is task:
+            self._library_scan_task = None
+        if not task.cancelled() and (error := task.exception()):
+            LOGGER.debug("Library scan task failed: %s", error)
+
+    def _cancel_current_scan(self, reason: str) -> bool:
+        if not self._scanning or self._scan_cancel_event is None:
+            return False
+        if self._scan_cancelling:
+            return True
+        self._scan_cancel_reason = reason
+        self._scan_cancel_event.set()
+        root_name = self._workspace_title(self._scan_root)
+        self._set_scan(
+            cancelling=True,
+            message=f"Stopping scan for {root_name}",
+        )
+        return True
+
+    def _finish_scan_session(self, generation: int) -> None:
+        if generation != self._scan_generation:
+            return
+        cancel_reason = self._scan_cancel_reason
+        pending = self._pending_scan_request
+        self._pending_scan_request = None
+        self._scan_workspace_id = ""
+        self._scan_root = ""
+        self._scan_include_index = False
+        self._scan_cancel_event = None
+        self._scan_cancel_reason = ""
+        self._set_scan(active=False, cancelling=False)
+
+        if cancel_reason == "user" and not self._shutting_down:
+            self.toast.emit(
+                "info",
+                "Scan stopped. Videos found so far are still available.",
+            )
+        if self._shutting_down or pending is None:
+            return
+        resolved = self._resolve_scan_request(pending)
+        if resolved is not None:
+            self._start_scan_request(resolved)
+
+    async def _refresh_library_async(
+        self,
+        request: _ScanRequest,
+        generation: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        root = request.root
 
         last_progress_emit = 0.0
         last_item_emit = 0.0
@@ -3062,41 +3407,48 @@ class AppController(QObject):
             now = time.monotonic()
             if done >= total or now - last_progress_emit >= 0.12:
                 last_progress_emit = now
-                self._scanProgress.emit(done, total, name)
+                self._scanProgress.emit(generation, done, total, name)
 
         def item_ready(media_id: int) -> None:
             nonlocal last_item_emit
             now = time.monotonic()
             if now - last_item_emit >= 0.35:
                 last_item_emit = now
-                self._mediaIndexed.emit(media_id)
+                self._mediaIndexed.emit(generation, media_id)
+
+        def manifest_batch_ready(added: int) -> None:
+            self._mediaIndexed.emit(generation, added)
+
+        def manifest_progress(discovered: int, name: str) -> None:
+            self._manifestProgress.emit(generation, discovered, name)
 
         try:
-            await asyncio.to_thread(
+            manifest_result = await asyncio.to_thread(
                 self.indexer.refresh_manifest,
                 root,
-                self._mediaIndexed.emit,
-                progress=self._manifestProgress.emit,
+                manifest_batch_ready,
+                progress=manifest_progress,
                 check_changes=bool(
-                    include_index
+                    self._scan_include_index
                     and self._setting("verify_during_index")
                 ),
+                cancel_event=cancel_event,
             )
-            self._refresh_library_state(preserve_loaded=True)
-            current_root = self._setting("library_root")
-            if not current_root or (
-                Path(str(current_root)).expanduser().resolve()
-                != Path(root).expanduser().resolve()
-            ):
-                return
-            if self._pending_refresh:
-                include_index = include_index or self._pending_index
-                self._pending_refresh = False
-                self._pending_index = False
+            if self._active_workspace_scans_root(root):
+                self._refresh_library_state(preserve_loaded=True)
+            if cancel_event.is_set():
+                raise ScanCancelled("Library scan stopped.")
+            include_index = bool(
+                generation == self._scan_generation
+                and self._scan_include_index
+            )
             if not include_index:
                 self._set_scan(
                     progress=1.0,
-                    message=f"{self.database.counts()['media']} filenames ready",
+                    message=(
+                        f"{manifest_result.discovered:,} filenames ready in "
+                        f"{self._workspace_title(root)}"
+                    ),
                 )
                 return
             verify_media = bool(self._setting("verify_during_index"))
@@ -3112,38 +3464,32 @@ class AppController(QObject):
                 generate_thumbnails=bool(self._setting("thumbnails_during_index")),
                 item_ready=item_ready,
                 candidates=candidates,
+                cancel_event=cancel_event,
             )
-            self._refresh_library_state(preserve_loaded=True)
-            self._set_scan(progress=1.0, message=f"{self.database.counts()['media']} videos ready")
+            if self._active_workspace_scans_root(root):
+                self._refresh_library_state(preserve_loaded=True)
+            self._set_scan(
+                progress=1.0,
+                message=(
+                    f"{result.discovered:,} videos checked in "
+                    f"{self._workspace_title(root)}"
+                ),
+            )
             if result.failed:
                 self.toast.emit("warning", f"Indexed {result.indexed} videos; skipped {result.failed} unreadable files.")
+        except ScanCancelled:
+            LOGGER.info("Library scan stopped for %s", root)
+            if self._active_workspace_scans_root(root):
+                self._refresh_library_state(preserve_loaded=True)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             LOGGER.exception("Library scan failed")
-            self.toast.emit("error", str(exc))
-            self._set_scan(message="Scan failed")
+            if generation == self._scan_generation and not self._shutting_down:
+                self.toast.emit("error", str(exc))
+                self._set_scan(message="Scan failed")
         finally:
-            self._set_scan(active=False)
-            if self._shutting_down:
-                self._pending_refresh = False
-                self._pending_index = False
-                return
-            current_root = self._setting("library_root")
-            root_changed = bool(current_root) and (
-                Path(str(current_root)).expanduser().resolve()
-                != Path(root).expanduser().resolve()
-            )
-            if root_changed:
-                self._pending_refresh = False
-                self._pending_index = False
-                self._auto_scan_timer.start()
-            elif self._pending_refresh:
-                include_pending = self._pending_index
-                self._pending_refresh = False
-                self._pending_index = False
-                QTimer.singleShot(
-                    0,
-                    lambda: self._request_library_refresh(include_pending),
-                )
+            self._finish_scan_session(generation)
 
     @Slot(int)
     def ensurePreview(self, media_id: int) -> None:

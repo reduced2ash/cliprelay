@@ -389,6 +389,8 @@ def test_global_workspace_tabs_are_compact_contextual_and_browser_like() -> None
     assert 'text: "Close other workspaces"' in bar
     assert 'text: "Close workspaces to the right"' in bar
     assert 'text: "Reopen closed workspace"' in bar
+    assert "tabDelegate.modelData.scanning" in bar
+    assert '"Stop library scan"' in bar
     assert "root.libraryPage.activateWorkspace(" in bar
     assert "root.libraryPage.closeWorkspace(" in bar
 
@@ -398,6 +400,8 @@ def test_global_workspace_tabs_are_compact_contextual_and_browser_like() -> None
     assert '"id": "new_workspace"' in actions
     assert '"id": "close_workspace"' in actions
     assert '"id": "reopen_workspace"' in actions
+    assert '"id": "cancel_scan"' in actions
+    assert "appController.cancelScan()" in actions
 
 
 def test_clickable_controls_center_icons_and_use_keyboard_only_focus_rings() -> None:
