@@ -13,6 +13,19 @@ ColumnLayout {
     property real trimEnd: Number(controller.selectedMedia.duration || 0)
     property alias editor: editCanvas
     property alias player: previewPlayer
+    readonly property real sourceWidth: Math.max(
+        1, Number(controller.selectedMedia.width || 1)
+    )
+    readonly property real sourceHeight: Math.max(
+        1, Number(controller.selectedMedia.height || 1)
+    )
+    readonly property real mediaAspect: sourceWidth / sourceHeight
+    readonly property real preferredFrameHeight: root.compactMode
+        ? 115
+        : Math.max(
+            170,
+            Math.min(480, root.width / Math.max(0.1, root.mediaAspect))
+        )
 
     signal trimStartEdited(real seconds)
     signal trimEndEdited(real seconds)
@@ -20,8 +33,7 @@ ColumnLayout {
     spacing: root.compactMode ? 4 : 6
     implicitHeight: root.studioMode
         ? 0
-        : (root.compactMode
-            ? 115 : Math.max(170, root.width * 0.54))
+        : root.preferredFrameHeight
             + playbackTimeline.implicitHeight + spacing
 
     function reset() {
@@ -55,71 +67,88 @@ ColumnLayout {
             previewPlayer.play()
     }
 
-    Rectangle {
-        id: videoFrame
+    Item {
+        id: videoViewport
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: root.studioMode
             ? 180 : root.compactMode ? 96 : 130
-        Layout.preferredHeight: root.studioMode
-            ? 420 : root.compactMode
-                ? 115 : Math.max(170, root.width * 0.54)
-        implicitHeight: root.studioMode
-            ? 420 : root.compactMode
-                ? 115 : Math.max(170, root.width * 0.54)
-        radius: Theme.radiusWorkbench
-        color: Theme.mediaWell
-        border.width: 1
-        border.color: editCanvas.hasEdits ? Theme.accent : Theme.borderStrong
+        Layout.preferredHeight: root.preferredFrameHeight
+        implicitHeight: root.preferredFrameHeight
         clip: true
 
-        MediaPlayer {
-            id: previewPlayer
-            source: controller.selectedMedia.mediaUrl || ""
-            autoPlay: true
-            loops: MediaPlayer.Infinite
-            videoOutput: previewOutput
-            audioOutput: AudioOutput { volume: 0.65 }
-            onPositionChanged: function(position) {
-                if (root.trimEnd > 0 && position / 1000 >= root.trimEnd)
-                    previewPlayer.position = root.trimStart * 1000
+        Rectangle {
+            id: videoFrame
+            anchors.centerIn: parent
+            width: Math.max(
+                1,
+                Math.min(
+                    videoViewport.width,
+                    videoViewport.height * root.mediaAspect
+                )
+            )
+            height: Math.max(
+                1,
+                Math.min(
+                    videoViewport.height,
+                    width / Math.max(0.1, root.mediaAspect)
+                )
+            )
+            radius: Theme.radiusWorkbench
+            color: Theme.mediaWell
+            border.width: 1
+            border.color: editCanvas.hasEdits
+                ? Theme.accent : Theme.borderStrong
+            clip: true
+
+            MediaPlayer {
+                id: previewPlayer
+                source: controller.selectedMedia.mediaUrl || ""
+                autoPlay: true
+                loops: MediaPlayer.Infinite
+                videoOutput: previewOutput
+                audioOutput: AudioOutput { volume: 0.65 }
+                onPositionChanged: function(position) {
+                    if (root.trimEnd > 0 && position / 1000 >= root.trimEnd)
+                        previewPlayer.position = root.trimStart * 1000
+                }
+                onMediaStatusChanged: {
+                    if (mediaStatus === MediaPlayer.EndOfMedia)
+                        root.startAutoplay()
+                }
             }
-            onMediaStatusChanged: {
-                if (mediaStatus === MediaPlayer.EndOfMedia)
-                    root.startAutoplay()
+
+            VideoOutput {
+                id: previewOutput
+                anchors.fill: parent
+                anchors.margins: 1
+                fillMode: VideoOutput.PreserveAspectFit
+            }
+
+            Image {
+                id: prepareThumbnail
+                anchors.fill: parent
+                anchors.margins: 1
+                z: 2
+                source: controller.selectedMedia.thumbnailUrl || ""
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: true
+                visible:
+                    previewPlayer.playbackState === MediaPlayer.StoppedState
+                    && status === Image.Ready
+            }
+
+            VideoEditCanvas {
+                id: editCanvas
+                anchors.fill: parent
+                anchors.margins: 1
+                z: 5
+                videoOutput: previewOutput
+                sourceWidth: root.sourceWidth
+                sourceHeight: root.sourceHeight
             }
         }
-
-        VideoOutput {
-            id: previewOutput
-            anchors.fill: parent
-            anchors.margins: 1
-            fillMode: VideoOutput.PreserveAspectFit
-        }
-
-        Image {
-            id: prepareThumbnail
-            anchors.fill: parent
-            anchors.margins: 1
-            z: 2
-            source: controller.selectedMedia.thumbnailUrl || ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: true
-            visible: previewPlayer.playbackState === MediaPlayer.StoppedState
-                && status === Image.Ready
-        }
-
-        VideoEditCanvas {
-            id: editCanvas
-            anchors.fill: parent
-            anchors.margins: 1
-            z: 5
-            videoOutput: previewOutput
-            sourceWidth: Number(controller.selectedMedia.width || 1)
-            sourceHeight: Number(controller.selectedMedia.height || 1)
-        }
-
     }
 
     VideoTimeline {

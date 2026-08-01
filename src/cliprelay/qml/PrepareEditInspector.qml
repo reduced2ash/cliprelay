@@ -44,10 +44,27 @@ ColumnLayout {
                 Layout.fillWidth: true
             }
         }
-        StatusPill {
-            visible: root.editor && root.editor.cropEnabled
-            status: "accent"
-            text: "Crop"
+        RowLayout {
+            spacing: 6
+
+            StatusPill {
+                visible: root.editor && root.editor.cropEnabled
+                status: "accent"
+                text: "Crop"
+            }
+            AppButton {
+                visible: root.editor && root.editor.hasEdits
+                text: "Reset all frame edits"
+                iconName: "refresh"
+                kind: "ghost"
+                compact: true
+                toolTipText: text
+                onClicked: {
+                    root.editor.reset()
+                    cropPreset.currentIndex = 1
+                    root.changed()
+                }
+            }
         }
     }
 

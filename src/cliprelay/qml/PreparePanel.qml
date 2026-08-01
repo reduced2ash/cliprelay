@@ -23,7 +23,19 @@ Rectangle {
             || root.trimEnd
                 < Number(controller.selectedMedia.duration || 0) - 0.05)
     readonly property bool compactDockedStage:
-        !root.studioMode && root.height < 690
+        !root.studioMode && root.height < 620
+    readonly property real selectedMediaAspect: Math.max(
+        0.1,
+        Number(controller.selectedMedia.width || 16)
+            / Math.max(1, Number(controller.selectedMedia.height || 9))
+    )
+    readonly property real dockedIdealFrameHeight: Math.max(
+        170,
+        Math.min(
+            480,
+            Math.max(1, root.width - 24) / root.selectedMediaAspect
+        )
+    )
     readonly property real resolvedStudioInspectorWidth: Math.max(
         360,
         Math.min(
@@ -33,7 +45,13 @@ Rectangle {
     )
     readonly property real dockedStageHeight: root.compactDockedStage
         ? 315
-        : Math.max(385, Math.min(470, root.height * 0.58))
+        : Math.max(
+            360,
+            Math.min(
+                root.dockedIdealFrameHeight + 230,
+                Math.max(360, root.height - 210)
+            )
+        )
 
     signal fullScreenExitRequested()
     signal closeRequested()
@@ -252,7 +270,7 @@ Rectangle {
                 id: dockedStageHost
                 Layout.fillWidth: true
                 Layout.preferredHeight: root.dockedStageHeight
-                Layout.minimumHeight: root.compactDockedStage ? 315 : 385
+                Layout.minimumHeight: root.compactDockedStage ? 315 : 360
             }
 
             Item {

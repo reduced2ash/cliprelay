@@ -6,7 +6,6 @@ Rectangle {
     id: root
 
     property int activeTab: 0
-    property var editor
     property bool selectedMediaChecking: false
     property bool telegramReady: false
     property string estimatedSize: ""
@@ -20,11 +19,8 @@ Rectangle {
     readonly property bool wideActions: width >= 540
 
     signal submitRequested(string action)
-    signal resetEditsRequested()
 
-    implicitHeight: activeTab === 0
-        ? 52
-        : selectedMediaChecking ? 52
+    implicitHeight: selectedMediaChecking ? 52
         : operationActive ? 78
         : xReady ? 104
         : wideActions ? 78 : 118
@@ -36,39 +32,6 @@ Rectangle {
         anchors.top: parent.top
         height: 1
         color: Theme.border
-    }
-
-    RowLayout {
-        visible: root.activeTab === 0
-        anchors.fill: parent
-        anchors.leftMargin: 12
-        anchors.rightMargin: 10
-        spacing: 8
-
-        AppIcon {
-            Layout.preferredWidth: 15
-            Layout.preferredHeight: 15
-            name: "copy"
-            iconColor: Theme.success
-        }
-        Text {
-            Layout.fillWidth: true
-            text: root.editor && root.editor.hasEdits
-                ? "Original unchanged · edits apply to a generated copy"
-                : "Original unchanged"
-            color: Theme.textSoft
-            font.pixelSize: Theme.textXs
-            elide: Text.ElideRight
-        }
-        AppButton {
-            visible: root.editor && root.editor.hasEdits
-            text: "Reset frame edits"
-            iconName: "refresh"
-            kind: "ghost"
-            compact: root.width < 470
-            toolTipText: text
-            onClicked: root.resetEditsRequested()
-        }
     }
 
     RowLayout {

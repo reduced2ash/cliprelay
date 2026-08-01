@@ -34,6 +34,7 @@ PrepareActionDock 1.0 PrepareActionDock.qml
 PrepareContextHeader 1.0 PrepareContextHeader.qml
 PrepareEditInspector 1.0 PrepareEditInspector.qml
 PrepareInspector 1.0 PrepareInspector.qml
+PrepareInspectorTabs 1.0 PrepareInspectorTabs.qml
 PrepareMaskList 1.0 PrepareMaskList.qml
 PreparePublishInspector 1.0 PreparePublishInspector.qml
 PrepareSourceStrip 1.0 PrepareSourceStrip.qml

@@ -33,6 +33,10 @@ release.
 
 ### Changed
 
+- Moved Prepare's Edit and Publish switcher to an equal-width bottom tab rail,
+  removed the redundant edit footer, and condensed source details to one row.
+- Made the Prepare player follow each video's real aspect ratio and allocate
+  more stage height when the window can support it.
 - Reorganized Prepare so mode and panel-size changes preserve playback,
   trimming, frame edits, publishing fields, and active operation state.
 - Moved startup root activation, filtered library and history queries, folder
@@ -41,6 +45,8 @@ release.
 
 ### Fixed
 
+- Kept full-screen source details and inspector tabs fully inside the window,
+  including compact heights and resized inspector widths.
 - Made title-bar dragging and frameless resizing dependable even when the Qt
   platform backend does not provide a native operation.
 - Made shared dropdown triggers close an open menu instead of immediately

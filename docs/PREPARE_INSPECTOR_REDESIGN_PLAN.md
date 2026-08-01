@@ -6,7 +6,9 @@ Implemented in the production QML workspace. Docked, widened, and full-screen
 Prepare now share one persistent media stage, inspector, and action dock. The
 full-screen context bar was tightened to 38 logical pixels after visual review,
 preserving the title and essential window actions without giving up editor
-height.
+height. A subsequent media-first refinement moved the inspector switcher to an
+equal-width bottom tab rail, condensed source details to one row, and made the
+player frame follow the selected video's aspect ratio.
 
 ## Direction
 

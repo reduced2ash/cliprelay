@@ -322,10 +322,19 @@ def test_docked_prepare_uses_the_shared_pane_aware_context_bar() -> None:
     inspector = (QML_DIR / "PrepareInspector.qml").read_text(
         encoding="utf-8"
     )
+    inspector_tabs = (QML_DIR / "PrepareInspectorTabs.qml").read_text(
+        encoding="utf-8"
+    )
     action_dock = (QML_DIR / "PrepareActionDock.qml").read_text(
         encoding="utf-8"
     )
     edit = (QML_DIR / "PrepareEditInspector.qml").read_text(
+        encoding="utf-8"
+    )
+    source_strip = (QML_DIR / "PrepareSourceStrip.qml").read_text(
+        encoding="utf-8"
+    )
+    video_editor = (QML_DIR / "PrepareVideoEditor.qml").read_text(
         encoding="utf-8"
     )
     actions = (QML_DIR / "WorkbenchActionRegistry.qml").read_text(
@@ -366,17 +375,32 @@ def test_docked_prepare_uses_the_shared_pane_aware_context_bar() -> None:
     assert "publishScrollY: scrollDraft.publishScrollY" in panel
     assert "studioInspectorWidth: root.studioInspectorWidth" in panel
     assert "readonly property bool compactDockedStage:" in panel
+    assert "root.dockedIdealFrameHeight + 230" in panel
+    assert "prepareStage.implicitHeight" not in panel
     assert 'text: "Full-screen editor"' not in header
     assert 'text: "Prepare"' in header
     assert 'text: "Exit full-screen editor"' in header
     assert "PrepareEditInspector {" in inspector
     assert "PreparePublishInspector {" in inspector
     assert "PrepareActionDock {" in inspector
-    assert 'text: "Edit"' in inspector
-    assert 'text: "Publish"' in inspector
+    assert "PrepareInspectorTabs {" in inspector
+    assert inspector.index("PrepareActionDock {") < inspector.index(
+        "PrepareInspectorTabs {"
+    )
+    assert 'text: "Edit"' in inspector_tabs
+    assert 'text: "Publish"' in inspector_tabs
+    assert inspector_tabs.count("Layout.preferredWidth: 1\n") == 3
+    assert "anchors.top: parent.top" in inspector_tabs
+    assert "Original unchanged" not in action_dock
     assert 'text: "Send + prepare X"' in action_dock
     assert 'text: "Add rectangle"' in edit
+    assert 'text: "Reset all frame edits"' in edit
     assert "PrepareMaskList {" in edit
+    assert "readonly property real mediaAspect:" in video_editor
+    assert "videoViewport.height * root.mediaAspect" in video_editor
+    assert "anchors.centerIn: parent" in video_editor
+    assert "implicitHeight: root.compactMode ? 44" in source_strip
+    assert "readonly property int prepareSourceHeight: 48" in theme
     assert 'text: "Widen Prepare"' not in panel
     assert "signal fullScreenRequested()" not in panel
     assert '"id": "prepare_fullscreen"' in actions

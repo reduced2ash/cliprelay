@@ -77,134 +77,6 @@ ColumnLayout {
         })
     }
 
-    Rectangle {
-        Layout.fillWidth: true
-        Layout.preferredHeight: Theme.prepareInspectorTabsHeight
-        color: Theme.surfaceSoft
-
-        RowLayout {
-            anchors.fill: parent
-            spacing: 0
-
-            TabButton {
-                id: editTab
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                text: "Edit"
-                checked: root.activeTab === 0
-                hoverEnabled: true
-                focusPolicy: Qt.StrongFocus
-                Accessible.role: Accessible.PageTab
-                Accessible.name: "Edit inspector"
-                Accessible.selected: checked
-                onClicked: root.selectTab(0)
-
-                contentItem: RowLayout {
-                    spacing: 7
-                    Item { Layout.fillWidth: true }
-                    AppIcon {
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
-                        name: "crop"
-                        iconColor: editTab.checked
-                            ? Theme.accentText : Theme.muted
-                    }
-                    Text {
-                        text: "Edit"
-                        color: editTab.checked ? Theme.text : Theme.textSoft
-                        font.pixelSize: Theme.textSm
-                        font.weight: Font.DemiBold
-                    }
-                    Text {
-                        text: root.editCount === 0
-                            ? "No edits"
-                            : root.editCount + (root.editCount === 1
-                                ? " change" : " changes")
-                        color: root.editCount > 0
-                            ? Theme.accentText : Theme.muted
-                        font.pixelSize: Theme.textXs
-                    }
-                    Item { Layout.fillWidth: true }
-                }
-                background: Rectangle {
-                    color: editTab.checked
-                        ? Theme.active
-                        : editTab.hovered ? Theme.hover : "transparent"
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: editTab.checked ? 2 : 1
-                        color: editTab.checked ? Theme.accent : Theme.border
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.fillHeight: true
-                Layout.preferredWidth: 1
-                color: Theme.border
-            }
-
-            TabButton {
-                id: publishTab
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                text: "Publish"
-                checked: root.activeTab === 1
-                hoverEnabled: true
-                focusPolicy: Qt.StrongFocus
-                Accessible.role: Accessible.PageTab
-                Accessible.name: "Publish inspector"
-                Accessible.selected: checked
-                onClicked: root.selectTab(1)
-
-                contentItem: RowLayout {
-                    spacing: 7
-                    Item { Layout.fillWidth: true }
-                    AppIcon {
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
-                        name: "send"
-                        iconColor: publishTab.checked
-                            ? Theme.accentText : Theme.muted
-                    }
-                    Text {
-                        text: "Publish"
-                        color: publishTab.checked
-                            ? Theme.text : Theme.textSoft
-                        font.pixelSize: Theme.textSm
-                        font.weight: Font.DemiBold
-                    }
-                    Text {
-                        text: controller.publishState.active
-                            ? "Working"
-                            : (controller.publishState.error || "").length > 0
-                                ? "Result"
-                                : root.telegramReady ? "Ready" : "Needs setup"
-                        color: controller.publishState.active
-                            ? Theme.accentText
-                            : root.telegramReady ? Theme.success : Theme.warning
-                        font.pixelSize: Theme.textXs
-                    }
-                    Item { Layout.fillWidth: true }
-                }
-                background: Rectangle {
-                    color: publishTab.checked
-                        ? Theme.active
-                        : publishTab.hovered ? Theme.hover : "transparent"
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: publishTab.checked ? 2 : 1
-                        color: publishTab.checked ? Theme.accent : Theme.border
-                    }
-                }
-            }
-        }
-    }
-
     StackLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
@@ -269,10 +141,10 @@ ColumnLayout {
     }
 
     PrepareActionDock {
+        visible: root.activeTab === 1
         Layout.fillWidth: true
-        Layout.preferredHeight: implicitHeight
+        Layout.preferredHeight: visible ? implicitHeight : 0
         activeTab: root.activeTab
-        editor: root.editor
         selectedMediaChecking: controller.selectedMediaChecking
         telegramReady: root.telegramReady
         estimatedSize: root.estimatedSize
@@ -281,10 +153,16 @@ ColumnLayout {
         onSubmitRequested: function(action) {
             root.submitRequested(action)
         }
-        onResetEditsRequested: {
-            root.editor.reset()
-            editTools.syncFromEditor()
-            root.draftChanged()
+    }
+
+    PrepareInspectorTabs {
+        Layout.fillWidth: true
+        Layout.preferredHeight: implicitHeight
+        activeTab: root.activeTab
+        editCount: root.editCount
+        telegramReady: root.telegramReady
+        onTabSelected: function(index) {
+            root.selectTab(index)
         }
     }
 }
