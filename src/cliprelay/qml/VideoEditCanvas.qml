@@ -19,6 +19,8 @@ Item {
     readonly property int shapeCount: shapes.count
     readonly property bool hasEdits: cropEnabled || shapes.count > 0
 
+    signal editsChanged()
+
     readonly property real videoX: videoOutput.x + videoOutput.contentRect.x
     readonly property real videoY: videoOutput.y + videoOutput.contentRect.y
     readonly property real videoWidth: Math.max(0, videoOutput.contentRect.width)
@@ -54,6 +56,7 @@ Item {
         cropHeight = 1
         selectedShapeIndex = -1
         shapes.clear()
+        editsChanged()
     }
 
     function resetCrop() {
@@ -61,6 +64,7 @@ Item {
         cropY = 0
         cropWidth = 1
         cropHeight = 1
+        editsChanged()
     }
 
     function setCropEnabled(enabled) {
@@ -68,6 +72,8 @@ Item {
         selectedShapeIndex = -1
         if (enabled && cropWidth >= 0.999 && cropHeight >= 0.999)
             applyCropAspect(0)
+        else
+            editsChanged()
     }
 
     function applyCropAspect(targetRatio) {
@@ -79,6 +85,7 @@ Item {
                 cropWidth = 0.84
                 cropHeight = 0.84
             }
+            editsChanged()
             return
         }
         var sourceRatio = Math.max(0.01, sourceWidth) / Math.max(0.01, sourceHeight)
@@ -92,6 +99,7 @@ Item {
         }
         cropX = (1 - cropWidth) / 2
         cropY = (1 - cropHeight) / 2
+        editsChanged()
     }
 
     function addShape(square) {
@@ -106,6 +114,7 @@ Item {
             shapeKind: square ? "Square" : "Rectangle"
         })
         selectedShapeIndex = shapes.count - 1
+        editsChanged()
     }
 
     function removeSelectedShape() {
@@ -113,11 +122,13 @@ Item {
             return
         shapes.remove(selectedShapeIndex)
         selectedShapeIndex = Math.min(selectedShapeIndex, shapes.count - 1)
+        editsChanged()
     }
 
     function clearShapes() {
         shapes.clear()
         selectedShapeIndex = -1
+        editsChanged()
     }
 
     function editSpec() {
@@ -173,6 +184,7 @@ Item {
             })
         }
         selectedShapeIndex = -1
+        editsChanged()
     }
 
     function beginCropGesture(sceneX, sceneY, mode) {
@@ -194,6 +206,7 @@ Item {
         if (cropGestureMode === 4) {
             cropX = bounded(startCropX + dx, 0, 1 - startCropWidth)
             cropY = bounded(startCropY + dy, 0, 1 - startCropHeight)
+            editsChanged()
             return
         }
         var right = startCropX + startCropWidth
@@ -210,6 +223,7 @@ Item {
         } else {
             cropHeight = bounded(startCropHeight + dy, minimum, 1 - startCropY)
         }
+        editsChanged()
     }
 
     function beginShapeGesture(index, sceneX, sceneY, resize) {
@@ -274,6 +288,7 @@ Item {
                 bounded(startShapeY + dy, 0, 1 - startShapeHeight)
             )
         }
+        editsChanged()
     }
 
     ListModel { id: shapes }

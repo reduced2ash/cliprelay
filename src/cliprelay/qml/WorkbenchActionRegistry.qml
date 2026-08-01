@@ -283,6 +283,58 @@ QtObject {
             "enabled": appController.settings.library_density !== "compact"
         },
         {
+            "id": "prepare_fullscreen",
+            "label": "Open full Prepare editor",
+            "detail": "Move the selected video into the full-screen workspace",
+            "category": "Prepare",
+            "icon": "maximize",
+            "shortcut": "",
+            "keywords": "prepare full screen editor video",
+            "enabled": Number(appController.selectedMediaId || 0) > 0
+                && !libraryPage.prepareFullscreen
+        },
+        {
+            "id": "prepare_focus_edit",
+            "label": "Focus Prepare Edit",
+            "detail": "Show crop and black-mask tools",
+            "category": "Prepare",
+            "icon": "crop",
+            "shortcut": "",
+            "keywords": "prepare edit crop mask frame",
+            "enabled": Number(appController.selectedMediaId || 0) > 0
+        },
+        {
+            "id": "prepare_focus_publish",
+            "label": "Focus Prepare Publish",
+            "detail": "Show output, destinations, and captions",
+            "category": "Prepare",
+            "icon": "send",
+            "shortcut": "",
+            "keywords": "prepare publish telegram x caption output",
+            "enabled": Number(appController.selectedMediaId || 0) > 0
+        },
+        {
+            "id": "prepare_reset_cut",
+            "label": "Reset selected video cut",
+            "detail": "Restore the complete source duration",
+            "category": "Prepare",
+            "icon": "refresh",
+            "shortcut": "",
+            "keywords": "prepare reset trim cut in out duration",
+            "enabled": Number(appController.selectedMediaId || 0) > 0
+                && libraryPage.prepareCutActive
+        },
+        {
+            "id": "prepare_reveal",
+            "label": "Reveal selected video in Library",
+            "detail": "Open its Explorer branch and focus its tile",
+            "category": "Prepare",
+            "icon": "target",
+            "shortcut": "",
+            "keywords": "prepare reveal selected video folder library",
+            "enabled": Number(appController.selectedMediaId || 0) > 0
+        },
+        {
             "id": "go_library",
             "label": "Go to Library",
             "detail": "Open the video library workspace",
@@ -412,6 +464,20 @@ QtObject {
             appController.setSetting("library_density", "default")
         } else if (actionId === "density_compact") {
             appController.setSetting("library_density", "compact")
+        } else if (actionId === "prepare_fullscreen") {
+            hostWindow.currentPage = 0
+            libraryPage.openPrepareFullscreen()
+        } else if (actionId === "prepare_focus_edit") {
+            hostWindow.currentPage = 0
+            libraryPage.focusPrepareTab(0)
+        } else if (actionId === "prepare_focus_publish") {
+            hostWindow.currentPage = 0
+            libraryPage.focusPrepareTab(1)
+        } else if (actionId === "prepare_reset_cut") {
+            libraryPage.resetPrepareCut()
+        } else if (actionId === "prepare_reveal") {
+            hostWindow.currentPage = 0
+            libraryPage.revealPreparedVideo()
         } else if (actionId === "go_library") {
             hostWindow.currentPage = 0
         } else if (actionId === "go_history") {

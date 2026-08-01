@@ -30,6 +30,15 @@ MediaTile 1.0 MediaTile.qml
 FolderTreeRow 1.0 FolderTreeRow.qml
 RandomSourceTreeRow 1.0 RandomSourceTreeRow.qml
 PreparePanel 1.0 PreparePanel.qml
+PrepareActionDock 1.0 PrepareActionDock.qml
+PrepareContextHeader 1.0 PrepareContextHeader.qml
+PrepareEditInspector 1.0 PrepareEditInspector.qml
+PrepareInspector 1.0 PrepareInspector.qml
+PrepareMaskList 1.0 PrepareMaskList.qml
+PreparePublishInspector 1.0 PreparePublishInspector.qml
+PrepareSourceStrip 1.0 PrepareSourceStrip.qml
+PrepareStage 1.0 PrepareStage.qml
+PrepareStatusStrip 1.0 PrepareStatusStrip.qml
 PrepareVideoEditor 1.0 PrepareVideoEditor.qml
 VideoTimeline 1.0 VideoTimeline.qml
 VideoEditCanvas 1.0 VideoEditCanvas.qml

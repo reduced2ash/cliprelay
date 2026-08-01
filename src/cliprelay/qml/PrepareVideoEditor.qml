@@ -8,6 +8,7 @@ ColumnLayout {
     id: root
 
     property bool studioMode: false
+    property bool compactMode: false
     property real trimStart: 0
     property real trimEnd: Number(controller.selectedMedia.duration || 0)
     property alias editor: editCanvas
@@ -16,10 +17,11 @@ ColumnLayout {
     signal trimStartEdited(real seconds)
     signal trimEndEdited(real seconds)
 
-    spacing: 6
+    spacing: root.compactMode ? 4 : 6
     implicitHeight: root.studioMode
         ? 0
-        : videoFrame.Layout.preferredHeight
+        : (root.compactMode
+            ? 115 : Math.max(170, root.width * 0.54))
             + playbackTimeline.implicitHeight + spacing
 
     function reset() {
@@ -56,11 +58,16 @@ ColumnLayout {
     Rectangle {
         id: videoFrame
         Layout.fillWidth: true
-        Layout.fillHeight: root.studioMode
-        Layout.minimumHeight: root.studioMode ? 220 : 190
+        Layout.fillHeight: true
+        Layout.minimumHeight: root.studioMode
+            ? 180 : root.compactMode ? 96 : 130
+        Layout.preferredHeight: root.studioMode
+            ? 420 : root.compactMode
+                ? 115 : Math.max(170, root.width * 0.54)
         implicitHeight: root.studioMode
-            ? 0 : Math.max(190, width * 0.54)
-        radius: root.studioMode ? Theme.radiusLg : Theme.radiusMd
+            ? 420 : root.compactMode
+                ? 115 : Math.max(170, root.width * 0.54)
+        radius: Theme.radiusWorkbench
         color: Theme.mediaWell
         border.width: 1
         border.color: editCanvas.hasEdits ? Theme.accent : Theme.borderStrong
@@ -113,39 +120,6 @@ ColumnLayout {
             sourceHeight: Number(controller.selectedMedia.height || 1)
         }
 
-        Rectangle {
-            visible: root.studioMode
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.margins: 14
-            z: 10
-            height: 28
-            width: canvasState.implicitWidth + 20
-            radius: Theme.radiusSm
-            color: Theme.overlay
-            opacity: 0.94
-
-            Row {
-                id: canvasState
-                anchors.centerIn: parent
-                spacing: 6
-                AppIcon {
-                    width: 13
-                    height: 13
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: editCanvas.hasEdits ? "crop" : "media"
-                    iconColor: editCanvas.hasEdits
-                        ? Theme.accent : Theme.mediaMuted
-                }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: editCanvas.hasEdits ? "Frame edits active" : "Original frame"
-                    color: Theme.mediaText
-                    font.pixelSize: Theme.textXs
-                    font.weight: Font.DemiBold
-                }
-            }
-        }
     }
 
     VideoTimeline {
@@ -159,6 +133,7 @@ ColumnLayout {
         thumbnailUrl: controller.selectedMedia.thumbnailUrl || ""
         filmstripLoading: controller.selectedMediaTimelineLoading
         studioMode: root.studioMode
+        compactMode: root.compactMode
         controlsEnabled: !controller.selectedMediaChecking
         onTogglePlaybackRequested: root.togglePlayback()
         onSeekRequested: function(seconds) {

@@ -8,6 +8,12 @@ release.
 
 ### Added
 
+- A production-ready Prepare workspace with persistent Edit and Publish
+  inspectors, a visible black-mask object list, and pinned delivery actions.
+- A resizable full-screen Prepare layout with one shared player and editor,
+  per-tab inspector scroll positions, and a compact 38-pixel context bar.
+- Command-center actions for opening Prepare full screen, focusing either
+  inspector, resetting the current cut, and revealing the selected video.
 - Persistent, full-width workspace tabs with independent library roots,
   Prepare drafts, random-source filters, and browser-style navigation history.
 - Workspace context actions for rename, duplicate, reveal, close variants, and
@@ -27,6 +33,8 @@ release.
 
 ### Changed
 
+- Reorganized Prepare so mode and panel-size changes preserve playback,
+  trimming, frame edits, publishing fields, and active operation state.
 - Moved startup root activation, filtered library and history queries, folder
   aggregation, count refreshes, and thumbnail asset bookkeeping off the UI
   thread.

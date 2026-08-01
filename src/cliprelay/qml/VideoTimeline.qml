@@ -16,6 +16,7 @@ ColumnLayout {
     property string thumbnailUrl: ""
     property bool filmstripLoading: false
     property bool studioMode: false
+    property bool compactMode: false
     property bool controlsEnabled: true
 
     readonly property int frameCount: 12
@@ -40,7 +41,7 @@ ColumnLayout {
     signal resetCutRequested()
     signal togglePlaybackRequested()
 
-    spacing: studioMode ? 8 : 6
+    spacing: studioMode ? 8 : compactMode ? 4 : 6
 
     function clamp(value, minimum, maximum) {
         return Math.max(minimum, Math.min(maximum, value))
@@ -94,7 +95,8 @@ ColumnLayout {
         spacing: 6
 
         Text {
-            Layout.preferredWidth: root.studioMode ? 78 : 70
+            Layout.preferredWidth: root.studioMode
+                ? 78 : root.compactMode ? 60 : 70
             text: root.formatTime(root.playheadSeconds, true)
             color: Theme.textSoft
             font.pixelSize: Theme.textXs
@@ -104,8 +106,10 @@ ColumnLayout {
         Item { Layout.fillWidth: true }
 
         AppButton {
-            Layout.preferredWidth: Theme.compactControl
-            Layout.preferredHeight: Theme.compactControl
+            Layout.preferredWidth: root.compactMode
+                ? 34 : Theme.compactControl
+            Layout.preferredHeight: root.compactMode
+                ? 34 : Theme.compactControl
             text: "Back 5 seconds"
             iconName: "skipBack"
             compact: true
@@ -116,8 +120,10 @@ ColumnLayout {
         }
 
         AppButton {
-            Layout.preferredWidth: Theme.controlHeight
-            Layout.preferredHeight: Theme.controlHeight
+            Layout.preferredWidth: root.compactMode
+                ? 36 : Theme.controlHeight
+            Layout.preferredHeight: root.compactMode
+                ? 36 : Theme.controlHeight
             text: root.playing ? "Pause" : "Play"
             iconName: root.playing ? "pause" : "play"
             compact: true
@@ -128,8 +134,10 @@ ColumnLayout {
         }
 
         AppButton {
-            Layout.preferredWidth: Theme.compactControl
-            Layout.preferredHeight: Theme.compactControl
+            Layout.preferredWidth: root.compactMode
+                ? 34 : Theme.compactControl
+            Layout.preferredHeight: root.compactMode
+                ? 34 : Theme.compactControl
             text: "Forward 5 seconds"
             iconName: "skipForward"
             compact: true
@@ -141,8 +149,25 @@ ColumnLayout {
 
         Item { Layout.fillWidth: true }
 
+        RowLayout {
+            visible: root.filmstripLoading
+                && root.filmstripUrl.length === 0
+            spacing: 5
+
+            AppProgressBar {
+                Layout.preferredWidth: 34
+                indeterminate: true
+            }
+            Text {
+                text: "Filmstrip"
+                color: Theme.muted
+                font.pixelSize: Theme.textXs
+            }
+        }
+
         Text {
-            Layout.preferredWidth: root.studioMode ? 78 : 70
+            Layout.preferredWidth: root.studioMode
+                ? 78 : root.compactMode ? 60 : 70
             horizontalAlignment: Text.AlignRight
             text: root.formatTime(root.duration, true)
             color: Theme.muted
@@ -154,7 +179,8 @@ ColumnLayout {
     Rectangle {
         id: timelineTrack
         Layout.fillWidth: true
-        Layout.preferredHeight: root.studioMode ? 72 : 60
+        Layout.preferredHeight: root.studioMode
+            ? 66 : root.compactMode ? 42 : 54
         radius: Theme.radiusSm
         color: Theme.mediaWell
         border.width: 1
@@ -225,25 +251,6 @@ ColumnLayout {
                     height: timelineTrack.height
                     color: index % 2 === 0 ? "#141820" : "#10131A"
                 }
-            }
-        }
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: loadingLabel.implicitWidth + 20
-            height: 26
-            radius: Theme.radiusSm
-            color: Theme.overlay
-            opacity: 0.92
-            visible: root.filmstripLoading
-                && root.filmstripUrl.length === 0
-
-            Text {
-                id: loadingLabel
-                anchors.centerIn: parent
-                text: "Building filmstrip…"
-                color: Theme.mediaMuted
-                font.pixelSize: Theme.textXs
             }
         }
 
@@ -491,8 +498,9 @@ ColumnLayout {
     }
 
     Item {
+        visible: !root.compactMode
         Layout.fillWidth: true
-        Layout.preferredHeight: 14
+        Layout.preferredHeight: root.compactMode ? 0 : 14
 
         Repeater {
             model: 5
@@ -528,8 +536,10 @@ ColumnLayout {
 
         AppField {
             id: startField
-            Layout.preferredWidth: root.studioMode ? 112 : 100
-            implicitHeight: Theme.compactControl
+            Layout.preferredWidth: root.studioMode
+                ? 108 : root.compactMode ? 82 : 90
+            implicitHeight: root.compactMode
+                ? 34 : Theme.compactControl
             Accessible.name: "Cut start time"
             onEditingFinished: {
                 var next = root.clamp(
@@ -562,8 +572,10 @@ ColumnLayout {
 
         AppField {
             id: endField
-            Layout.preferredWidth: root.studioMode ? 112 : 100
-            implicitHeight: Theme.compactControl
+            Layout.preferredWidth: root.studioMode
+                ? 108 : root.compactMode ? 82 : 90
+            implicitHeight: root.compactMode
+                ? 34 : Theme.compactControl
             Accessible.name: "Cut end time"
             onEditingFinished: root.trimEndEdited(root.clamp(
                 root.parseTime(text, root.trimEnd),
@@ -583,7 +595,9 @@ ColumnLayout {
         Item { Layout.fillWidth: true }
 
         Text {
-            visible: root.studioMode || root.cutActive
+            visible: !root.compactMode
+                && (root.studioMode
+                    || (root.cutActive && root.width >= 420))
             text: (root.cutActive ? "CUT  " : "FULL  ")
                 + root.formatTime(
                     Math.max(0, root.trimEnd - root.trimStart),
@@ -602,6 +616,8 @@ ColumnLayout {
             compact: true
             kind: "ghost"
             toolTipText: "Reset cut to full video"
+            Layout.preferredWidth: root.compactMode ? 36 : implicitWidth
+            Layout.preferredHeight: root.compactMode ? 36 : implicitHeight
             onClicked: root.resetCutRequested()
         }
     }

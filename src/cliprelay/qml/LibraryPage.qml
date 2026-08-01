@@ -27,6 +27,8 @@ Rectangle {
     readonly property bool prepareDocked:
         Number(controller.selectedMediaId || 0) > 0
             && !root.prepareFullscreen
+    readonly property bool prepareHasEdits: preparePanel.hasEdits
+    readonly property bool prepareCutActive: preparePanel.cutActive
     readonly property real prepareDockWidth:
         controller.settings.prepare_expanded
             ? Math.min(
@@ -168,6 +170,22 @@ Rectangle {
     function openPrepareFullscreen() {
         if (Number(controller.selectedMediaId || 0) > 0)
             root.prepareFullscreen = true
+    }
+
+    function focusPrepareTab(index) {
+        if (Number(controller.selectedMediaId || 0) <= 0)
+            return
+        preparePanel.studioTab = Math.max(0, Math.min(1, index))
+    }
+
+    function resetPrepareCut() {
+        if (Number(controller.selectedMediaId || 0) > 0)
+            preparePanel.resetCut()
+    }
+
+    function revealPreparedVideo() {
+        if (Number(controller.selectedMediaId || 0) > 0)
+            controller.revealSelectedInLibrary()
     }
 
     function closePrepare() {

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "."
 
@@ -341,13 +342,41 @@ Rectangle {
                     iconColor: Theme.accentText
                 }
                 Text {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 42
                     text: "Prepare"
                     color: Theme.text
                     font.pixelSize: Theme.textWorkbench
                     font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                }
+                Text {
+                    visible: root.prepareWidth >= 470
+                    text: "/"
+                    color: Theme.mutedSoft
+                    font.pixelSize: Theme.textWorkbench
+                }
+                Text {
+                    visible: root.prepareWidth >= 470
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 36
+                    text: root.appController.selectedMedia.name || ""
+                    color: Theme.textSoft
+                    font.pixelSize: Theme.textWorkbench
+                    font.weight: Font.Medium
+                    elide: Text.ElideMiddle
+                }
+                Item {
+                    visible: root.prepareWidth < 470
+                    Layout.fillWidth: true
+                }
+                AppIcon {
+                    visible: root.libraryPage.prepareHasEdits
+                    Layout.preferredWidth: 14
+                    Layout.preferredHeight: 14
+                    name: "crop"
+                    strokeWidth: 1.8
+                    iconColor: Theme.accentText
+                    ToolTip.visible: editedHover.hovered
+                    ToolTip.text: "Frame edits active"
+                    HoverHandler { id: editedHover }
                 }
                 WorkbenchButton {
                     text: "Open in default player"

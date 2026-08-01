@@ -217,9 +217,9 @@ def main(argv: list[str] | None = None) -> int:
                         command_center,
                         "focusCommands",
                     )
-            if args.prepare_fullscreen and args.page == "library":
+            if args.page == "library":
                 library_page = root_window.findChild(QObject, "libraryPage")
-                if library_page:
+                if library_page and args.prepare_fullscreen:
                     library_page.setProperty("prepareFullscreen", True)
                 prepare_panel = root_window.findChild(QObject, "preparePanel")
                 if prepare_panel:
@@ -268,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
                 except TimeoutError:
                     pass
             screen = window.screen() or app.primaryScreen()
+            if not captured and isinstance(window, QQuickWindow):
+                image = window.grabWindow()
+                if not image.isNull():
+                    captured = image.save(str(args.screenshot))
             if not captured and screen:
                 image = screen.grabWindow(int(window.winId()))
                 if image.isNull():

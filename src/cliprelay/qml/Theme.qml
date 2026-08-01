@@ -89,6 +89,9 @@ QtObject {
     readonly property int workbenchControlHeight: 30
     readonly property int workspaceFooterHeight: 40
     readonly property int workspaceTabHeight: 34
+    readonly property int prepareStudioHeaderHeight: 38
+    readonly property int prepareInspectorTabsHeight: 40
+    readonly property int prepareSourceHeight: 62
     readonly property int radiusWorkbench: 4
     readonly property int focusWidth: 2
 

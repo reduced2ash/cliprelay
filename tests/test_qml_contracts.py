@@ -38,6 +38,8 @@ def test_prepare_uses_one_filmstrip_timeline_for_seek_and_cut() -> None:
     assert "id: inHandle" in timeline
     assert "id: outHandle" in timeline
     assert "CUT  " in timeline
+    assert 'text: "Filmstrip"' in timeline
+    assert "Building filmstrip" not in timeline
 
 
 def test_library_grid_height_tracks_responsive_tile_width() -> None:
@@ -314,6 +316,22 @@ def test_docked_prepare_uses_the_shared_pane_aware_context_bar() -> None:
         encoding="utf-8"
     )
     panel = (QML_DIR / "PreparePanel.qml").read_text(encoding="utf-8")
+    header = (QML_DIR / "PrepareContextHeader.qml").read_text(
+        encoding="utf-8"
+    )
+    inspector = (QML_DIR / "PrepareInspector.qml").read_text(
+        encoding="utf-8"
+    )
+    action_dock = (QML_DIR / "PrepareActionDock.qml").read_text(
+        encoding="utf-8"
+    )
+    edit = (QML_DIR / "PrepareEditInspector.qml").read_text(
+        encoding="utf-8"
+    )
+    actions = (QML_DIR / "WorkbenchActionRegistry.qml").read_text(
+        encoding="utf-8"
+    )
+    theme = (QML_DIR / "Theme.qml").read_text(encoding="utf-8")
 
     assert "showPrepare: libraryPage.prepareDocked" in main
     assert "prepareWidth: libraryPage.prepareDockWidth" in main
@@ -336,14 +354,36 @@ def test_docked_prepare_uses_the_shared_pane_aware_context_bar() -> None:
     assert "root.libraryPage.closePrepare()" in context
 
     assert "visible: root.studioMode" in panel
-    assert "height: root.studioMode ? 70 : 0" in panel
-    assert (
-        "anchors.top: root.studioMode ? prepareHeader.bottom : parent.top"
-        in panel
-    )
-    assert 'text: "Full-screen editor"' in panel
+    assert "PrepareContextHeader {" in panel
+    assert "Theme.prepareStudioHeaderHeight" in panel
+    assert "readonly property int prepareStudioHeaderHeight: 38" in theme
+    assert "parent: root.studioMode ? studioStageHost : dockedStageHost" in panel
+    assert "? studioInspectorHost : dockedInspectorHost" in panel
+    assert "onStudioModeChanged: root.resetScrollPositions()" not in panel
+    assert "interval: 360" in panel
+    assert "repeat: false" in panel
+    assert "editScrollY: scrollDraft.editScrollY" in panel
+    assert "publishScrollY: scrollDraft.publishScrollY" in panel
+    assert "studioInspectorWidth: root.studioInspectorWidth" in panel
+    assert "readonly property bool compactDockedStage:" in panel
+    assert 'text: "Full-screen editor"' not in header
+    assert 'text: "Prepare"' in header
+    assert 'text: "Exit full-screen editor"' in header
+    assert "PrepareEditInspector {" in inspector
+    assert "PreparePublishInspector {" in inspector
+    assert "PrepareActionDock {" in inspector
+    assert 'text: "Edit"' in inspector
+    assert 'text: "Publish"' in inspector
+    assert 'text: "Send + prepare X"' in action_dock
+    assert 'text: "Add rectangle"' in edit
+    assert "PrepareMaskList {" in edit
     assert 'text: "Widen Prepare"' not in panel
     assert "signal fullScreenRequested()" not in panel
+    assert '"id": "prepare_fullscreen"' in actions
+    assert '"id": "prepare_focus_edit"' in actions
+    assert '"id": "prepare_focus_publish"' in actions
+    assert '"id": "prepare_reset_cut"' in actions
+    assert '"id": "prepare_reveal"' in actions
 
 
 def test_workspace_context_keeps_sidebar_geometry_stable_on_every_page() -> None:
