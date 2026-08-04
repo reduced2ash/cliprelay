@@ -245,33 +245,44 @@ def main(argv: list[str] | None = None) -> int:
                     await asyncio.sleep(0.35)
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
             window = root_window
+            screen = window.screen() or app.primaryScreen()
+            if screen:
+                sg = screen.availableGeometry()
+                window.setGeometry(sg)
             window.raise_()
             window.requestActivate()
-            await asyncio.sleep(0.25)
+            _prev_color = window.color()
+            window.setColor(Qt.GlobalColor.black)
+            await asyncio.sleep(0.5)
+            for _ in range(100):
+                if controller.thumbnailJobCount == 0:
+                    break
+                await asyncio.sleep(0.15)
+            await asyncio.sleep(0.5)
             captured = False
-            content_item = window.property("contentItem")
-            if isinstance(content_item, QQuickItem):
-                grab_pointer = content_item.grabToImage()
-                grab_result = grab_pointer.data()
-                grab_ready = loop.create_future()
-
-                def mark_grab_ready() -> None:
-                    if not grab_ready.done():
-                        grab_ready.set_result(None)
-
-                grab_result.ready.connect(mark_grab_ready)
-                try:
-                    await asyncio.wait_for(grab_ready, timeout=2)
-                    captured = grab_result.saveToFile(
-                        str(args.screenshot)
-                    )
-                except TimeoutError:
-                    pass
-            screen = window.screen() or app.primaryScreen()
-            if not captured and isinstance(window, QQuickWindow):
+            if isinstance(window, QQuickWindow):
                 image = window.grabWindow()
                 if not image.isNull():
                     captured = image.save(str(args.screenshot))
+            if not captured:
+                content_item = window.property("contentItem")
+                if isinstance(content_item, QQuickItem):
+                    grab_pointer = content_item.grabToImage()
+                    grab_result = grab_pointer.data()
+                    grab_ready = loop.create_future()
+
+                    def mark_grab_ready() -> None:
+                        if not grab_ready.done():
+                            grab_ready.set_result(None)
+
+                    grab_result.ready.connect(mark_grab_ready)
+                    try:
+                        await asyncio.wait_for(grab_ready, timeout=2)
+                        captured = grab_result.saveToFile(
+                            str(args.screenshot)
+                        )
+                    except TimeoutError:
+                        pass
             if not captured and screen:
                 image = screen.grabWindow(int(window.winId()))
                 if image.isNull():
