@@ -4,7 +4,7 @@ All notable user-facing changes are documented here. ClipRelay follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable 1.0
 release.
 
-## [Unreleased]
+## [0.2.0] - 2026-08-04
 
 ### Added
 
@@ -93,6 +93,7 @@ release.
 - Full-frame thumbnails and Prepare previews.
 - TypeScript `.ts` and `.mts` files being mistaken for transport-stream video.
 
-[Unreleased]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/reduced2ash/cliprelay/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.2...v0.2.0
 [0.1.0-beta.2]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/reduced2ash/cliprelay/releases/tag/v0.1.0-beta.1

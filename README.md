@@ -9,6 +9,7 @@ folder tree, preparing a safe derivative, sending it to Telegram, and handing
 it off to X for a deliberate manual post.
 
 
+![ClipRelay library workspace](docs/screenshot.png)
 
 ## Download
 
