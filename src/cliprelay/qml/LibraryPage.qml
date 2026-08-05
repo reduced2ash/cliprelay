@@ -983,7 +983,7 @@ Rectangle {
                         )
                         cacheBuffer: cellHeight * (
                             controller.settings.performance_mode === "maximum"
-                                ? 3 : 2
+                                ? 6 : 4
                         )
                         pixelAligned: true
                         synchronousDrag: true
@@ -1006,9 +1006,11 @@ Rectangle {
                             required property string resolution
                             required property string folder
                             required property int postedCount
+                            required property string metadataLabel
+                            required property bool mediaUnchecked
                             width: libraryGrid.cellWidth
                             height: libraryGrid.cellHeight
-                            clip: true
+
                             MediaTile {
                                 anchors.fill: parent
                                 anchors.rightMargin: libraryGrid.tileGap
@@ -1021,6 +1023,8 @@ Rectangle {
                                 durationLabel: tileCell.durationLabel
                                 sizeLabel: tileCell.sizeLabel
                                 resolution: tileCell.resolution
+                                metadataLabel: tileCell.metadataLabel
+                                mediaUnchecked: tileCell.mediaUnchecked
                                 folder: root.showFolders ? "" : tileCell.folder
                                 postedCount: tileCell.postedCount
                                 selected: controller.selectedMediaId === tileCell.mediaId

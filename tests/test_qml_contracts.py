@@ -80,7 +80,8 @@ def test_library_canvas_uses_workbench_density_and_one_hover_preview() -> None:
     assert "scale: tileTap.pressed" not in tile
     assert "Image.PreserveAspectFit" in tile
     assert "VideoOutput.PreserveAspectFit" in tile
-    assert 'fields.push(root.mediaUnchecked ? "Unchecked"' in tile
+    assert "required property bool mediaUnchecked" in tile
+    assert "required property string metadataLabel" in tile
     assert tile.count("font.family: Theme.monoFamily") == 1
     assert "Thumbnail queued" not in tile
     assert "Thumbnail pending" not in tile

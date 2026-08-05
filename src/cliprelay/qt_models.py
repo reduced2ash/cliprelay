@@ -64,6 +64,8 @@ class LibraryModel(DictListModel):
     PostedRole = IdRole + 14
     RelativeRole = IdRole + 15
     ThumbnailStateRole = IdRole + 16
+    MetadataLabelRole = IdRole + 17
+    UncheckedRole = IdRole + 18
 
     ROLE_NAMES = {
         IdRole: b"mediaId", PathRole: b"path", UrlRole: b"mediaUrl", NameRole: b"name",
@@ -71,7 +73,8 @@ class LibraryModel(DictListModel):
         SizeRole: b"sizeBytes", SizeLabelRole: b"sizeLabel", ResolutionRole: b"resolution",
         CodecRole: b"codec", ThumbnailRole: b"thumbnailUrl", PreviewRole: b"previewUrl",
         SeenRole: b"seen", PostedRole: b"postedCount", RelativeRole: b"relativePath",
-        ThumbnailStateRole: b"thumbnailState",
+        ThumbnailStateRole: b"thumbnailState", MetadataLabelRole: b"metadataLabel",
+        UncheckedRole: b"mediaUnchecked",
     }
 
     thumbnailSummaryChanged = Signal()
@@ -108,21 +111,28 @@ class LibraryModel(DictListModel):
             if thumbnail_path
             else self._thumbnail_states.get(media_id, "idle")
         )
-        if not thumbnail_path and thumbnail_state == "ready":
-            thumbnail_state = "idle"
+        resolution_str = f"{row['width']}×{row['height']}" if checked else "Unchecked"
+        size_label = format_bytes(row["size_bytes"])
+        folder_str = row.get("folder", "")
+        meta_parts = [size_label, resolution_str]
+        if folder_str:
+            meta_parts.append(folder_str)
         return {
             "mediaId": media_id, "path": row["path"], "mediaUrl": _url(row["path"]),
-            "name": row["name"], "folder": row["folder"], "relativePath": row["relative_path"],
+            "name": row["name"], "folder": folder_str, "relativePath": row["relative_path"],
             "duration": float(row["duration"]),
             "durationLabel": format_duration(row["duration"]) if checked else "Unchecked",
-            "sizeBytes": int(row["size_bytes"]), "sizeLabel": format_bytes(row["size_bytes"]),
-            "resolution": f"{row['width']}×{row['height']}" if checked else "Unchecked",
+            "sizeBytes": int(row["size_bytes"]), "sizeLabel": size_label,
+            "resolution": resolution_str,
             "codec": row["video_codec"],
             "thumbnailUrl": _url(thumbnail_path),
             "thumbnailState": thumbnail_state,
             "previewUrl": _url(row.get("preview_path")),
             "seen": bool(row["seen"]), "postedCount": int(row["posted_count"]),
+            "metadataLabel": "  ·  ".join(meta_parts),
+            "mediaUnchecked": not checked,
         }
+
 
     def _page(self, offset: int, limit: int) -> tuple[list[dict[str, Any]], bool]:
         rows = self.database.list_media(

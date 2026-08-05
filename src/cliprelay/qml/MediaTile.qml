@@ -21,15 +21,8 @@ Item {
     property bool selected: false
     property bool compact: false
     property bool previewActive: false
-    readonly property bool mediaUnchecked:
-        durationLabel === "Unchecked" || resolution === "Unchecked"
-    readonly property string metadataLabel: {
-        var fields = [root.sizeLabel]
-        fields.push(root.mediaUnchecked ? "Unchecked" : root.resolution)
-        if (!root.compact && root.folder.length > 0)
-            fields.push(root.folder)
-        return fields.join("  ·  ")
-    }
+    required property string metadataLabel
+    required property bool mediaUnchecked
 
     signal chosen(int mediaId)
     signal playbackRequested(int mediaId)
