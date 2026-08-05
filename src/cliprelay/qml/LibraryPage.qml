@@ -690,6 +690,8 @@ Rectangle {
                     anchors.topMargin: 3
                     anchors.bottomMargin: 3
                     clip: true
+                    pixelAligned: true
+                    synchronousDrag: true
                     reuseItems: true
                     spacing: 0
                     model: randomFolderModel
@@ -851,6 +853,8 @@ Rectangle {
                         Layout.bottomMargin: 4
                         spacing: 0
                         clip: true
+                        pixelAligned: true
+                        synchronousDrag: true
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: folderModel
@@ -981,6 +985,9 @@ Rectangle {
                             controller.settings.performance_mode === "maximum"
                                 ? 3 : 2
                         )
+                        pixelAligned: true
+                        synchronousDrag: true
+                        maximumFlickVelocity: 4000
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
                         onAtYEndChanged: {

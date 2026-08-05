@@ -61,7 +61,12 @@ Rectangle {
 
         ScrollView {
             objectName: "settingsScroll"
-            Component.onCompleted: contentItem.objectName = "settingsFlickable"
+            Component.onCompleted: {
+                contentItem.objectName = "settingsFlickable"
+                contentItem.pixelAligned = true
+                contentItem.synchronousDrag = true
+                contentItem.maximumFlickVelocity = 4000
+            }
             Layout.fillWidth: true
             Layout.fillHeight: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff

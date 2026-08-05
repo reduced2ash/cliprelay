@@ -105,7 +105,8 @@ def _configure_rendering(performance_mode: str) -> None:
     QSurfaceFormat.setDefaultFormat(surface_format)
     if performance_mode != "maximum":
         return
-    os.environ.setdefault("QSG_RENDER_LOOP", "threaded")
+    if "QSG_RENDER_LOOP" not in os.environ:
+        os.environ["QSG_RENDER_LOOP"] = "threaded"
     if sys.platform == "darwin":
         QQuickWindow.setGraphicsApi(
             QSGRendererInterface.GraphicsApi.Metal

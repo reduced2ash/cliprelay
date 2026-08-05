@@ -87,6 +87,11 @@ ColumnLayout {
             objectName: "prepareEditScroll"
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical: AppScrollBar { }
+            Component.onCompleted: {
+                contentItem.pixelAligned = true
+                contentItem.synchronousDrag = true
+                contentItem.maximumFlickVelocity = 4000
+            }
             contentWidth: availableWidth
 
             ColumnLayout {
@@ -112,10 +117,12 @@ ColumnLayout {
         ScrollView {
             id: publishScroll
             objectName: "preparePublishScroll"
-            Component.onCompleted:
+            Component.onCompleted: {
                 contentItem.objectName = "prepareFlickable"
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical: AppScrollBar { }
+                contentItem.pixelAligned = true
+                contentItem.synchronousDrag = true
+                contentItem.maximumFlickVelocity = 4000
+            }
             contentWidth: availableWidth
 
             ColumnLayout {

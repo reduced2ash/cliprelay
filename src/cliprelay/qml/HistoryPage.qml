@@ -66,6 +66,9 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
                 clip: true
+                pixelAligned: true
+                synchronousDrag: true
+                maximumFlickVelocity: 4000
                 spacing: 0
                 model: historyModel
                 reuseItems: true
