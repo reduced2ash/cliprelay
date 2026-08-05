@@ -117,6 +117,8 @@ ColumnLayout {
         ScrollView {
             id: publishScroll
             objectName: "preparePublishScroll"
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical: AppScrollBar { }
             Component.onCompleted: {
                 contentItem.objectName = "prepareFlickable"
                 contentItem.pixelAligned = true
