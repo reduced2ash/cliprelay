@@ -251,8 +251,8 @@ def main(argv: list[str] | None = None) -> int:
                 window.setGeometry(sg)
             window.raise_()
             window.requestActivate()
-            _prev_color = window.color()
             window.setColor(Qt.GlobalColor.black)
+
             await asyncio.sleep(0.5)
             for _ in range(100):
                 if controller.thumbnailJobCount == 0:
