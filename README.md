@@ -69,6 +69,46 @@ Read the full [Privacy statement](PRIVACY.md) and
 
 ## Development
 
+### Rust (current — GPUI rewrite)
+
+The application is being rebuilt as a native Rust app on top of
+[GPUI](https://gpui.rs) (Zed's UI framework). Requirements:
+
+- macOS 12+ (Apple silicon or Intel) with a Rust toolchain
+- FFmpeg and FFprobe on `PATH` (or `CLIPRELAY_FFMPEG_DIR` pointing at a
+  directory containing both binaries)
+
+```bash
+cargo build --release
+cargo test                 # core unit + integration tests
+./target/release/cliprelay # or: cargo run
+```
+
+The app accepts the original's command-line arguments:
+`--data-dir PATH` (application-data directory), `--library PATH`
+(override the library root on launch), and `--window-width` /
+`--window-height` (initial window size, minimum 940×660).
+
+On machines where the macOS display pipeline never reports the window
+visible (headless sessions, broken display state), gpui's display link
+does not start and the UI freezes after the first frame. Setting
+`GPUI_FORCE_TIMER_DISPLAY=1` switches to a fixed-rate render timer
+(dev patch in the local gpui crate); healthy machines don't need it.
+
+Notes:
+
+- The full Xcode toolchain is required to build the default Metal
+  renderer; when only Command Line Tools are installed the app builds
+  with the `macos-blade` renderer (see the `gpui` dependency in
+  `Cargo.toml`).
+- `CLIPRELAY_DATA_DIR` overrides the application-data directory (useful
+  for testing); the database lives at
+  `~/Library/Application Support/ClipRelay/cliprelay.sqlite3` by default.
+- Media integration tests generate real videos with ffmpeg and skip
+  silently when it is unavailable.
+
+### Python (legacy Qt implementation)
+
 Requirements:
 
 - macOS 12+ or Windows 10/11

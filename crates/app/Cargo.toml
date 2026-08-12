@@ -1,0 +1,26 @@
+[package]
+name = "cliprelay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ClipRelay — local-first video relay workspace, built with GPUI."
+publish = false
+
+[[bin]]
+name = "cliprelay"
+path = "src/main.rs"
+
+[dependencies]
+cliprelay-core.workspace = true
+gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+crossbeam-channel.workspace = true
+flume = "0.11"
+smol.workspace = true
+image.workspace = true
+parking_lot.workspace = true

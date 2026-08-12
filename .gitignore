@@ -33,3 +33,6 @@ secrets.json
 *.pem
 *.key
 *.mobileprovision
+
+# Rust build output
+/target
