@@ -661,9 +661,14 @@ impl crate::App {
             .w(px(10.0))
             .h(px(track_height))
             .rounded(px(3.0))
-            .bg(theme.accent)
+            .bg(if self.prepare.drag == handle {
+                theme.accent_pressed
+            } else {
+                theme.accent
+            })
             .border_1()
             .border_color(theme.accent_content)
+            .hover(|style| style.bg(theme.accent_pressed))
             .cursor_ew_resize()
             .tooltip(move |_window, cx| crate::tooltip_view(cx, label.clone()));
         element.interactivity().on_mouse_down(

@@ -342,6 +342,7 @@ pub fn checkbox(
 ) -> Stateful<Div> {
     let theme = current_theme();
     let indicator = div()
+        .id(SharedString::from(format!("{id}-indicator")))
         .flex_none()
         .w(px(21.0))
         .h(px(21.0))
@@ -353,6 +354,8 @@ pub fn checkbox(
         .justify_center()
         .text_size(px(13.0))
         .text_color(theme.accent_content)
+        // Mirrors the original: the indicator fills with the accent on hover.
+        .hover(|style| style.bg(theme.accent))
         .when(checked, |this| this.bg(theme.accent))
         .child(if checked { "✓" } else { "" });
     div()

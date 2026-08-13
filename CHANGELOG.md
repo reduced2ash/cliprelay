@@ -696,3 +696,7 @@ release.
   sort menu, activity, workspace menu) fade in over 120 ms with an
   ease-in-out. Also cleaned an unnecessary unsafe block in the vendored
   display-link timer fallback.
+
+- Interaction states: trim handles now brighten (accent_pressed) on hover
+  and while dragging, and checkbox indicators fill with the accent on
+  hover exactly like the original AppCheckBox.
