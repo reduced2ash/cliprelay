@@ -709,3 +709,7 @@ release.
   position is recorded and the menu opens at that y), mirroring the
   original's button-anchored Menu popup; previously it floated at a
   fixed y, which landed far from rows 2+.
+
+- Workspace menu now opens upward from the bottom tab bar (its
+  trigger), matching the original's tabContextMenu popup; it previously
+  rendered at the top of the window.

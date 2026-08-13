@@ -1673,7 +1673,9 @@ impl crate::App {
                 }
             }))
             .absolute()
-            .top(px(124.0))
+            // Opens upward from the bottom tab bar (the trigger), like the
+            // original's tabContextMenu popup.
+            .bottom(px(46.0))
             .right(px(12.0))
             .w(px(232.0))
             .rounded(px(10.0))
