@@ -115,6 +115,7 @@ pub struct App {
     pub library_scroll: gpui::ScrollHandle,
     pub history_scroll: gpui::ScrollHandle,
     pub tab_scroll: gpui::ScrollHandle,
+    pub settings_scroll: gpui::ScrollHandle,
     pub thumbnail_states: HashMap<i64, String>,
     pub thumbnail_requested: std::collections::HashSet<i64>,
     pub preview_extracting: std::collections::HashSet<i64>,
@@ -153,7 +154,28 @@ impl App {
         }
         // Prefill the setting-backed inputs (mirrors the original's binding
         // of these fields to the settings values).
+        let query_at_boot = std::env::var("CLIPRELAY_QUERY").unwrap_or_default();
+        let boot_toast: Option<(ToastKind, String)> =
+            std::env::var("CLIPRELAY_BOOT_TOAST").ok().and_then(|v| {
+                let (kind, text) = v.split_once(':')?;
+                let kind = match kind {
+                    "info" => ToastKind::Info,
+                    "success" => ToastKind::Success,
+                    _ => ToastKind::Error,
+                };
+                Some((kind, text.to_string()))
+            });
         let mut fields = std::collections::HashMap::new();
+        if !query_at_boot.is_empty() {
+            fields.insert(
+                "command-center".to_string(),
+                crate::widgets::FieldState {
+                    text: query_at_boot.clone(),
+                    caret: query_at_boot.chars().count(),
+                    committed: true,
+                },
+            );
+        }
         if let Ok(settings) = boot_settings() {
             let seeds = [
                 ("tg-destination", "telegram_destination"),
@@ -208,6 +230,10 @@ impl App {
         let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
         let open_workspace_menu_at_boot =
             std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
+        let settings_scroll_boot: f32 = std::env::var("CLIPRELAY_SETTINGS_SCROLL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
         let app = Self {
             pending: std::sync::Arc::new(Mutex::new(VecDeque::new())),
             event_tx: event_tx.clone(),
@@ -252,7 +278,15 @@ impl App {
             random_filter: String::new(),
             random_selected_only: false,
             random_expanded: std::collections::HashSet::new(),
-            toasts: Vec::new(),
+            toasts: boot_toast
+                .map(|(kind, text)| {
+                    vec![Toast {
+                        kind,
+                        message: text,
+                        shown_at: std::time::Instant::now(),
+                    }]
+                })
+                .unwrap_or_default(),
             diagnostics: Diagnostics::default(),
             last_diagnostics_request: std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(30))
@@ -273,7 +307,7 @@ impl App {
             history_more_menu_closed_at: std::time::Instant::now(),
             menu_closed_at: std::time::Instant::now(),
             command_results: Vec::new(),
-            command_query: String::new(),
+            command_query: query_at_boot.clone(),
             command_scope: "all".into(),
             command_selected: 0,
             
@@ -292,6 +326,7 @@ impl App {
             library_scroll: gpui::ScrollHandle::new(),
             history_scroll: gpui::ScrollHandle::new(),
             tab_scroll: gpui::ScrollHandle::new(),
+            settings_scroll: gpui::ScrollHandle::new(),
             thumbnail_states: HashMap::new(),
             thumbnail_requested: std::collections::HashSet::new(),
             preview_extracting: std::collections::HashSet::new(),
@@ -326,6 +361,48 @@ impl App {
             std::thread::sleep(Duration::from_millis(100));
             pending.lock().push_back(UiMessage::Event(Event::Tick));
         });
+
+        let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
+        if initial_page != Page::Library || settings_scroll_boot > 0.0 || open_command_at_boot_2 {
+            let settings_scroll = app.settings_scroll.clone();
+            cx.spawn(async move |this: WeakEntity<crate::App>, cx: &mut AsyncApp| {
+                // Apply after the boot restore settles (the restore may
+                // navigate to the Library while revealing the selection).
+                smol::Timer::after(std::time::Duration::from_millis(2500)).await;
+                if initial_page != Page::Library {
+                    if let Some(this) = this.upgrade() {
+                        this.update(
+                            cx,
+                            &mut |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                app.page = initial_page.clone();
+                            },
+                        )
+                        .ok();
+                    }
+                }
+                if open_command_at_boot_2 {
+                    if let Some(this) = this.upgrade() {
+                        this.update(
+                            cx,
+                            &mut |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                app.command_open = true;
+                                app.open_command_center(_cx);
+                            },
+                        )
+                        .ok();
+                    }
+                }
+                if settings_scroll_boot > 0.0 {
+                    // Wait for the settings page to render once so the
+                    // scroll handle is bound to its container.
+                    smol::Timer::after(std::time::Duration::from_millis(400)).await;
+                    // Offset is negative for downward scroll (distance from
+                    // the container top to the content top).
+                    settings_scroll.set_offset(point(px(0.0), px(-settings_scroll_boot)));
+                }
+            })
+            .detach();
+        }
 
         // Heartbeat: keep the render pipeline alive so queued messages are
         // drained even when no UI event fires (gpui only repaints on notify).

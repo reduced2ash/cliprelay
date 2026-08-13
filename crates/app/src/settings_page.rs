@@ -67,6 +67,9 @@ impl crate::App {
 
         let mut content = div()
             .id("settings-scroll")
+            .overflow_scroll()
+            .scrollbar_width(px(10.0))
+            .track_scroll(&self.settings_scroll)
             .flex_1()
             .overflow_scroll()
             .scrollbar_width(px(10.0))
@@ -487,10 +490,7 @@ impl crate::App {
                         self.focused_field.as_deref() == Some("tg-api-id"), true, false, cx).flex_1())
                     .child(field("tg-api-hash", "API hash",
                         self.fields.get("tg-api-hash").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-api-hash"), true, true, cx).flex_1())
-                    .child(field("tg-phone", "+1 555 123 4567",
-                        self.fields.get("tg-phone").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-phone"), true, false, cx).flex_1()),
+                        self.focused_field.as_deref() == Some("tg-api-hash"), true, true, cx).flex_1()),
             )
             .child(
                 div()
@@ -498,6 +498,9 @@ impl crate::App {
                     .flex()
                     .flex_row()
                     .gap(px(10.0))
+                    .child(field("tg-phone", "+1 555 123 4567",
+                        self.fields.get("tg-phone").unwrap_or(&FieldState::default()),
+                        self.focused_field.as_deref() == Some("tg-phone"), true, false, cx).flex_1())
                     .child(button(
                         "tg-send-code",
                         "Send login code",
@@ -512,7 +515,15 @@ impl crate::App {
                             app.command(Command::BeginPersonalLogin(api_id, api_hash, phone));
                             cx.notify();
                         },
-                    ))
+                    )
+                    .flex_1()),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .gap(px(10.0))
                     .child(field("tg-code", "Login code",
                         self.fields.get("tg-code").unwrap_or(&FieldState::default()),
                         self.focused_field.as_deref() == Some("tg-code"), true, false, cx).flex_1())

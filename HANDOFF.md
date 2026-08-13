@@ -99,8 +99,13 @@ HANDOFF.md            # this file
   set at render start; widgets look up colors without plumbing. (A hardcoded
   `Theme::relay()` leak in tile posters was fixed to use the active theme.)
 - **CLI/env for testing without input.** `--data-dir`, `--library`,
-  `--window-width/height`; dev-only `CLIPRELAY_PAGE=history|settings` and
-  `CLIPRELAY_OPEN_COMMAND=1` for screenshot sweeps.
+  `--window-width/height`; dev-only envs for screenshot sweeps:
+  `CLIPRELAY_PAGE=history|settings` (applied after the boot restore so the
+  seeded-draft case can be swept too), `CLIPRELAY_OPEN_COMMAND=1` +
+  `CLIPRELAY_QUERY=clip` (opens the command center and runs the real search),
+  `CLIPRELAY_SETTINGS_SCROLL=950` (scrolls the settings page; the offset is
+  applied after the page's first frame), `CLIPRELAY_BOOT_TOAST=error:msg`
+  (info:/success:/error: kinds).
 
 ---
 

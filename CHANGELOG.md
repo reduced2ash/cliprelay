@@ -653,3 +653,13 @@ release.
   every theme. Fields gained a hover border to match the other
   controls. The duration badges' dark overlay is intentionally
   video-agnostic (the Python does the same).
+- Polish iteration 4 (settings/telegram/toast/command-center sweep): the
+  settings page's lower sections (FILES, TELEGRAM bot + personal, X HANDOFF,
+  LIVE DIAGNOSTICS) were captured and audited for the first time; the
+  personal-account grid was restructured to the Python's 2-column layout
+  (API ID + API hash / phone + Send login code / Login code + password).
+  The error toast was captured (boot-toast env) and verified: error-soft
+  fill, error border, glyph, Dismiss action, bottom-centered pill. The
+  command center was captured with a live query: video results now render
+  at boot with CLIPRELAY_QUERY (command_query is seeded and the real
+  search runs after restore).
