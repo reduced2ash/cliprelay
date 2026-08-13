@@ -887,6 +887,7 @@ fn combo(
         .bg(theme.raised)
         .border_1()
         .border_color(if open { theme.accent } else { theme.border })
+        .hover(|style| style.border_color(theme.border_strong))
         .cursor_pointer()
         .flex()
         .items_center()

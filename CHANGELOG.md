@@ -700,3 +700,7 @@ release.
 - Interaction states: trim handles now brighten (accent_pressed) on hover
   and while dragging, and checkbox indicators fill with the accent on
   hover exactly like the original AppCheckBox.
+
+- Settings combo triggers gain a hover border (border_strong), matching
+  the field hover treatment. Typography scale re-audited against the
+  QML (9/10/11/12/13/15/16/20/21 all map to their Python roles).
