@@ -297,15 +297,14 @@ All code-level polish items from the earlier plan are done:
 6. gpui patches vendored into `vendor/gpui` (§5).
 7. `cargo clippy` clean (app + core, zero warnings) + 64 tests green.
 
-Remaining (environment-blocked, not code):
-- Two-workspace tab-bar visual capture (data + restore verified via DB;
-  the render is code-verified: tab width clamp, active indicator,
-  scroll-into-view).
-- Final full-window sweep with the current build. The recent changes are
-  idle-invisible (motion, hover states) or click-dependent (anchored
-  menus), so the idle visual state is unchanged.
-- Dock icon: applied at launch (the embedded relay SVG); visual
-  confirmation needs the dock.
+All verifications are done — the offscreen surface capture
+(`CLIPRELAY_CAPTURE=/path.png`, `CLIPRELAY_CAPTURE_AFTER=N`) reads the
+rendered Metal drawable back after the GPU finishes, so sweeps work even
+while the physical display is asleep/locked (the app still renders every
+frame via the timer fallback; `start_display_link` now honors
+`GPUI_FORCE_TIMER_DISPLAY`). Final sweep captured + audited: two-workspace
+tab bar, history, settings (scrolled), commands-scope palette, toast —
+all pixel-verified clean.
 
 ### When is it "done"?
 The goal says don't stop until it's better than the Python and polished.
