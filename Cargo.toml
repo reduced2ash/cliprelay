@@ -32,6 +32,13 @@ rand = "0.8"
 parking_lot = "0.12"
 smol = "2"
 
+# Local gpui fork: two macOS patches (see vendor/gpui/PATCHES.md) that
+# make the custom title-bar drag work and keep the app rendering on
+# machines whose CVDisplayLink cannot start. Kept in-tree so a cargo
+# re-download cannot lose them.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+
 [profile.dev]
 opt-level = 1
 

@@ -684,3 +684,8 @@ release.
   unused error bindings; added a `ProgressFn` type alias for the ffmpeg
   progress callback, boxed the large `UiMessage::Event` variant, and
   scoped too-many-arguments allows to the 8 ported pipeline functions.
+
+- Vendored the two local gpui patches into `vendor/gpui` (a full copy of
+  gpui 0.2.2 + `[patch.crates-io]` in the root Cargo.toml), so the custom
+  title-bar drag and the display-link timer fallback build on any machine
+  and survive a cargo re-download. PATCHES.md documents both edits.
