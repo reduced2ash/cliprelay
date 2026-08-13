@@ -624,3 +624,21 @@ release.
   narrow docks); a hardcoded relay-theme leak in tile posters/badges
   now uses the active theme. Dev-only helpers for screenshot sweeps:
   CLIPRELAY_PAGE=history|settings and CLIPRELAY_OPEN_COMMAND=1.
+
+- Polish iteration 2 (popup sweep): every remaining popup was captured
+  and audited via the window-only screenshot loop — random-source popup
+  (fixed a duplicated empty-state message and the boot-open env now
+  triggers the folder-options load), sort menu (VIDEOS + EXPLORER
+  FOLDERS sections verified), studio mode (header band, stage, timeline
+  ticks, inspector, splitter), publish inspector (OUTPUT estimate,
+  DESTINATIONS with the Needs-setup pill, action dock), activity popup
+  (idle state), and the workspace context menu (items, dividers,
+  disabled states). The action-dock buttons now flex to share the dock
+  width and their labels ellipsize instead of clipping (the button
+  widget dropped its hardcoded flex_none and wraps labels in a
+  min-width-zero ellipsis container); the source-strip path contrast
+  was raised. New boot-open envs for sweeps: CLIPRELAY_OPEN_RANDOM,
+  CLIPRELAY_OPEN_SORT, CLIPRELAY_OPEN_ACTIVITY,
+  CLIPRELAY_OPEN_WORKSPACE_MENU. All findings were pixel-verified (the
+  vision model's edge-clipping claims were measured and dismissed as
+  crop artifacts).

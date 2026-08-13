@@ -608,7 +608,7 @@ impl crate::App {
                                 .id("source-path")
                                 .child(if path.is_empty() { "—".to_string() } else { path.clone() })
                                 .text_size(px(11.0))
-                                .text_color(theme.muted_soft)
+                                .text_color(theme.muted)
                                 .max_w(px(120.0))
                                 .text_ellipsis()
                                 .tooltip(move |_window, cx| {
@@ -2000,39 +2000,48 @@ impl crate::App {
                         .flex()
                         .flex_row()
                         .gap(px(8.0))
-                        .child(button(
-                            "prepare-x",
-                            "Prepare X",
-                            ButtonKind::Secondary,
-                            Some("𝕏"),
-                            true,
-                            cx,
-                            |app, cx| {
-                                app.submit_publish("x", cx);
-                            },
-                        ))
-                        .child(button(
-                            "send-telegram",
-                            "Send Telegram",
-                            ButtonKind::Secondary,
-                            Some("➤"),
-                            telegram_ready,
-                            cx,
-                            |app, cx| {
-                                app.submit_publish("telegram", cx);
-                            },
-                        ))
-                        .child(button(
-                            "send-both",
-                            "Send + prepare X",
-                            ButtonKind::Primary,
-                            Some("⇄"),
-                            telegram_ready,
-                            cx,
-                            |app, cx| {
-                                app.submit_publish("both", cx);
-                            },
-                        )),
+                        .child(
+                            button(
+                                "prepare-x",
+                                "Prepare X",
+                                ButtonKind::Secondary,
+                                Some("𝕏"),
+                                true,
+                                cx,
+                                |app, cx| {
+                                    app.submit_publish("x", cx);
+                                },
+                            )
+                            .flex_1(),
+                        )
+                        .child(
+                            button(
+                                "send-telegram",
+                                "Send Telegram",
+                                ButtonKind::Secondary,
+                                Some("➤"),
+                                telegram_ready,
+                                cx,
+                                |app, cx| {
+                                    app.submit_publish("telegram", cx);
+                                },
+                            )
+                            .flex_1(),
+                        )
+                        .child(
+                            button(
+                                "send-both",
+                                "Send + prepare X",
+                                ButtonKind::Primary,
+                                Some("⇄"),
+                                telegram_ready,
+                                cx,
+                                |app, cx| {
+                                    app.submit_publish("both", cx);
+                                },
+                            )
+                            .flex_1(),
+                        ),
                 );
             } else {
                 dock = dock

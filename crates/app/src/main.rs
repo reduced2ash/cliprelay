@@ -200,11 +200,23 @@ impl App {
         };
         let open_command_at_boot =
             std::env::var("CLIPRELAY_OPEN_COMMAND").is_ok();
+        let open_random_at_boot = std::env::var("CLIPRELAY_OPEN_RANDOM").is_ok();
+        if open_random_at_boot {
+            controller.send(Command::LoadRandomFolderOptions).ok();
+        }
+        let open_sort_at_boot = std::env::var("CLIPRELAY_OPEN_SORT").is_ok();
+        let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
+        let open_workspace_menu_at_boot =
+            std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
         let app = Self {
             pending: std::sync::Arc::new(Mutex::new(VecDeque::new())),
             event_tx: event_tx.clone(),
             controller,
             page: initial_page,
+            random_popup_open: open_random_at_boot,
+            sort_menu_open: open_sort_at_boot,
+            activity_open: open_activity_at_boot,
+            workspace_menu_open: open_workspace_menu_at_boot,
             command_open: open_command_at_boot,
             focused_field: if open_command_at_boot {
                 Some("command-center".to_string())
@@ -236,7 +248,7 @@ impl App {
             random_selected: 0,
             random_all_selected: true,
             random_has_selection: false,
-            random_popup_open: false,
+
             random_filter: String::new(),
             random_selected_only: false,
             random_expanded: std::collections::HashSet::new(),
@@ -289,12 +301,10 @@ impl App {
 
             open_combos: std::collections::HashSet::new(),
             key_captured: false,
-            workspace_menu_open: false,
             workspace_menu_target: 0,
             renaming_workspace: None,
-            sort_menu_open: false,
+
             pending_close_workspace: None,
-            activity_open: false,
         };
 
         // UI message pump: background threads drain the event/frame

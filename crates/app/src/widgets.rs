@@ -103,7 +103,6 @@ pub fn button(
     let id: SharedString = id.into();
     let mut element = div()
         .id(id)
-        .flex_none()
         .h(px(CONTROL_HEIGHT))
         .px(px(15.0))
         .rounded(px(RADIUS_SM))
@@ -138,7 +137,12 @@ pub fn button(
     if let Some(icon) = icon {
         element = element.child(icon);
     }
-    element = element.child(label.to_string());
+    element = element.child(
+        div()
+            .child(label.to_string())
+            .min_w(px(0.0))
+            .text_ellipsis(),
+    );
     element
         .when(!enabled, |this| this.opacity(0.46).cursor_default())
         .when(enabled, |this| this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx))))

@@ -3017,26 +3017,6 @@ impl crate::App {
             .scrollbar_width(px(10.0))
             .flex()
             .flex_col();
-        if options.is_empty() {
-            tree = tree.child(
-                div()
-                    .w_full()
-                    .py(px(24.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .child(if self.scan.active {
-                                "Source folders appear as videos are indexed."
-                            } else {
-                                "Rescan the library to build the source tree."
-                            })
-                            .text_size(px(12.0))
-                            .text_color(theme.muted),
-                    ),
-            );
-        }
         let expanded_set = self.random_expanded.clone();
         let is_visible = |option: &RandomFolderOption| -> bool {
             if !matches_filter(option) {
