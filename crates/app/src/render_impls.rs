@@ -590,9 +590,10 @@ impl crate::App {
             .id("command-center-popup")
             .absolute()
             .top(px(46.0))
-            .left(px(88.0))
-            .w(px(640.0))
-            .rounded(px(6.0))
+            .left(px(96.0))
+            // Match the search field's width (right group ≈ 360px).
+            .w(px((self.window_size.0 - 96.0 - 16.0 - 360.0).clamp(420.0, 860.0)))
+            .rounded(px(10.0))
             .bg(theme.surface_soft)
             .border_1()
             .border_color(theme.border_strong)
@@ -625,7 +626,7 @@ impl crate::App {
                     .id(SharedString::from(format!("scope-{value}")))
                     .h(px(28.0))
                     .px(px(12.0))
-                    .rounded(px(6.0))
+                    .rounded(px(10.0))
                     .cursor_pointer()
                     .bg(if active { theme.active } else { theme.transparent() })
                     .flex()
@@ -678,9 +679,9 @@ impl crate::App {
                             .px(px(12.0))
                             .flex()
                             .items_center()
-                            .child(title.to_string())
+                            .child(title.to_string().to_uppercase())
                             .text_size(px(9.0))
-                            .text_color(theme.muted_soft)
+                            .text_color(theme.muted)
                             .font_weight(FontWeight::BOLD),
                     );
                 }
@@ -702,6 +703,7 @@ impl crate::App {
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
+                        .hover(|style| style.bg(theme.active.opacity(0.5)))
                         .bg(if is_selected { theme.active } else { theme.transparent() })
                         .opacity(if enabled { 1.0 } else { 0.45 })
                         .child(
@@ -947,7 +949,7 @@ impl crate::App {
             .id("context-toolbar")
             .w_full()
             .h(px(42.0))
-            .px(px(12.0))
+            .px(px(16.0))
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
@@ -1316,7 +1318,7 @@ impl crate::App {
             .top(px(124.0))
             .right(px(140.0))
             .w(px(268.0))
-            .rounded(px(6.0))
+            .rounded(px(10.0))
             .bg(theme.surface_soft)
             .border_1()
             .border_color(theme.border_strong)
@@ -1441,7 +1443,7 @@ impl crate::App {
             .top(px(46.0))
             .right(px(12.0))
             .w(px(326.0))
-            .rounded(px(6.0))
+            .rounded(px(10.0))
             .bg(theme.surface_soft)
             .border_1()
             .border_color(theme.border_strong)
@@ -1854,13 +1856,38 @@ impl crate::App {
             .id("header")
             .w_full()
             .h(px(40.0))
-            .px(px(12.0))
+            .pl(px(96.0)) // clears the traffic lights on the flush title bar
+            .pr(px(16.0))
             .border_b_1()
             .border_color(theme.border)
+            .relative()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.0));
+
+        // Window-drag region: the title-bar background moves the window;
+        // interactive children sit above it and receive their own clicks.
+        header = header.child(
+            div()
+                .id("titlebar-drag")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(gpui::MouseButton::Left, cx.listener(|_app, _event, window, _cx| {
+                    if !window.is_fullscreen() {
+                        window.start_window_move();
+                    }
+                }))
+                .on_click(cx.listener(|_app, event: &gpui::ClickEvent, window, _cx| {
+                    // Double-click the title bar zooms the window.
+                    if event.click_count() >= 2 && !window.is_fullscreen() {
+                        window.zoom_window();
+                    }
+                })),
+        );
 
         // Back / forward.
         let can_back = self
@@ -1907,7 +1934,7 @@ impl crate::App {
         // narrow windows instead of pushing the right-side buttons out.
         let header_narrow = self.window_size.0 < 820.0;
         header = header.child(
-            field(
+            crate::widgets::field_with_icon(
                 "command-center",
                 if self.effective_command_scope() == "commands" {
                     "Run a command"
@@ -1918,6 +1945,7 @@ impl crate::App {
                 self.focused_field.as_deref() == Some("command-center"),
                 true,
                 false,
+                Some("⌕"),
                 cx,
             )
             .flex_1()
@@ -2116,7 +2144,10 @@ impl crate::App {
                 .flex_row()
                 .items_center()
                 .gap(px(6.0))
-                .bg(if active { theme.raised } else { theme.transparent() })
+                .bg(if active { theme.active } else { theme.transparent() })
+                .when(active, |this| {
+                    this.border_t_2().border_color(theme.accent)
+                })
                 .tooltip({
                     let title = title.clone();
                     let root = root.clone();
@@ -2696,7 +2727,7 @@ impl crate::App {
             .right(px(12.0))
             .w(px(456.0))
             .max_h(px(548.0))
-            .rounded(px(6.0))
+            .rounded(px(10.0))
             .bg(theme.surface)
             .border_1()
             .border_color(theme.border_strong)
@@ -2880,7 +2911,7 @@ impl crate::App {
                         .flex_1()
                         .h(px(32.0))
                         .px(px(10.0))
-                        .rounded(px(6.0))
+                        .rounded(px(10.0))
                         .bg(theme.raised)
                         .border_1()
                         .border_color(if self.focused_field.as_deref() == Some("random-filter") {
@@ -2913,7 +2944,7 @@ impl crate::App {
                         .id("random-selected-only")
                         .h(px(28.0))
                         .px(px(10.0))
-                        .rounded(px(6.0))
+                        .rounded(px(10.0))
                         .cursor_pointer()
                         .bg(if selected_only { theme.active } else { theme.transparent() })
                         .border_1()
@@ -2933,7 +2964,7 @@ impl crate::App {
                         .id("random-clear-filter")
                         .h(px(28.0))
                         .px(px(10.0))
-                        .rounded(px(6.0))
+                        .rounded(px(10.0))
                         .cursor_pointer()
                         .flex()
                         .items_center()
@@ -2956,7 +2987,7 @@ impl crate::App {
                         .id("random-clear")
                         .h(px(28.0))
                         .px(px(10.0))
-                        .rounded(px(6.0))
+                        .rounded(px(10.0))
                         .cursor_pointer()
                         .flex()
                         .items_center()

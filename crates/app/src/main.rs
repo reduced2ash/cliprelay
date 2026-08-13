@@ -191,11 +191,26 @@ impl App {
                 prepare_state.destination = value.to_string();
             }
         }
+        // Dev-only: CLIPRELAY_PAGE=history|settings chooses the initial page
+        // (used by screenshot-driven UI sweeps).
+        let initial_page = match std::env::var("CLIPRELAY_PAGE").as_deref() {
+            Ok("history") => Page::History,
+            Ok("settings") => Page::Settings,
+            _ => Page::Library,
+        };
+        let open_command_at_boot =
+            std::env::var("CLIPRELAY_OPEN_COMMAND").is_ok();
         let app = Self {
             pending: std::sync::Arc::new(Mutex::new(VecDeque::new())),
             event_tx: event_tx.clone(),
             controller,
-            page: Page::Library,
+            page: initial_page,
+            command_open: open_command_at_boot,
+            focused_field: if open_command_at_boot {
+                Some("command-center".to_string())
+            } else {
+                None
+            },
             theme_mode: ThemeMode::Relay,
             ui_scale: 1.0,
             sidebar_collapsed: false,
@@ -249,7 +264,7 @@ impl App {
             command_query: String::new(),
             command_scope: "all".into(),
             command_selected: 0,
-            command_open: false,
+            
             command_searching: false,
             random_picking: false,
             closed_count: 0,
@@ -271,7 +286,7 @@ impl App {
             theme: crate::theme::Theme::relay(),
             window_size: (1460.0, 900.0),
             fields,
-            focused_field: None,
+
             open_combos: std::collections::HashSet::new(),
             key_captured: false,
             workspace_menu_open: false,
@@ -1961,7 +1976,13 @@ fn main() {
             window_min_size: Some(size(px(700.0), px(520.0))),
             titlebar: Some(TitlebarOptions {
                 title: Some("ClipRelay".into()),
-                ..Default::default()
+                // Custom flush title bar: the app's own header row is the
+                // title bar (the native one is hidden), with the traffic
+                // lights parked over it.
+                appears_transparent: true,
+                // Centered in the 40px title bar (measured empirically:
+                // y=27 lands the lights on the bar's vertical midline).
+                traffic_light_position: Some(point(px(18.0), px(27.0))),
             }),
             ..Default::default()
         };

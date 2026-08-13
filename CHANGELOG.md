@@ -604,3 +604,23 @@ release.
 [0.2.0]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.2...v0.2.0
 [0.1.0-beta.2]: https://github.com/reduced2ash/cliprelay/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/reduced2ash/cliprelay/releases/tag/v0.1.0-beta.1
+
+- Visual polish wave (custom title bar + UI pass): the window now uses
+  a custom FLUSH title bar — the native macOS title bar is hidden
+  (appears_transparent) and the app's own 40px header row becomes the
+  title bar, with the traffic lights parked over it (empirically
+  centered at y=27) and a drag region (gpui patched with
+  performWindowDragWithEvent) plus double-click-to-zoom on the empty
+  header area; the search field gained a magnifier glyph and clears the
+  traffic lights (96px left inset); the context toolbar and header are
+  fully adaptive (icon-only buttons and collapsed breadcrumbs below
+  their width thresholds); tiles hover with an accent border, the
+  active workspace tab gets a 2px accent top edge and a raised fill,
+  popups/menus share a softer 10px radius, command-center section
+  headers are uppercase with better contrast and rows have hover
+  states, the popup width matches the search field, explorer rows
+  hover, and the prepare source strip no longer overflows into the
+  Reveal button (flexible parts, capped path, icon-only reveal on
+  narrow docks); a hardcoded relay-theme leak in tile posters/badges
+  now uses the active theme. Dev-only helpers for screenshot sweeps:
+  CLIPRELAY_PAGE=history|settings and CLIPRELAY_OPEN_COMMAND=1.

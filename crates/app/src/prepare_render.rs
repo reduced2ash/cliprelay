@@ -580,7 +580,7 @@ impl crate::App {
                         .text_color(theme.text)
                         .font_weight(FontWeight::BOLD)
                         .text_ellipsis()
-                        .max_w(px(230.0)),
+                        .max_w(px(150.0)),
                 )
                 .child(if self.selected.is_some() {
                     let mut parts = vec![size_label, self.prepare.format_time(duration)];
@@ -588,15 +588,17 @@ impl crate::App {
                         parts.push(resolution_label);
                     }
                     div()
+                        .flex_1()
                         .child(parts.join("  ·  "))
                         .text_size(px(12.0))
                         .text_color(theme.muted)
+                        .text_ellipsis()
                 } else {
                     div()
                 })
                 .child(
                     div()
-                        .flex_1()
+                        .flex_none()
                         .flex()
                         .flex_row()
                         .items_center()
@@ -607,20 +609,19 @@ impl crate::App {
                                 .child(if path.is_empty() { "—".to_string() } else { path.clone() })
                                 .text_size(px(11.0))
                                 .text_color(theme.muted_soft)
-                                .max_w(px(180.0))
+                                .max_w(px(120.0))
                                 .text_ellipsis()
                                 .tooltip(move |_window, cx| {
                                     crate::tooltip_view(cx, path.clone().into())
                                 }),
                         )
-                        .child(div().flex_1())
                         .child(workbench_button(
                             "reveal-in-library",
                             "Reveal in library",
                             "◎",
                             ButtonKind::Ghost,
                             true,
-                            false,
+                            panel_width < 470.0,
                             "Reveal in library",
                             cx,
                             |app, cx| {

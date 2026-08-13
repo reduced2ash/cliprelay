@@ -216,6 +216,20 @@ pub fn field(
     password: bool,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
+    field_with_icon(id, placeholder, state, focused, enabled, password, None, cx)
+}
+
+/// `field` with an optional leading glyph (used by the command center).
+pub fn field_with_icon(
+    id: &'static str,
+    placeholder: &str,
+    state: &FieldState,
+    focused: bool,
+    enabled: bool,
+    password: bool,
+    icon_glyph: Option<&'static str>,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
     let theme = current_theme();
     let mut element = div()
         .id(id)
@@ -228,11 +242,15 @@ pub fn field(
         .border_color(if focused { theme.accent } else { theme.border })
         .flex()
         .items_center()
+        .gap(px(7.0))
         .text_size(px(13.0))
         .text_color(theme.text)
         .cursor_text();
     if focused {
         element = element.border_2().border_color(theme.accent);
+    }
+    if let Some(glyph) = icon_glyph {
+        element = element.child(icon(glyph, 14.0, theme.muted));
     }
     let display = if password && !state.text.is_empty() {
         "•".repeat(state.text.chars().count())

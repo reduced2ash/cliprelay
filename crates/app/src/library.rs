@@ -431,12 +431,20 @@ impl crate::App {
             .w_full()
             .h(px(poster_height))
             .rounded(px(TILE_RADIUS))
-            .bg(crate::theme::Theme::relay().ink)
+            .bg(theme.ink)
             .overflow_hidden()
             .relative()
             .border_1()
-            .border_color(if is_selected { theme.accent } else { theme.border })
-            .when(is_hovered, |this| this.border_color(theme.border_strong));
+            .border_color(if is_selected {
+                theme.accent
+            } else if is_hovered {
+                theme.border_strong
+            } else {
+                theme.border
+            })
+            .when(is_hovered && !is_selected, |this| {
+                this.border_color(theme.accent.opacity(0.55))
+            });
         // Preview frames cycle while hovered.
         if is_active_preview && !preview_frames.is_empty() {
             let frame_index = ((std::time::SystemTime::now()
@@ -487,7 +495,7 @@ impl crate::App {
                     .bg(theme.media_overlay)
                     .child(duration_label)
                     .text_size(px(12.0))
-                    .text_color(crate::theme::Theme::relay().media_text)
+                    .text_color(theme.media_text)
                     ,
             );
         }
@@ -775,6 +783,7 @@ impl crate::App {
                 .items_center()
                 .gap(px(6.0))
                 .cursor_pointer()
+                .hover(|style| style.bg(theme.active.opacity(0.5)))
                 .bg(if is_active || is_focused { theme.active } else { theme.transparent() });
             // Disclosure chevron (own hit target; toggles expansion).
             if has_children {
