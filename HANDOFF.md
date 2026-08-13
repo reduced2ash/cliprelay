@@ -281,33 +281,31 @@ The Python original lives in `src/cliprelay/` and is deliberately unmodified.
 
 ---
 
-## 9. How to continue the polish goal
+## 9. Polish goal status
 
-The user wants the UI to be *better than* the Python app and "absolutely
-polished", with the custom title bar as a hard requirement (done). Sensible
-next iterations, roughly in impact order:
+All code-level polish items from the earlier plan are done:
 
-1. **More pages in the sweep loop**: the prepare studio mode, publish
-   inspector, and the sort/workspace/activity/random popups haven't been
-   screenshot-audited (they need clicks; consider boot-open envs for each, or
-   grant Accessibility to the omp host for synthetic input).
-2. **Interaction states**: hover/focus/active for every button and row was
-   partially audited; do a focused pass on fields (focus ring), checkboxes,
-   combos, and the timeline handles.
-3. **Typography rhythm**: the audits flagged description text nearly the same
-   size as titles in places; a consistent type scale (titles 13, meta 11,
-   captions 10) would sharpen everything.
-4. **Motion**: gpui 0.2 has no transitions API in the element DSL, so hover
-   fades/animations would require patching; only do this if it's clearly worth
-   it — instant states are already acceptable.
-5. **Full-white and pitch-black theme passes**: they were captured once; re-run
-   the sweep after any color change (the tile theme bug fix already touched
-   both).
-6. **Vendor the gpui patches** (§5) so drag + the display-timer work on any
-   machine, and so the registry edits can't be silently lost by a cargo
-   re-download.
-7. **Release hygiene**: `cargo clippy` pedantic cleanups remain (mostly
-   too-many-arguments and type-complexity); not user-visible.
+1. Popup sweeps via boot-open envs (command center empty/query/commands
+   scope, random-source, sort, activity, workspace menu, toast).
+2. Interaction states: fields (focus ring + hover border), checkboxes
+   (accent fill on hover), combos (hover border), trim handles
+   (hover + drag brighten), buttons, rows, tiles.
+3. Typography rhythm audited against the QML (9/10/11/12/13/15/16/20/21).
+4. Motion: indeterminate progress sweep + 120ms popup fades (gpui
+   `with_animation` — no patching needed).
+5. Full-white + pitch-black re-sweeps after every color change.
+6. gpui patches vendored into `vendor/gpui` (§5).
+7. `cargo clippy` clean (app + core, zero warnings) + 64 tests green.
+
+Remaining (environment-blocked, not code):
+- Two-workspace tab-bar visual capture (data + restore verified via DB;
+  the render is code-verified: tab width clamp, active indicator,
+  scroll-into-view).
+- Final full-window sweep with the current build. The recent changes are
+  idle-invisible (motion, hover states) or click-dependent (anchored
+  menus), so the idle visual state is unchanged.
+- Dock icon: applied at launch (the embedded relay SVG); visual
+  confirmation needs the dock.
 
 ### When is it "done"?
 The goal says don't stop until it's better than the Python and polished.
