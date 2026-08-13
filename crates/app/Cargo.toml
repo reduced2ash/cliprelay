@@ -24,3 +24,7 @@ flume = "0.11"
 smol.workspace = true
 image.workspace = true
 parking_lot.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+

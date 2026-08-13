@@ -713,3 +713,7 @@ release.
 - Workspace menu now opens upward from the bottom tab bar (its
   trigger), matching the original's tabContextMenu popup; it previously
   rendered at the top of the window.
+
+- Dock icon: the bare binary now applies the original's relay icon
+  (assets/cliprelay.svg, embedded via include_bytes) to the dock after
+  the gpui platform initializes, mirroring the Python's setWindowIcon.

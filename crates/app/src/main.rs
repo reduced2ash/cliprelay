@@ -2038,6 +2038,27 @@ fn saved_window_size() -> Option<(f32, f32)> {
     }
 }
 
+/// Apply the relay app icon to the dock (mirrors the original's
+/// `setWindowIcon`). The SVG is embedded so the bare binary shows the
+/// proper icon without a bundle.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)] // the objc 0.2 macros reference the cargo-clippy cfg
+fn apply_dock_icon() {
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let svg: &[u8] = include_bytes!("../../../src/cliprelay/assets/cliprelay.svg");
+        let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+        let data: *mut objc::runtime::Object =
+            msg_send![class!(NSData), dataWithBytes: svg.as_ptr() length: svg.len()];
+        let image: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
+        let image: *mut objc::runtime::Object = msg_send![image, initWithData: data];
+        let _: () = msg_send![app, setApplicationIconImage: image];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_dock_icon() {}
+
 fn main() {
     env_logger::init();
     let (mut window_width, mut window_height) = parse_cli_args();
@@ -2051,6 +2072,9 @@ fn main() {
         }
     }
     Application::new().run(move |app| {
+        // After the platform is up (the gpui registers its NSApplication
+        // ivars during init, so the icon must be applied later).
+        apply_dock_icon();
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,

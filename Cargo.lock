@@ -971,6 +971,7 @@ dependencies = [
  "gpui",
  "image",
  "log",
+ "objc",
  "parking_lot",
  "serde",
  "serde_json",
