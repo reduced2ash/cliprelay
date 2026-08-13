@@ -663,3 +663,16 @@ release.
   command center was captured with a live query: video results now render
   at boot with CLIPRELAY_QUERY (command_query is seeded and the real
   search runs after restore).
+
+- Polish iteration 5 (history + commands-scope sweep): the history page
+  was captured populated for the first time (seeded posts) — rows verified:
+  thumbnail, title, caption, platform status pills with the Python's
+  visibility rules (a platform pill is hidden when it was not requested),
+  local-format dates ("Aug 12, 2026 · 09:11 PM"), 166px action column with
+  View + More actions. The commands-scope palette (">" prefix) exposed a
+  real bug: the action filter matched the raw query including the ">"
+  prefix, so ">scan" never matched anything; the filter now strips the
+  prefix (the needle) and searches label + detail + category + keywords
+  like the original, and matched commands are grouped under their real
+  category headers (LIBRARY/NAVIGATION/…) instead of a single "ACTIONS"
+  header.

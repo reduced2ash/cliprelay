@@ -464,8 +464,10 @@ impl crate::App {
     }
 
     /// Flat, ordered command-palette entries (sections + actions + results).
+    /// Matching mirrors the original: the '>' prefix is stripped (the
+    /// needle), and the haystack is label + detail + category + keywords.
     pub fn command_entries(&self) -> Vec<CommandEntry> {
-        let query = self.command_query.trim().to_lowercase();
+        let query = self.command_needle().to_lowercase();
         let actions = self.command_actions();
         let mut entries: Vec<CommandEntry> = Vec::new();
         if query.is_empty() {
@@ -486,15 +488,23 @@ impl crate::App {
             let matched: Vec<CommandAction> = actions
                 .into_iter()
                 .filter(|a| {
-                    a.label.to_lowercase().contains(&query)
-                        || a.keywords.contains(&query)
+                    let haystack = format!(
+                        "{} {} {} {}",
+                        a.label, a.detail, a.category, a.keywords
+                    )
+                    .to_lowercase();
+                    haystack.contains(&query)
                 })
                 .collect();
-            if !matched.is_empty() {
-                entries.push(CommandEntry::Section("ACTIONS"));
-                for action in matched {
-                    entries.push(CommandEntry::Action(action));
+            // Group matched commands by category like the original's
+            // sectioned ListView (categories stay in registry order).
+            let mut current_category = "";
+            for action in matched {
+                if action.category != current_category {
+                    current_category = action.category;
+                    entries.push(CommandEntry::Section(current_category));
                 }
+                entries.push(CommandEntry::Action(action));
             }
         }
         entries

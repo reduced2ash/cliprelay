@@ -105,7 +105,8 @@ HANDOFF.md            # this file
   `CLIPRELAY_QUERY=clip` (opens the command center and runs the real search),
   `CLIPRELAY_SETTINGS_SCROLL=950` (scrolls the settings page; the offset is
   applied after the page's first frame), `CLIPRELAY_BOOT_TOAST=error:msg`
-  (info:/success:/error: kinds).
+  (info:/success:/error: kinds), and `CLIPRELAY_QUERY=">scan"` switches the
+  command center into commands scope (the '>' prefix mirrors the original).
 
 ---
 
