@@ -175,29 +175,29 @@ core features:
 
 ---
 
-## 5. The two gpui patches (dev-machine only — IMPORTANT)
+## 5. The two gpui patches — VENDORED (no dev-machine dependency)
 
-Both live in the **cargo registry source** (they are NOT in the repo):
+The patches now live in **`vendor/gpui/`** (a full gpui 0.2.2 copy) and are
+wired in via `[patch.crates-io]` in the root `Cargo.toml`. They build and
+work on any machine; `cargo clean` cannot lose them:
 
 ```
-~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/
-  platform/mac/display_link.rs   # timer fallback when CVDisplayLink fails
-  platform/mac/window.rs         # occlusion-visible workaround at creation +
-                                 # start_window_move (performWindowDragWithEvent)
-  window.rs                      # start_window_move facade (was already there
-                                 # at line ~1766; only the mac impl was added)
+vendor/gpui/src/platform/mac/display_link.rs   # timer fallback when
+                                               # CVDisplayLink fails or
+                                               # GPUI_FORCE_TIMER_DISPLAY=1
+vendor/gpui/src/platform/mac/window.rs         # occlusion-visible workaround
+                                               # at creation +
+                                               # start_window_move
+                                               # (performWindowDragWithEvent)
+vendor/gpui/PATCHES.md                         # documentation of both edits
 ```
 
-Cargo fingerprints registry deps by checksum, **not file mtime** — after
-editing registry sources you MUST `cargo clean -p gpui` (or the app's target)
-before rebuilding, or the edits silently don't compile in.
+Note: if you edit the vendored gpui you must `cargo clean -p gpui` (or the
+app's target) before rebuilding — Cargo fingerprints path deps differently
+but the crate still must be recompiled for the edit to take effect.
 
-Consequences to keep in mind:
-- `Window::start_window_move` exists in stock gpui 0.2.2 (default no-op), so
-  **the repo builds and runs on stock gpui**; only dragging (and the broken-
-  display timer) are missing there. If drag must work on other machines,
-  vendor the patch (e.g., `[patch.crates-io]` with a fork, or add the two
-  methods to a local gpui copy) — the diff is ~60 lines and documented above.
+`Window::start_window_move` exists in stock gpui 0.2.2 as a no-op; the
+vendored copy implements the macOS drag.
 - If the machine's display state is healthy, `GPUI_FORCE_TIMER_DISPLAY` is
   unnecessary; it forces the timer even when the real link works, which is
   fine but slightly wasteful (62Hz timer + real link both firing).
