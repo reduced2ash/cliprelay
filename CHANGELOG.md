@@ -689,3 +689,10 @@ release.
   gpui 0.2.2 + `[patch.crates-io]` in the root Cargo.toml), so the custom
   title-bar drag and the display-link timer fallback build on any machine
   and survive a cargo re-download. PATCHES.md documents both edits.
+
+- Motion: the indeterminate progress bars (library scan, publish, check)
+  now sweep with a looping 1.4 s animation (gpui with_animation, no
+  patching needed), and the five popups (command center, random-source,
+  sort menu, activity, workspace menu) fade in over 120 ms with an
+  ease-in-out. Also cleaned an unnecessary unsafe block in the vendored
+  display-link timer fallback.

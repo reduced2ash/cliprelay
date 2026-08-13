@@ -98,12 +98,7 @@ impl DisplayLink {
                     let mut ticks: u64 = 0;
                     while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
                         std::thread::sleep(std::time::Duration::from_millis(16));
-                        unsafe {
-                            dispatch_source_merge_data(
-                                frame_requests as dispatch_source_t,
-                                1,
-                            );
-                        }
+                        dispatch_source_merge_data(frame_requests as dispatch_source_t, 1);
                         ticks += 1;
                         if ticks % 125 == 0 {
                             eprintln!("[display-link] timer ticks={ticks}");

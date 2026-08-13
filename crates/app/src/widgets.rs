@@ -4,6 +4,7 @@
 use crate::theme::*;
 use gpui::*;
 use gpui::prelude::*;
+use std::time::Duration;
 
 /// A tiny text-field state kept on the App view.
 #[derive(Clone, Debug, Default)]
@@ -415,14 +416,40 @@ pub fn progress_bar(value: f64, indeterminate: bool) -> impl Element {
         .overflow_hidden()
         .relative()
         .child(if indeterminate {
-            div().h_full().w(px(60.0)).bg(theme.accent).rounded(px(4.0))
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(-60.0))
+                .h_full()
+                .w(px(60.0))
+                .bg(theme.accent)
+                .rounded(px(4.0))
+                .with_animation(
+                    "progress-sweep",
+                    Animation::new(Duration::from_millis(1400)).repeat(),
+                    |this, delta| this.left(px(delta * 240.0 - 60.0)),
+                )
+                .into_any()
         } else {
             div()
                 .h_full()
                 .w(px((value.clamp(0.0, 1.0) * 100.0) as f32))
                 .bg(theme.accent)
                 .rounded(px(4.0))
+                .into_any()
         })
+}
+
+/// 120 ms ease-in-out fade applied to popups when they mount.
+pub fn popup_fade<E: Styled + IntoElement + 'static>(
+    element: E,
+    key: &'static str,
+) -> AnimationElement<E> {
+    element.with_animation(
+        key,
+        Animation::new(Duration::from_millis(120)).with_easing(ease_in_out),
+        |this, delta| this.opacity(delta),
+    )
 }
 
 pub fn divider() -> Div {

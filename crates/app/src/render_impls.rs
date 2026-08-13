@@ -949,7 +949,7 @@ impl crate::App {
                 .child(hint("↵  OPEN"))
                 .child(hint("ESC  CLOSE")),
         );
-        popup
+        popup_fade(popup, "command-center-fade")
     }
 
     pub fn render_context_toolbar(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -1425,7 +1425,7 @@ impl crate::App {
             .child(add_section(self, "VIDEOS", &video_options, &sort_mode, cx))
             .child(divider())
             .child(add_section(self, "EXPLORER FOLDERS", &folder_options, &folder_sort_mode, cx));
-        menu
+        popup_fade(menu, "sort-menu-fade")
     }
 
     pub fn render_activity_popup(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -1654,7 +1654,7 @@ impl crate::App {
             );
         }
         popup = popup.child(list);
-        popup
+        popup_fade(popup, "activity-fade")
     }
 
     pub fn render_workspace_menu(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -1828,7 +1828,7 @@ impl crate::App {
                     cx,
                 ));
         }
-        menu
+        popup_fade(menu, "workspace-menu-fade")
     }
 
     /// Whether the controller reported closed workspaces (best-effort from
@@ -3247,7 +3247,7 @@ impl crate::App {
                     },
                 )),
         );
-        popup
+        popup_fade(popup, "random-fade")
     }
 
     pub fn render_history_menu(&mut self, cx: &mut Context<Self>) -> impl Element {
