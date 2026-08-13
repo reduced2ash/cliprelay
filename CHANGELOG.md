@@ -676,3 +676,11 @@ release.
   like the original, and matched commands are grouped under their real
   category headers (LIBRARY/NAVIGATION/…) instead of a single "ACTIONS"
   header.
+
+- Clippy: the app and core crates are now warning-free (excluding the
+  transitive future-incompat notes from `block` and `proc-macro-error2`).
+  Cleaned ~30 lints: collapsed ifs, needless borrows, map/inspect_err
+  idioms, unneeded muts, a clamp pattern, an identical-branch label, and
+  unused error bindings; added a `ProgressFn` type alias for the ffmpeg
+  progress callback, boxed the large `UiMessage::Event` variant, and
+  scoped too-many-arguments allows to the 8 ported pipeline functions.

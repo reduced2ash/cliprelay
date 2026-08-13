@@ -124,7 +124,7 @@ impl crate::App {
             // measured scroll extent keeps pagination exact regardless of
             // variable row heights.
             let mut inner = div().w_full().flex().flex_col().pb(px(16.0));
-            for (_index, post) in rows.iter().enumerate() {
+            for post in rows.iter() {
                 inner = inner.child(self.render_history_row(cx, &theme, post));
             }
             list = list
@@ -174,7 +174,7 @@ impl crate::App {
             .as_ref()
             .is_some_and(|spec| {
                 let value: serde_json::Value = serde_json::from_str(spec).unwrap_or_default();
-                cliprelay_core::media::normalize_edit_spec(&value).is_empty() == false
+                !cliprelay_core::media::normalize_edit_spec(&value).is_empty()
             });
         let telegram_status = post.telegram_status.clone();
         let x_status = post.x_status.clone();
@@ -275,7 +275,7 @@ impl crate::App {
                         .flex_row()
                         .gap(px(8.0))
                         .child(if edited {
-                            pill(&theme, "Edited copy", theme.accent, &theme.accent_soft)
+                            pill(theme, "Edited copy", theme.accent, &theme.accent_soft)
                         } else {
                             div()
                         })
@@ -286,7 +286,7 @@ impl crate::App {
                                 _ => (theme.warning, theme.warning_soft),
                             };
                             pill(
-                                &theme,
+                                theme,
                                 &format!("Telegram {}", telegram_status.replace('_', " ")),
                                 color,
                                 &soft,
@@ -301,7 +301,7 @@ impl crate::App {
                                 _ => (theme.accent, theme.accent_soft),
                             };
                             pill(
-                                &theme,
+                                theme,
                                 &format!("X {}", x_status.replace('_', " ")),
                                 color,
                                 &soft,

@@ -595,7 +595,7 @@ impl crate::App {
         let is_visible = |node: &FolderNode| -> bool {
             let mut ancestor = node.parent.clone();
             while !ancestor.is_empty() {
-                if expanded_map.get(&ancestor).copied().unwrap_or(true) == false {
+                if !expanded_map.get(&ancestor).copied().unwrap_or(true) {
                     return false;
                 }
                 ancestor = ancestor

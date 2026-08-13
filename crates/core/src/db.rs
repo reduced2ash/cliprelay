@@ -751,14 +751,14 @@ impl Database {
         )?;
         for chunk in existing_paths.chunks(500) {
             let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{i}")).collect();
-            let mut sql = format!(
+            let sql = format!(
                 "UPDATE media_files SET valid=1 WHERE root_path=?1 AND path IN ({})",
                 placeholders.join(",")
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
                 vec![Box::new(root_path.to_string())];
             params.extend(chunk.iter().map(|p| Box::new(p.clone()) as Box<dyn rusqlite::types::ToSql>));
-            let mut stmt = conn.prepare(&mut sql)?;
+            let mut stmt = conn.prepare(&sql)?;
             stmt.execute(rusqlite::params_from_iter(params.iter()))?;
         }
         Ok(())
@@ -868,14 +868,14 @@ impl Database {
         let order = media_order(sort_mode);
         let (clauses, mut values) = media_filter(search, folder);
         let conn = self.conn.lock();
-        let mut sql = format!(
+        let sql = format!(
             "SELECT * FROM media_files WHERE {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
             clauses.join(" AND "),
             order,
             values.len() + 1,
             values.len() + 2
         );
-        let mut stmt = conn.prepare(&mut sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         values.push(Box::new(limit));
         values.push(Box::new(offset.max(0)));
         let rows = stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
@@ -1103,7 +1103,7 @@ impl Database {
             });
         }
         let mut subtree: Vec<(String, i64)> = subtree_counts.into_iter().collect();
-        subtree.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        subtree.sort_by_key(|a| a.0.to_lowercase());
         folders.extend(subtree.into_iter().map(|(folder, count)| RandomFolder {
             direct_count: direct_counts.get(folder.as_str()).copied().unwrap_or(0),
             folder,
@@ -1164,7 +1164,7 @@ impl Database {
                 latest_indexed: values.latest_indexed,
             })
             .collect();
-        folders.sort_by(|a, b| a.folder.to_lowercase().cmp(&b.folder.to_lowercase()));
+        folders.sort_by_key(|a| a.folder.to_lowercase());
         Ok(folders)
     }
 
@@ -1441,7 +1441,7 @@ impl Database {
             values.push(Box::new(term));
         }
         let conn = self.conn.lock();
-        let mut sql = format!(
+        let sql = format!(
             "SELECT posts.*, media_files.name AS media_name, media_files.path AS source_path, \
              media_files.thumbnail_path, exports.path AS export_path, exports.is_generated, \
              exports.edit_spec, exports.cleanup_state, exports.size_bytes AS export_size \
@@ -1451,7 +1451,7 @@ impl Database {
             values.len() + 1,
             values.len() + 2
         );
-        let mut stmt = conn.prepare(&mut sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         values.push(Box::new(limit));
         values.push(Box::new(offset.max(0)));
         let rows = stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {

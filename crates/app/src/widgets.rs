@@ -230,6 +230,7 @@ pub fn field(
 }
 
 /// `field` with an optional leading glyph (used by the command center).
+#[allow(clippy::too_many_arguments)]
 pub fn field_with_icon(
     id: &'static str,
     placeholder: &str,

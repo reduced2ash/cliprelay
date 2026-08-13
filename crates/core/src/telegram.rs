@@ -429,6 +429,12 @@ pub struct TelegramPersonalService {
     exit_rx: Option<std::sync::mpsc::Receiver<()>>,
 }
 
+impl Default for TelegramPersonalService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TelegramPersonalService {
     pub fn new() -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<Command>();
@@ -504,6 +510,7 @@ impl TelegramPersonalService {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn send_video(
         &self,
         api_id: i32,
@@ -786,6 +793,7 @@ async fn dialogs_impl(
     Ok((out, state.session_json()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_video_impl(
     state: &mut LoopState,
     api_id: i32,

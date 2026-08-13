@@ -136,7 +136,7 @@ pub struct App {
 
 #[derive(Debug)]
 pub enum UiMessage {
-    Event(Event),
+    Event(Box<Event>),
     Frame(i64, String, PathBuf),
 }
 
@@ -347,7 +347,7 @@ impl App {
         let pending = app.pending.clone();
         std::thread::spawn(move || {
             while let Ok(event) = event_rx.recv() {
-                pending.lock().push_back(UiMessage::Event(event));
+                pending.lock().push_back(UiMessage::Event(Box::new(event)));
             }
         });
         let pending = app.pending.clone();
@@ -359,7 +359,7 @@ impl App {
         let pending = app.pending.clone();
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(100));
-            pending.lock().push_back(UiMessage::Event(Event::Tick));
+            pending.lock().push_back(UiMessage::Event(Box::new(Event::Tick)));
         });
 
         let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
@@ -373,8 +373,8 @@ impl App {
                     if let Some(this) = this.upgrade() {
                         this.update(
                             cx,
-                            &mut |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
-                                app.page = initial_page.clone();
+                            |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                app.page = initial_page;
                             },
                         )
                         .ok();
@@ -384,7 +384,7 @@ impl App {
                     if let Some(this) = this.upgrade() {
                         this.update(
                             cx,
-                            &mut |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                            |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
                                 app.command_open = true;
                                 app.open_command_center(_cx);
                             },
@@ -742,13 +742,12 @@ impl App {
                     .retain(|toast| now.duration_since(toast.shown_at) < Duration::from_millis(5200));
                 let playback_changed = self.prepare.tick();
                 let mut diagnostics_refreshed = false;
-                if self.page == Page::Settings {
-                    if self.last_diagnostics_request.elapsed() > Duration::from_secs(2) {
+                if self.page == Page::Settings
+                    && self.last_diagnostics_request.elapsed() > Duration::from_secs(2) {
                         self.last_diagnostics_request = now;
                         self.command(Command::Diagnostics);
                         diagnostics_refreshed = true;
                     }
-                }
                 // Follow the grid/history scroll (any scroll source) for
                 // virtualization.
                 let scroll_changed = match self.page {
@@ -1311,11 +1310,10 @@ impl App {
             {
                 if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
                     let folder = option.folder.clone();
-                    if option.has_children {
-                        if !self.random_expanded.remove(&folder) {
+                    if option.has_children
+                        && !self.random_expanded.remove(&folder) {
                             self.random_expanded.insert(folder);
                         }
-                    }
                 }
                 cx.notify();
             }
@@ -1676,7 +1674,7 @@ impl App {
         let mut messages = std::mem::take(&mut *self.pending.lock());
         while let Some(message) = messages.pop_front() {
             match message {
-                UiMessage::Event(event) => self.on_event(event, cx),
+                UiMessage::Event(event) => self.on_event(*event, cx),
                 UiMessage::Frame(media_id, key, path) => self.on_frame_ready(media_id, key, path, cx),
             }
         }
@@ -2073,7 +2071,7 @@ fn main() {
             }),
             ..Default::default()
         };
-        app.open_window(options, |_window, cx| cx.new(|cx| App::new(cx)))
+        app.open_window(options, |_window, cx| cx.new(App::new))
             .expect("failed to open window");
         // Quit when the window closes (gpui does not exit by default).
         app.on_window_closed(|cx| {

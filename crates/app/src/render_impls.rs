@@ -1168,7 +1168,7 @@ impl crate::App {
                     ButtonKind::Ghost,
                     !(scanning && cancelling),
                     toolbar_compact,
-                    if scanning { "Rescan library" } else { "Rescan library" },
+                    "Rescan library",
                     cx,
                     |app, cx| {
                         if app.scan.active && !app.scan.cancelling {
@@ -1509,7 +1509,8 @@ impl crate::App {
                            progress: f64,
                            show_stop: bool,
                            cx: &mut Context<crate::App>| {
-            let row = div()
+            
+            div()
                 .w_full()
                 .h(px(58.0))
                 .px(px(12.0))
@@ -1569,8 +1570,7 @@ impl crate::App {
                                 .text_ellipsis(),
                         )
                         .child(div().w(px(120.0)).child(progress_bar(progress, indeterminate))),
-                );
-            row
+                )
         };
 
         if scanning {
@@ -2130,7 +2130,7 @@ impl crate::App {
             .track_scroll(&self.tab_scroll);
 
         let available = (self.window_size.0 - 24.0).max(200.0);
-        let tab_width = ((available / workspaces.len().max(1) as f32).clamp(150.0, 218.0)) as f32;
+        let tab_width = (available / workspaces.len().max(1) as f32).clamp(150.0, 218.0);
         let renaming = self.renaming_workspace;
         for (index, workspace) in workspaces.iter().enumerate() {
             let id = workspace.id.clone();
@@ -3433,7 +3433,7 @@ impl crate::App {
             let grid_floor = (page_width - explorer - 460.0).max(1.0);
             base.max(grid_floor).min(680.0)
         } else {
-            (page_width * 0.34).max(360.0).min(420.0)
+            (page_width * 0.34).clamp(360.0, 420.0)
         }
     }
 }

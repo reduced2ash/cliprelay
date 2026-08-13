@@ -837,6 +837,7 @@ fn theme_choices(
     row
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setting_row(
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,

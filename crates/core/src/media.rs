@@ -14,6 +14,9 @@ use std::sync::{Arc, OnceLock};
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
+/// Progress callback: `progress(fraction 0..1, stage)`.
+pub type ProgressFn = Arc<dyn Fn(f64, &str) + Send + Sync>;
+
 pub const VIDEO_EXTENSIONS: &[&str] = &[
     ".3g2", ".3gp", ".asf", ".avi", ".divx", ".dv", ".f4v", ".flv", ".h264", ".hevc", ".m2t",
     ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".mts", ".mxf", ".ogm", ".ogv",
@@ -252,11 +255,12 @@ fn run_captured(
 
 /// Run an ffmpeg job, streaming `-progress pipe:1` lines to `progress`.
 /// `stage` is the label shown by the UI. Returns stderr tail on error.
+#[allow(clippy::too_many_arguments)]
 fn run_ffmpeg_progress(
     mut command: Command,
     duration: f64,
     cancel: Option<&CancelFlag>,
-    progress: &Arc<dyn Fn(f64, &str) + Send + Sync>,
+    progress: &ProgressFn,
     stage: &str,
 ) -> Result<(), MediaError> {
     use std::io::{BufRead, BufReader};
@@ -770,6 +774,7 @@ impl MediaIndexer {
     }
 
     /// Full scan: probe + thumbnails, using a small worker pool.
+    #[allow(clippy::too_many_arguments)]
     pub fn scan(
         &self,
         root_path: &Path,
@@ -1004,22 +1009,19 @@ impl MediaIndexer {
             }
             drop(tx);
             for message in rx.iter() {
-                match message {
-                    Some((id, thumbnail)) => {
-                        if thumbnail.is_some() {
-                            if let Some(callback) = item_ready.as_mut() {
-                                callback(id);
-                            }
+                if let Some((id, thumbnail)) = message {
+                    if thumbnail.is_some() {
+                        if let Some(callback) = item_ready.as_mut() {
+                            callback(id);
                         }
-                        completed += 1;
-                        let name = state_map
-                            .values()
-                            .find(|m| m.id == id)
-                            .map(|m| m.name.clone())
-                            .unwrap_or_else(|| "thumbnail".to_string());
-                        progress(completed, total, &name);
                     }
-                    None => {}
+                    completed += 1;
+                    let name = state_map
+                        .values()
+                        .find(|m| m.id == id)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_else(|| "thumbnail".to_string());
+                    progress(completed, total, &name);
                 }
                 if handles.iter().all(|h| h.is_finished()) && rx.is_empty() {
                     break;
@@ -1490,6 +1492,7 @@ impl MediaProcessor {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Port of `export()`: full pipeline with passthrough, hardware, and
     /// software (two-pass or CRF) paths. `progress(fraction 0..1, stage)`.
     pub fn export(
@@ -1500,7 +1503,7 @@ impl MediaProcessor {
         preset: &str,
         target_mb: f64,
         edits: &EditSpec,
-        progress: &Arc<dyn Fn(f64, &str) + Send + Sync>,
+        progress: &ProgressFn,
     ) -> Result<ExportResult, MediaError> {
         self.reset_cancel();
         self.ffmpeg()?;
@@ -1641,23 +1644,23 @@ impl MediaProcessor {
         };
 
         // Post-hardware size gate (Python checks before deciding fallback).
-        if hardware_used && target_mb > 0.0 {
-            if media_path_size(&partial) as f64 > target_mb * 1024.0 * 1024.0 * 1.015 {
+        if hardware_used && target_mb > 0.0
+            && media_path_size(&partial) as f64 > target_mb * 1024.0 * 1024.0 * 1.015 {
                 let _ = std::fs::remove_file(&partial);
                 progress(0.01, "Hardware export unavailable · retrying with software");
-                self.export_software(&media, start, duration, preset, target_mb, &partial, progress)?;
+                self.export_software(media, start, duration, preset, target_mb, &partial, progress)?;
                 return self.finish_export(partial, output, duration, preset, "libx264".to_string(), false, progress);
             }
-        }
 
         if hardware_used {
             return self.finish_export(partial, output, duration, preset, used_encoder, true, progress);
         }
 
-        self.export_software(&media, start, duration, preset, target_mb, &partial, progress)?;
+        self.export_software(media, start, duration, preset, target_mb, &partial, progress)?;
         self.finish_export(partial, output, duration, preset, used_encoder, false, progress)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn export_software(
         &self,
         media: &crate::db::MediaRow,
@@ -1666,7 +1669,7 @@ impl MediaProcessor {
         preset: &str,
         target_mb: f64,
         partial: &Path,
-        progress: &Arc<dyn Fn(f64, &str) + Send + Sync>,
+        progress: &ProgressFn,
     ) -> Result<(), MediaError> {
         let source = PathBuf::from(&media.path);
         let common = |command: &mut Command| {
@@ -1735,7 +1738,7 @@ impl MediaProcessor {
                 .arg("-f")
                 .arg("null")
                 .arg(null_output);
-            let pass1_progress: Arc<dyn Fn(f64, &str) + Send + Sync> = {
+            let pass1_progress: ProgressFn = {
                 let progress = Arc::clone(progress);
                 Arc::new(move |fraction, stage| progress(fraction * 0.45, stage))
             };
@@ -1746,9 +1749,8 @@ impl MediaProcessor {
                 &pass1_progress,
                 "Measuring target size",
             )
-            .map_err(|e| {
+            .inspect_err(|_e| {
                 let _ = std::fs::remove_file(partial);
-                e
             })?;
 
             // Pass 2.
@@ -1783,7 +1785,7 @@ impl MediaProcessor {
                 .arg("pipe:1")
                 .arg("-nostats")
                 .arg(partial);
-            let pass2_progress: Arc<dyn Fn(f64, &str) + Send + Sync> = {
+            let pass2_progress: ProgressFn = {
                 let progress = Arc::clone(progress);
                 Arc::new(move |fraction, stage| progress(0.45 + fraction * 0.55, stage))
             };
@@ -1795,9 +1797,8 @@ impl MediaProcessor {
                 "Encoding video",
             );
             let _ = std::fs::remove_dir_all(&tmp);
-            result.map_err(|e| {
+            result.inspect_err(|_e| {
                 let _ = std::fs::remove_file(partial);
-                e
             })?;
             Ok(())
         } else {
@@ -1838,9 +1839,8 @@ impl MediaProcessor {
                 progress,
                 "Encoding video",
             )
-            .map_err(|e| {
+            .inspect_err(|_e| {
                 let _ = std::fs::remove_file(partial);
-                e
             })?;
             Ok(())
         }
@@ -1854,6 +1854,7 @@ impl MediaProcessor {
             .unwrap_or_else(|| build_filter(&EditSpec::default(), height))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn finish_export(
         &self,
         partial: PathBuf,
@@ -1862,7 +1863,7 @@ impl MediaProcessor {
         preset: &str,
         used_encoder: String,
         hardware_used: bool,
-        progress: &Arc<dyn Fn(f64, &str) + Send + Sync>,
+        progress: &ProgressFn,
     ) -> Result<ExportResult, MediaError> {
         if !partial.is_file() || media_path_size(&partial) == 0 {
             let _ = std::fs::remove_file(&partial);

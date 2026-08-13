@@ -127,9 +127,7 @@ impl crate::App {
             .border_color(if has_edits { theme.accent } else { theme.border_strong })
             .overflow_hidden()
             .relative();
-        let image_source = frame_path
-            .map(PathBuf::from)
-            .or_else(|| {
+        let image_source = frame_path.or_else(|| {
                 if !thumbnail.is_empty() {
                     Some(PathBuf::from(thumbnail))
                 } else {
@@ -2634,7 +2632,7 @@ pub fn group_digits(value: usize) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);

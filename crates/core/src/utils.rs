@@ -119,7 +119,7 @@ mod sha2 {
             let mut tail = Vec::with_capacity(72);
             tail.push(0x80);
             let zeroes = (64 - ((self.buf_len + 9) % 64)) % 64;
-            tail.extend(std::iter::repeat(0u8).take(zeroes));
+            tail.extend(std::iter::repeat_n(0u8, zeroes));
             tail.extend_from_slice(&bit_len.to_be_bytes());
             self.update(&tail);
             debug_assert_eq!(self.buf_len, 0);

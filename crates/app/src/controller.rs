@@ -321,8 +321,7 @@ impl Controller {
     fn restore_workspaces(&mut self) {
         let tabs: Vec<Value> = self
             .settings
-            .get(WORKSPACE_TABS)
-            .and_then(|v| Ok(serde_json::from_value(v).unwrap_or_default()))
+            .get(WORKSPACE_TABS).map(|v| serde_json::from_value(v).unwrap_or_default())
             .unwrap_or_default();
         let library_root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
         let mut workspaces: Vec<Workspace> = Vec::new();
@@ -370,8 +369,7 @@ impl Controller {
         };
         self.closed = self
             .settings
-            .get(CLOSED_WORKSPACE_TABS)
-            .and_then(|v| Ok(serde_json::from_value(v).unwrap_or_default()))
+            .get(CLOSED_WORKSPACE_TABS).map(|v| serde_json::from_value(v).unwrap_or_default())
             .unwrap_or_default();
         self.emit(Event::ClosedCountChanged(self.closed.len()));
         self.workspaces = workspaces;
@@ -759,14 +757,13 @@ impl Controller {
         if let Err(e) = result {
             self.toast(ToastKind::Error, e.to_string());
         }
-        if key == AUTO_INDEX {
-            if self.settings.get_bool(AUTO_INDEX).unwrap_or(false) {
+        if key == AUTO_INDEX
+            && self.settings.get_bool(AUTO_INDEX).unwrap_or(false) {
                 let root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
                 if !root.is_empty() {
                     self.request_scan("automatic", true);
                 }
             }
-        }
         self.settings_changed();
     }
 
@@ -1888,12 +1885,11 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             "after_telegram" => post.x_status == "not_requested" && telegram_done,
             _ => false,
         };
-        if trash {
-            if move_generated_to_trash(&export_path, &self.export_dir, true).is_ok() {
+        if trash
+            && move_generated_to_trash(&export_path, &self.export_dir, true).is_ok() {
                 let _ = self.db.mark_export_cleanup(export_id, "trashed");
                 self.refresh_history();
             }
-        }
     }
 
     // ---- telegram connection -------------------------------------------
