@@ -144,7 +144,13 @@ pub fn button(
             .text_ellipsis(),
     );
     element
-        .when(!enabled, |this| this.opacity(0.46).cursor_default())
+        // Disabled: neutral raised fill + muted text (opacity alone washes
+        // colored buttons out on light themes).
+        .when(!enabled, |this| {
+            this.bg(theme.raised)
+                .text_color(theme.muted)
+                .cursor_default()
+        })
         .when(enabled, |this| this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx))))
 }
 
@@ -244,6 +250,7 @@ pub fn field_with_icon(
         .bg(theme.raised)
         .border_1()
         .border_color(if focused { theme.accent } else { theme.border })
+        .hover(|style| style.border_color(theme.border_strong))
         .flex()
         .items_center()
         .gap(px(7.0))

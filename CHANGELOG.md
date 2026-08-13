@@ -642,3 +642,14 @@ release.
   CLIPRELAY_OPEN_WORKSPACE_MENU. All findings were pixel-verified (the
   vision model's edge-clipping claims were measured and dismissed as
   crop artifacts).
+
+- Polish iteration 3 (theme + interaction sweep): pitch-black and
+  full-white themes re-captured with the populated library after the
+  tile-color fix — both verified (near-black+blue, light+blue, the
+  amber warning colors are the intentional warning palette matching the
+  Python). The full-white sweep found a real contrast bug: disabled
+  buttons used 46% opacity, washing colored fills out (white on light
+  blue); they now render as neutral raised fills with muted text on
+  every theme. Fields gained a hover border to match the other
+  controls. The duration badges' dark overlay is intentionally
+  video-agnostic (the Python does the same).
