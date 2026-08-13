@@ -3269,7 +3269,7 @@ impl crate::App {
             }))
             .absolute()
             .right(px(24.0))
-            .top(px(120.0))
+            .top(px(self.history_more_menu_y))
             .w(px(224.0))
             .rounded(px(10.0))
             .bg(theme.surface_soft)

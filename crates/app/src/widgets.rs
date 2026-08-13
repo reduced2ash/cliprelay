@@ -100,6 +100,37 @@ pub fn button(
     cx: &mut Context<crate::App>,
     on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
+    button_base(id, label, kind, icon, enabled).when(enabled, |this| {
+        this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx)))
+    })
+}
+
+/// `button` variant whose callback also receives the click position, for
+/// popups that anchor to the clicked control.
+#[allow(clippy::too_many_arguments)]
+pub fn button_at(
+    id: impl Into<SharedString>,
+    label: &str,
+    kind: ButtonKind,
+    icon: Option<&'static str>,
+    enabled: bool,
+    cx: &mut Context<crate::App>,
+    on_click: impl Fn(&mut crate::App, Point<Pixels>, &mut Context<crate::App>) + 'static,
+) -> Stateful<Div> {
+    button_base(id, label, kind, icon, enabled).when(enabled, |this| {
+        this.on_click(cx.listener(move |app, event: &ClickEvent, _window, cx| {
+            on_click(app, event.position(), cx)
+        }))
+    })
+}
+
+fn button_base(
+    id: impl Into<SharedString>,
+    label: &str,
+    kind: ButtonKind,
+    icon: Option<&'static str>,
+    enabled: bool,
+) -> Stateful<Div> {
     let theme = current_theme();
     let id: SharedString = id.into();
     let mut element = div()
@@ -152,7 +183,6 @@ pub fn button(
                 .text_color(theme.muted)
                 .cursor_default()
         })
-        .when(enabled, |this| this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx))))
 }
 
 /// Compact toolbar button (30px; icon-only or icon+label).

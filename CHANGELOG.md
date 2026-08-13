@@ -704,3 +704,8 @@ release.
 - Settings combo triggers gain a hover border (border_strong), matching
   the field hover treatment. Typography scale re-audited against the
   QML (9/10/11/12/13/15/16/20/21 all map to their Python roles).
+
+- History "More actions" menu now anchors to the clicked row (the click
+  position is recorded and the menu opens at that y), mirroring the
+  original's button-anchored Menu popup; previously it floated at a
+  fixed y, which landed far from rows 2+.

@@ -370,20 +370,24 @@ impl crate::App {
                 },
             ));
         }
-        actions = actions.child(button(
+        actions = actions.child(button_at(
             format!("history-more-{post_id}"),
             "More actions",
             ButtonKind::Ghost,
             Some("⋯"),
             true,
             cx,
-            move |app, cx| {
-                // Toggle with the original's 180ms reopen guard.
+            move |app, position, cx| {
+                // Toggle with the original's 180ms reopen guard; the menu
+                // anchors to the clicked row (mirrors the original's
+                // button-anchored Menu popup).
                 if app.history_more_menu_post == Some(post_id) {
                     app.history_more_menu_post = None;
                     app.history_more_menu_closed_at = std::time::Instant::now();
                 } else if app.history_more_menu_closed_at.elapsed().as_millis() >= 180 {
                     app.history_more_menu_post = Some(post_id);
+                    let y: f32 = position.y.into();
+                    app.history_more_menu_y = y;
                 }
                 cx.notify();
             },
