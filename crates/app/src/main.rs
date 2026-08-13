@@ -110,6 +110,8 @@ pub struct App {
     pub random_loading: bool,
     pub last_scroll_y: f32,
     pub window_title: String,
+    pub capture_after_frames: u32,
+    pub capture_path: Option<std::path::PathBuf>,
     pub saved_bounds: (f32, f32),
     pub last_history_scroll_y: f32,
     pub reveal_target_row: Option<usize>,
@@ -322,6 +324,11 @@ impl App {
             random_loading: false,
             last_scroll_y: 0.0,
             window_title: String::new(),
+            capture_after_frames: std::env::var("CLIPRELAY_CAPTURE_AFTER")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(40),
+            capture_path: std::env::var("CLIPRELAY_CAPTURE").ok().map(std::path::PathBuf::from),
             saved_bounds: (0.0, 0.0),
             last_history_scroll_y: 0.0,
             reveal_target_row: None,
@@ -1672,6 +1679,19 @@ impl App {
                 )),
             ));
         }
+        // Dev-only surface capture: after ~40 rendered frames (the layout is
+        // settled), ask the window to save its rendered surface as a PNG.
+        // Works with the physical display asleep (the Metal drawable is
+        // read back after the GPU finishes).
+        if let Some(path) = self.capture_path.clone() {
+            if self.capture_after_frames >= 40 {
+                self.capture_path = None;
+                window.request_surface_capture(path);
+            } else {
+                self.capture_after_frames += 1;
+            }
+        }
+
         // Process queued UI messages (events + frames) before painting.
         let mut messages = std::mem::take(&mut *self.pending.lock());
         while let Some(message) = messages.pop_front() {

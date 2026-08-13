@@ -636,6 +636,13 @@ package = "gpui_media"
 [target.'cfg(target_os = "macos")'.dependencies.metal]
 version = "0.29"
 
+# Dev capture: the app can ask for the rendered surface as a PNG while the
+# physical display is asleep/locked (used by the screenshot sweep loop).
+[target.'cfg(target_os = "macos")'.dependencies.image]
+version = "0.25"
+default-features = false
+features = ["png"]
+
 [target.'cfg(target_os = "macos")'.dependencies.objc]
 version = "0.2"
 

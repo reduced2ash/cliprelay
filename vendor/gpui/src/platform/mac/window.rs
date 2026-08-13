@@ -393,6 +393,7 @@ struct MacWindowState {
     blurred_view: Option<id>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
+    pending_capture: std::sync::Mutex<Option<std::path::PathBuf>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -477,10 +478,14 @@ impl MacWindowState {
         eprintln!("[display-link] start_display_link called");
         self.stop_display_link();
         unsafe {
+            // Dev-session fallback: the physical display pipeline may never
+            // report the window visible (locked/asleep display), so the
+            // env forces the display link anyway (timer fallback inside).
             if !self
                 .native_window
                 .occlusionState()
                 .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+                && !std::env::var("GPUI_FORCE_TIMER_DISPLAY").is_ok()
             {
                 return;
             }
@@ -697,6 +702,7 @@ impl MacWindow {
                     bounds.size.map(|pixels| pixels.0),
                     false,
                 ),
+                pending_capture: std::sync::Mutex::new(None),
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
@@ -1502,7 +1508,12 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        let capture = this.pending_capture.lock().unwrap().take();
+        this.renderer.draw(scene, capture);
+    }
+
+    fn set_capture_path(&self, path: std::path::PathBuf) {
+        *self.0.as_ref().lock().pending_capture.lock().unwrap() = Some(path);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

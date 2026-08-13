@@ -8,6 +8,8 @@ use crate::{
 };
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
+#[cfg(target_os = "macos")]
+use image as _;
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
@@ -640,7 +642,7 @@ impl BladeRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, capture: Option<std::path::PathBuf>) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -906,6 +908,35 @@ impl BladeRenderer {
         }
         drop(pass);
 
+        // Dev-only surface readback: copy the rendered frame into a shared
+        // buffer and write a PNG after the GPU finishes (works while the
+        // physical display is asleep — the app still renders every frame).
+        let mut capture_data: Option<(gpu::Buffer, u32, u32, std::path::PathBuf)> = None;
+        if let Some(path) = capture {
+            let width = self.surface_config.size.width;
+            let height = self.surface_config.size.height;
+            let bytes_per_row = width * 4;
+            let buffer = self.gpu.create_buffer(gpu::BufferDesc {
+                name: "surface-capture",
+                size: (bytes_per_row * height) as u64,
+                memory: gpu::Memory::Shared,
+            });
+            let mut transfers = self.command_encoder.transfer("surface-capture");
+            transfers.copy_texture_to_buffer(
+                gpu::TexturePiece {
+                    texture: frame.texture(),
+                    mip_level: 0,
+                    array_layer: 0,
+                    origin: [0, 0, 0],
+                },
+                buffer.into(),
+                bytes_per_row,
+                gpu::Extent { width, height, depth: 1 },
+            );
+            drop(transfers);
+            capture_data = Some((buffer, width, height, path));
+        }
+
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
 
@@ -914,6 +945,31 @@ impl BladeRenderer {
         self.atlas.after_frame(&sync_point);
 
         self.wait_for_gpu();
+
+        if let Some((buffer, width, height, path)) = capture_data {
+            // The readback must wait for THIS frame's GPU work (the usual
+            // wait_for_gpu only drains the previous sync point).
+            let _ = self.gpu.wait_for(&sync_point, MAX_FRAME_TIME_MS);
+            let len = (width as usize) * (height as usize) * 4;
+            let bytes = unsafe { std::slice::from_raw_parts(buffer.at(0).data(), len) };
+            // The surface is BGRA; PNG wants RGBA — swap the channels.
+            let mut rgba = bytes.to_vec();
+            for px in rgba.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+            match image::save_buffer_with_format(
+                &path,
+                &rgba,
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+                image::ImageFormat::Png,
+            ) {
+                Ok(()) => log::info!("surface capture written: {:?}", path),
+                Err(e) => log::error!("surface capture failed: {e}"),
+            }
+        }
+
         self.last_sync_point = Some(sync_point);
     }
 }

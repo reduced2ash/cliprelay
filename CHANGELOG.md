@@ -717,3 +717,16 @@ release.
 - Dock icon: the bare binary now applies the original's relay icon
   (assets/cliprelay.svg, embedded via include_bytes) to the dock after
   the gpui platform initializes, mirroring the Python's setWindowIcon.
+
+- Offscreen surface capture (dev-only): CLIPRELAY_CAPTURE=/path.png
+  writes the rendered window surface as a PNG after N frames
+  (CLIPRELAY_CAPTURE_AFTER, default 40) — reads the Metal drawable back
+  after the GPU finishes, so sweeps work while the physical display is
+  asleep/locked. Also fixed the occlusion gate so GPUI_FORCE_TIMER_DISPLAY
+  actually starts the display link even when the window is never
+  reported visible (the env escape was only in the occlusion-change
+  handler, not in start_display_link).
+  With this, the two-workspace tab bar (both tabs, active indicator,
+  restored folder/search) and the full final sweep (history, settings
+  scrolled, commands-scope palette, error toast) were captured and
+  audited — the previously environment-blocked verifications are done.

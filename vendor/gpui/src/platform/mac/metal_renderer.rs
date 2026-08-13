@@ -19,8 +19,8 @@ use core_video::{
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
-    CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange,
-    RenderPassColorAttachmentDescriptorRef,
+    CAMetalLayer, CommandQueue, MTLOrigin, MTLPixelFormat, MTLResourceOptions, MTLSize,
+    NSRange, RenderPassColorAttachmentDescriptorRef,
 };
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
@@ -350,7 +350,7 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, capture: Option<std::path::PathBuf>) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -377,9 +377,49 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
+                    // Optional surface readback: copy the drawable into a
+                    // shared buffer and write a PNG once the frame completes
+                    // (used for sweeps while the physical display is off).
+                    let capture_png = capture.clone().and_then(|path| {
+                        let texture = drawable.texture();
+                        let width = texture.width();
+                        let height = texture.height();
+                        let bytes_per_row = width * 4;
+                        let buffer = self
+                            .device
+                            .new_buffer(bytes_per_row * height, MTLResourceOptions::StorageModeShared);
+                        let blit = command_buffer.blit_command_encoder();
+                        blit.copy_from_texture(
+                            &texture,
+                            0,
+                            0,
+                            MTLOrigin { x: 0, y: 0, z: 0 },
+                            MTLSize { width, height, depth: 1 },
+                            &buffer,
+                            0,
+                            bytes_per_row,
+                            0,
+                        );
+                        blit.end_encoding();
+                        Some((buffer, width, height, path))
+                    });
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
+                        }
+                        if let Some((buffer, width, height, path)) = capture_png.take() {
+                            let len = (width * height * 4) as usize;
+                            let bytes = unsafe {
+                                std::slice::from_raw_parts(buffer.contents() as *const u8, len)
+                            };
+                            let _ = image::save_buffer_with_format(
+                                &path,
+                                bytes,
+                                width,
+                                height,
+                                image::ExtendedColorType::Bgra8,
+                                image::ImageFormat::Png,
+                            );
                         }
                     });
                     let block = block.copy();

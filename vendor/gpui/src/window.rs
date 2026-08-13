@@ -1767,6 +1767,13 @@ impl Window {
         self.platform_window.start_window_move()
     }
 
+    /// Dev-only: request the next rendered frame to be written as a PNG.
+    /// Works even while the physical display is asleep (reads the Metal
+    /// drawable back after the frame completes). No-op off macOS.
+    pub fn request_surface_capture(&self, path: std::path::PathBuf) {
+        self.platform_window.set_capture_path(path);
+    }
+
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);
