@@ -622,9 +622,16 @@ impl crate::App {
                     ),
             );
 
-        // DIAGNOSTICS
+        // DIAGNOSTICS (the original renders this header muted, unlike the
+        // accent-colored FILES/TELEGRAM/X HANDOFF headers).
         inner = inner
-            .child(section_label(&theme, "LIVE DIAGNOSTICS"))
+            .child(div()
+                .mt(px(SPACING_XXL))
+                .mb(px(SPACING_SM))
+                .child("LIVE DIAGNOSTICS")
+                .text_size(px(12.0))
+                .text_color(theme.muted)
+                .font_weight(FontWeight::BOLD))
             .child(
                 div()
                     .w_full()
@@ -727,7 +734,7 @@ fn sub_label(theme: &crate::theme::Theme, label: &str) -> Div {
         .mb(px(4.0))
         .child(label.to_string())
         .text_size(px(12.0))
-        .text_color(theme.muted_soft)
+        .text_color(theme.muted)
         .font_weight(FontWeight::BOLD)
 }
 

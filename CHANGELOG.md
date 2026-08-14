@@ -762,3 +762,7 @@ release.
   - Tile badges are density-aware (compact 5px / default 7px margins,
   18/20px height, 10/12px text) and the unchecked tile icon is the
   activity glyph, matching MediaTile.qml.
+
+- Settings header colors: FAST PICKING / BACKGROUND LIBRARY INDEX and
+  LIVE DIAGNOSTICS now use the muted color (not accent), matching the
+  QML (FILES/TELEGRAM/X HANDOFF stay accent-colored).
