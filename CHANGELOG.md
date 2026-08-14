@@ -754,3 +754,11 @@ release.
 - Library grid now honors the original's 14px per-side inset
   (libraryGridInset); the column computation and the tile wrap both account
   for it, matching the Python's GridView margins.
+
+- Source strip now matches the original: the name width is dynamic
+  (panel*0.28 clamp 92-230), the metadata is its natural width, a
+  divider + folder icon precede the path, and the path fills the remaining
+  space (no 120px cap).
+  - Tile badges are density-aware (compact 5px / default 7px margins,
+  18/20px height, 10/12px text) and the unchecked tile icon is the
+  activity glyph, matching MediaTile.qml.

@@ -486,20 +486,21 @@ impl crate::App {
             }
         }
         // Duration badge.
+        let badge_margin = if compact { 5.0 } else { 7.0 };
+        let badge_h = if compact { 18.0 } else { 20.0 };
         if row.duration > 0.0 {
             poster = poster.child(
                 div()
                     .absolute()
-                    .bottom(px(5.0))
-                    .right(px(7.0))
-                    .h(px(20.0))
-                    .px(px(6.0))
+                    .bottom(px(badge_margin))
+                    .right(px(badge_margin))
+                    .h(px(badge_h))
+                    .px(px(if compact { 5.0 } else { 6.0 }))
                     .rounded(px(4.0))
                     .bg(theme.media_overlay)
                     .child(duration_label)
-                    .text_size(px(12.0))
-                    .text_color(theme.media_text)
-                    ,
+                    .text_size(px(if compact { 10.0 } else { 12.0 }))
+                    .text_color(theme.media_text),
             );
         }
         // Selection check.
@@ -507,10 +508,10 @@ impl crate::App {
             poster = poster.child(
                 div()
                     .absolute()
-                    .top(px(5.0))
-                    .right(px(7.0))
-                    .w(px(22.0))
-                    .h(px(22.0))
+                    .top(px(badge_margin))
+                    .right(px(badge_margin))
+                    .w(px(if compact { 20.0 } else { 22.0 }))
+                    .h(px(if compact { 20.0 } else { 22.0 }))
                     .rounded(px(4.0))
                     .bg(theme.accent)
                     .flex()
@@ -531,7 +532,7 @@ impl crate::App {
             .items_center()
             .gap(px(5.0))
             .child(if unchecked {
-                icon("◌", 12.0, theme.muted_soft)
+                icon("⚡", 12.0, theme.muted_soft)
             } else {
                 div()
             })

@@ -577,7 +577,8 @@ impl crate::App {
                         .text_color(theme.text)
                         .font_weight(FontWeight::BOLD)
                         .text_ellipsis()
-                        .max_w(px(150.0)),
+                        .w(px((panel_width * 0.28).clamp(92.0, 230.0)))
+                        .flex_none(),
                 )
                 .child(if self.selected.is_some() {
                     let mut parts = vec![size_label, self.prepare.format_time(duration)];
@@ -585,7 +586,7 @@ impl crate::App {
                         parts.push(resolution_label);
                     }
                     div()
-                        .flex_1()
+                        .flex_none()
                         .child(parts.join("  ·  "))
                         .text_size(px(12.0))
                         .text_color(theme.muted)
@@ -593,40 +594,35 @@ impl crate::App {
                 } else {
                     div()
                 })
+                .child(div().w(px(1.0)).h(px(18.0)).flex_none().bg(theme.border))
+                .child(icon("🗀", 14.0, theme.muted))
                 .child(
                     div()
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(
-                            div()
-                                .id("source-path")
-                                .child(if path.is_empty() { "—".to_string() } else { path.clone() })
-                                .text_size(px(11.0))
-                                .text_color(theme.muted)
-                                .max_w(px(120.0))
-                                .text_ellipsis()
-                                .tooltip(move |_window, cx| {
-                                    crate::tooltip_view(cx, path.clone().into())
-                                }),
-                        )
-                        .child(workbench_button(
-                            "reveal-in-library",
-                            "Reveal in library",
-                            "◎",
-                            ButtonKind::Ghost,
-                            true,
-                            panel_width < 470.0,
-                            "Reveal in library",
-                            cx,
-                            |app, cx| {
-                                app.command(Command::RevealSelectedInLibrary);
-                                cx.notify();
-                            },
-                        )),
-                ),
+                        .id("source-path")
+                        .flex_1()
+                        .min_w(px(40.0))
+                        .child(if path.is_empty() { "—".to_string() } else { path.clone() })
+                        .text_size(px(11.0))
+                        .text_color(theme.muted)
+                        .text_ellipsis()
+                        .tooltip(move |_window, cx| {
+                            crate::tooltip_view(cx, path.clone().into())
+                        }),
+                )
+                .child(workbench_button(
+                    "reveal-in-library",
+                    "Reveal in library",
+                    "◎",
+                    ButtonKind::Ghost,
+                    true,
+                    panel_width < 470.0,
+                    "Reveal in library",
+                    cx,
+                    |app, cx| {
+                        app.command(Command::RevealSelectedInLibrary);
+                        cx.notify();
+                    },
+                )),
         );
         let _ = path;
         stage
