@@ -794,3 +794,7 @@ release.
 - Silenced the vendored gpui taffy float-literal warnings so `cargo run
   cliprelay` compiles cleanly (only the standard transitive
   future-incompat note remains).
+
+- Playback prefetch: the dock preview now pre-extracts the next two
+  frames while playing, so the frame-based playback no longer stalls on
+  each on-demand ffmpeg extract.

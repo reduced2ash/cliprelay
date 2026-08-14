@@ -280,6 +280,12 @@ impl PrepareState {
                 self.request_frame(self.position);
             }
             self.last_frame_key = key;
+            // Prefetch the next two frames so playback stays smooth
+            // instead of stalling on each on-demand ffmpeg extract.
+            for ahead in [0.2f64, 0.4f64] {
+                let ahead_s = (self.position + ahead).min(self.trim_end.max(0.0));
+                self.request_frame_at(ahead_s, true);
+            }
         }
         true
     }
