@@ -798,3 +798,7 @@ release.
 - Playback prefetch: the dock preview now pre-extracts the next two
   frames while playing, so the frame-based playback no longer stalls on
   each on-demand ffmpeg extract.
+
+- Regression test: `preview_and_export_round_odd_dimensions_to_even`
+  encodes a 587x233 source (yuv444p) and asserts the generated preview
+  has even dimensions — defends the crash fix against regression.

@@ -10,6 +10,12 @@ use std::process::Command;
 use std::sync::Arc;
 
 fn make_test_video(dir: &Path, name: &str, seconds: u32) -> std::path::PathBuf {
+    make_test_video_at(dir, name, seconds, "320x240")
+}
+
+/// A test video at an arbitrary size (odd widths reproduce the libx264
+/// "width not divisible by 2" rejections the even-rounding fix addresses).
+fn make_test_video_at(dir: &Path, name: &str, seconds: u32, size: &str) -> std::path::PathBuf {
     let Some(ffmpeg) = ffmpeg_path() else {
         panic!("ffmpeg required for media integration tests");
     };
@@ -17,11 +23,13 @@ fn make_test_video(dir: &Path, name: &str, seconds: u32) -> std::path::PathBuf {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
+    // yuv444p permits odd dimensions (yuv420p requires even), so the
+    // odd-size regression source can be encoded.
     let status = Command::new(&ffmpeg)
         .args([
             "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", format!("testsrc=duration={seconds}:size=320x240:rate=24").as_str(),
-            "-b:v", "1000k", "-pix_fmt", "yuv420p",
+            "-f", "lavfi", "-i", format!("testsrc=duration={seconds}:size={size}:rate=24").as_str(),
+            "-b:v", "1000k", "-pix_fmt", "yuv444p",
         ])
         .arg(&output)
         .status()
@@ -124,6 +132,44 @@ fn manifest_probe_thumbnail_preview_timeline_flow() {
     // Cache key stability.
     let key = media_cache_key(&video, metadata.size_bytes as u64, metadata.mtime);
     assert_eq!(key.len(), 24);
+}
+
+#[test]
+fn preview_and_export_round_odd_dimensions_to_even() {
+    // A 587x233 source: the naive fit-scale emits 587x233 (odd width AND
+    // odd height), which libx264 rejects. The pipeline must round to even.
+    let fixture = Fixture::new();
+    let video = make_test_video_at(&fixture.root, "odd.mp4", 2, "587x233");
+    let result = fixture.refresh();
+    assert_eq!(result.discovered, 1);
+    let metadata = fixture.indexer.probe(&video, &fixture.root, None).expect("probe");
+    let media_id = fixture.db.upsert_media(&metadata).unwrap();
+
+    // The preview must produce a valid, even-dimensioned mp4.
+    let preview = fixture.indexer.ensure_preview(media_id).expect("preview");
+    assert!(preview.is_file());
+    let dims = probe_dimensions(&preview);
+    assert!(dims.0 % 2 == 0 && dims.1 % 2 == 0, "preview dims {dims:?} not even");
+}
+
+fn probe_dimensions(path: &std::path::Path) -> (i64, i64) {
+    let Some(ffprobe) = cliprelay_core::paths::ffprobe_path() else {
+        panic!("ffprobe required");
+    };
+    let out = Command::new(&ffprobe)
+        .args([
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .expect("run ffprobe");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut it = text.trim().split(',');
+    let w: i64 = it.next().unwrap_or("0").trim().parse().unwrap_or(0);
+    let h: i64 = it.next().unwrap_or("0").trim().parse().unwrap_or(0);
+    (w, h)
 }
 
 #[test]
