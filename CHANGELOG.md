@@ -790,3 +790,7 @@ release.
   popup titles) now use hair-space tracking to approximate the original's
   font.letterSpacing (gpui 0.2 has no tracking API); renders as a subtle,
   uniform airy header.
+
+- Silenced the vendored gpui taffy float-literal warnings so `cargo run
+  cliprelay` compiles cleanly (only the standard transitive
+  future-incompat note remains).
