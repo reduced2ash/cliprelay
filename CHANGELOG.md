@@ -750,3 +750,7 @@ release.
   * History empty state gained the accent icon tile (AppEmptyState).
   * Dev capture: CLIPRELAY_CAPTURE_AFTER is now wall-clock (100ms per
     unit) instead of a frame count, so boot states settle first.
+
+- Library grid now honors the original's 14px per-side inset
+  (libraryGridInset); the column computation and the tile wrap both account
+  for it, matching the Python's GridView margins.

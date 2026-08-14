@@ -53,7 +53,9 @@ impl Layout {
         if app.selected.is_some() && !app.prepare.studio_mode {
             grid_width = (grid_width - app.prepare_dock_width()).max(1.0);
         }
-        grid_width = (grid_width - 10.0).max(1.0);
+        // The original insets the grid 14px per side (libraryGridInset);
+        // the scrollbar reserves 10px inside the column.
+        grid_width = (grid_width - 28.0 - 10.0).max(1.0);
         let density_compact = app.density == "compact";
         let tile_min = if density_compact { TILE_MIN_COMPACT } else { TILE_MIN_DEFAULT };
         let tile_gap = if density_compact { TILE_GAP_COMPACT } else { TILE_GAP_DEFAULT };
@@ -169,6 +171,7 @@ impl crate::App {
             let mut rows_wrap = div()
                 .id("tiles")
                 .w_full()
+                .px(px(14.0))
                 .pt(px(8.0))
                 .pb(px(8.0))
                 .relative()
