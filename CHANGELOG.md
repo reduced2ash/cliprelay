@@ -784,3 +784,9 @@ release.
 - Settings: the bottom diagnostics header is "DIAGNOSTICS" (accent),
   distinct from the muted "LIVE DIAGNOSTICS" inside PERFORMANCE — the two
   sections were previously conflated.
+
+- Letter-spacing: uppercase section headers (settings sections, dock
+  FRAME/BLACK MASKS/OUTPUT/DESTINATIONS/CAPTIONS, explorer, page names,
+  popup titles) now use hair-space tracking to approximate the original's
+  font.letterSpacing (gpui 0.2 has no tracking API); renders as a subtle,
+  uniform airy header.

@@ -260,6 +260,16 @@ pub fn field(
     field_with_icon(id, placeholder, state, focused, enabled, password, None, cx)
 }
 
+/// Insert hair spaces between glyphs to approximate the original's
+/// `font.letterSpacing` on uppercase section headers (gpui 0.2 has no
+/// tracking API). The hair space ≈ the 1.2–1.3px letter spacing.
+pub fn tracked(text: &str) -> String {
+    text.chars()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\u{200A}")
+}
+
 /// Apply the tabular-figures OpenType feature (tnum) so numeric text uses
 /// fixed-width digits (matches the original's `font.features: { "tnum": 1 }`
 /// on time codes, durations, and counts).

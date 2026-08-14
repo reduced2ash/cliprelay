@@ -1218,7 +1218,7 @@ impl crate::App {
                             .gap(px(2.0))
                             .child(
                                 div()
-                                    .child("FRAME")
+                                    .child(tracked("FRAME"))
                                     .text_size(px(12.0))
                                     .text_color(theme.muted)
                                     .font_weight(FontWeight::SEMIBOLD),
@@ -1322,7 +1322,7 @@ impl crate::App {
                     .child(
                         div()
                             .flex_1()
-                            .child("BLACK MASKS")
+                            .child(tracked("BLACK MASKS"))
                             .text_size(px(12.0))
                             .text_color(theme.muted)
                             .font_weight(FontWeight::SEMIBOLD),
@@ -1518,7 +1518,7 @@ impl crate::App {
                             .gap(px(2.0))
                             .child(
                                 div()
-                                    .child("OUTPUT")
+                                    .child(tracked("OUTPUT"))
                                     .text_size(px(12.0))
                                     .text_color(theme.muted)
                                     .font_weight(FontWeight::SEMIBOLD),
@@ -1577,7 +1577,7 @@ impl crate::App {
         column = column
             .child(
                 div()
-                    .child("DESTINATIONS")
+                    .child(tracked("DESTINATIONS"))
                     .text_size(px(12.0))
                     .text_color(theme.text_soft)
                     .font_weight(FontWeight::SEMIBOLD),
@@ -1673,7 +1673,7 @@ impl crate::App {
         column = column
             .child(
                 div()
-                    .child("CAPTIONS")
+                    .child(tracked("CAPTIONS"))
                     .text_size(px(12.0))
                     .text_color(theme.text_soft)
                     .font_weight(FontWeight::SEMIBOLD),

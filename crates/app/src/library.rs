@@ -723,7 +723,7 @@ impl crate::App {
                 .child(icon("▤", 15.0, theme.accent_text))
                 .child(
                     div()
-                        .child("EXPLORER")
+                        .child(tracked("EXPLORER"))
                         .text_size(px(10.0))
                         .text_color(theme.muted)
                         .font_weight(FontWeight::SEMIBOLD),
