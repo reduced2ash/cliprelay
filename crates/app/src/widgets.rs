@@ -272,6 +272,22 @@ pub fn field_with_icon(
     icon_glyph: Option<&'static str>,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
+    field_with_icon_hint(id, placeholder, state, focused, enabled, password, icon_glyph, None, cx)
+}
+
+/// `field_with_icon` plus an optional right-side hint chip (e.g. ⌘K).
+#[allow(clippy::too_many_arguments)]
+pub fn field_with_icon_hint(
+    id: &'static str,
+    placeholder: &str,
+    state: &FieldState,
+    focused: bool,
+    enabled: bool,
+    password: bool,
+    icon_glyph: Option<&'static str>,
+    hint: Option<&'static str>,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
     let theme = current_theme();
     let mut element = div()
         .id(id)
@@ -308,6 +324,21 @@ pub fn field_with_icon(
             .text_color(if state.text.is_empty() { theme.muted } else { theme.text })
             .text_ellipsis(),
     );
+    if let Some(hint) = hint {
+        element = element.child(
+            div()
+                .flex_none()
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .child(hint.to_string())
+                .text_size(px(10.0))
+                .text_color(theme.muted_soft),
+        );
+    }
     element
         .when(!enabled, |this| this.opacity(0.46).cursor_default())
         .when(enabled, |this| {

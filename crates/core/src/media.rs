@@ -154,7 +154,7 @@ pub fn build_filter(edits: &EditSpec, height: i64) -> String {
         ));
     }
     parts.push(format!(
-        "scale=w=-2:h='min(ih,{height})':force_original_aspect_ratio=decrease"
+        "scale=w=-2:h='min(ih,{height})':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
     ));
     parts.join(",")
 }
@@ -1085,7 +1085,7 @@ impl MediaIndexer {
             .arg("-frames:v")
             .arg("1")
             .arg("-vf")
-            .arg("scale=640:360:force_original_aspect_ratio=decrease")
+            .arg("scale=640:360:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2")
             .arg("-q:v")
             .arg("3")
             .arg(&output);
@@ -1137,7 +1137,7 @@ impl MediaIndexer {
             .arg("-t")
             .arg(format!("{preview_length:.3}"))
             .arg("-vf")
-            .arg("scale=640:360:force_original_aspect_ratio=decrease")
+            .arg("scale=640:360:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2")
             .arg("-an")
             .arg("-c:v")
             .arg("libx264")
@@ -1980,7 +1980,9 @@ mod tests {
         let filter = build_filter(&edits, 720);
         assert!(filter.starts_with("crop=w="));
         assert!(filter.contains("drawbox=x='iw*0.10000000'"));
-        assert!(filter.ends_with("scale=w=-2:h='min(ih,720)':force_original_aspect_ratio=decrease"));
+        assert!(filter.ends_with(
+            "scale=w=-2:h='min(ih,720)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+        ));
         assert!(!filter.contains(' '));
     }
 

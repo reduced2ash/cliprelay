@@ -1901,6 +1901,33 @@ impl crate::App {
                 })),
         );
 
+        // Command palette (primary, like the original's first title-bar
+        // button).
+        header = header.child(workbench_button(
+            "command-palette",
+            "",
+            ">_",
+            ButtonKind::Primary,
+            true,
+            true,
+            "Command palette  ·  ⌘⇧P",
+            cx,
+            |app, cx| {
+                if app.command_open {
+                    app.close_command_center();
+                } else {
+                    app.command_scope = "commands".to_string();
+                    app.command_query.clear();
+                    let state = app.field_state_mut("command-center");
+                    state.text.clear();
+                    state.caret = 0;
+                    app.open_command_center(cx);
+                }
+                cx.notify();
+            },
+        )
+        .w(px(28.0)));
+
         // Back / forward.
         let can_back = self
             .workspaces
@@ -1944,9 +1971,11 @@ impl crate::App {
 
         // Command center field (library search). The field shrinks on
         // narrow windows instead of pushing the right-side buttons out.
-        let header_narrow = self.window_size.0 < 820.0;
+        // Tiers mirror the original: compact <1120, veryCompact <1000.
+        let header_compact = self.window_size.0 < 1120.0;
+        let header_very_compact = self.window_size.0 < 1000.0;
         header = header.child(
-            crate::widgets::field_with_icon(
+            crate::widgets::field_with_icon_hint(
                 "command-center",
                 if self.effective_command_scope() == "commands" {
                     "Run a command"
@@ -1958,11 +1987,12 @@ impl crate::App {
                 true,
                 false,
                 Some("⌕"),
+                Some("⌘K"),
                 cx,
             )
             .flex_1()
             .max_w(px(860.0))
-            .min_w(px(if header_narrow { 160.0 } else { 280.0 })),
+            .min_w(px(if header_very_compact { 230.0 } else { 280.0 })),
         );
 
         // Clear-search affordance.
@@ -2051,45 +2081,94 @@ impl crate::App {
         // Random source summary button.
         let summary = self.random_summary.clone();
         let has_selection = self.random_has_selection;
-        header = header.child(
-            workbench_button(
-                "random-sources",
-                summary.clone(),
-                "▤",
-                if has_selection || self.random_popup_open {
-                    ButtonKind::Secondary
-                } else {
-                    ButtonKind::Ghost
-                },
+        // Random source summary (the trailing chevron mirrors the original).
+        {
+            let kind = if has_selection || self.random_popup_open {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Ghost
+            };
+            let mut sources = div()
+                .id("random-sources")
+                .flex_none()
+                .h(px(WORKBENCH_CONTROL_HEIGHT))
+                .px(px(10.0))
+                .w(px(if header_compact { 132.0 } else { 150.0 }))
+                .rounded(px(4.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(6.0))
+                .cursor_pointer()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .tooltip({
+                    let tooltip: SharedString = format!("Random sources: {summary}").into();
+                    move |_window, cx| crate::tooltip_view(cx, tooltip.clone())
+                })
+                .when(!random_enabled, |this| this.opacity(0.42).cursor_default());
+            match kind {
+                ButtonKind::Secondary => {
+                    sources = sources.bg(theme.raised).border_1().border_color(theme.border).text_color(theme.text);
+                }
+                _ => {
+                    sources = sources
+                        .text_color(theme.muted)
+                        .active(|style| style.bg(theme.active).text_color(theme.text));
+                }
+            }
+            sources = sources
+                .child(icon("▤", 13.0, theme.muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(if header_very_compact {
+                            summary.chars().take(12).collect::<String>()
+                        } else {
+                            summary.clone()
+                        })
+                        .text_ellipsis(),
+                )
+                .child(icon(
+                    if self.random_popup_open { "▴" } else { "▾" },
+                    9.0,
+                    theme.muted,
+                ));
+            if random_enabled {
+                sources = sources.on_click(cx.listener(|app, _event, _window, cx| {
+                    app.toggle_random_popup(cx);
+                }));
+            }
+            header = header.child(sources);
+        }
+
+        // Reset shuffle (hidden when compact, like the original).
+        if !header_compact {
+            header = header.child(workbench_button(
+                "reset-shuffle",
+                "",
+                "↺",
+                ButtonKind::Ghost,
                 random_enabled,
-                header_narrow,
-                format!("Random sources: {summary}"),
+                true,
+                "Reset shuffle history",
                 cx,
                 |app, cx| {
-                    app.toggle_random_popup(cx);
+                    app.command(Command::ResetShuffle);
+                    cx.notify();
                 },
-            )
-            .when(!header_narrow, |this| this.min_w(px(150.0))),
-        );
+            ));
+        }
 
-        // Reset shuffle.
-        header = header.child(workbench_button(
-            "reset-shuffle",
-            "",
-            "↺",
-            ButtonKind::Ghost,
-            random_enabled,
-            true,
-            "Reset shuffle history",
-            cx,
-            |app, cx| {
-                app.command(Command::ResetShuffle);
-                cx.notify();
-            },
-        ));
-
-        // Pick random.
-        let label = if picking { "Picking…" } else { "Pick random" };
+        // Pick random (short label when very compact, like the original).
+        let label = if picking {
+            "Picking…"
+        } else if header_very_compact {
+            "Random"
+        } else {
+            "Pick random"
+        };
         header = header.child(
             workbench_button(
                 "pick-random",
@@ -2097,7 +2176,7 @@ impl crate::App {
                 "⇄",
                 ButtonKind::Primary,
                 random_enabled,
-                header_narrow,
+                false,
                 "Pick random video  ·  R",
                 cx,
                 |app, cx| {
@@ -2105,7 +2184,13 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .when(!header_narrow, |this| this.min_w(px(128.0))),
+            .w(px(if header_very_compact {
+                96.0
+            } else if header_compact {
+                112.0
+            } else {
+                128.0
+            })),
         );
 
         header

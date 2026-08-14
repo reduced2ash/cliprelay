@@ -36,3 +36,5 @@ secrets.json
 
 # Rust build output
 /target
+.agents/
+skills-lock.json

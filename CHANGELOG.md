@@ -730,3 +730,23 @@ release.
   restored folder/search) and the full final sweep (history, settings
   scrolled, commands-scope palette, error toast) were captured and
   audited — the previously environment-blocked verifications are done.
+
+- Crash fix: the preview + export scale filters could emit odd
+  dimensions (605x360, 640x233) for non-16:9 or odd-height sources,
+  which libx264 rejects — this is what the boot-time "crash" was. Both
+  filters now round to even (`scale=trunc(iw/2)*2:trunc(ih/2)*2`).
+- Side-by-side parity pass against the compiled Python ClipRelay:
+  * Top bar: added the primary command-palette button (">_"), the ⌘K
+    chip in the search field, the random-sources trailing chevron,
+    and the compact tiers (compact <1120, veryCompact <1000) with the
+    "Random" short label and the hidden reset-shuffle, matching the
+    original WindowTitleBar.
+  * Transport: precise centiseconds (00:03.70) + icon-only play/pause,
+    matching VideoTimeline.formatTime(..., true).
+  * format_time_precise floors to centiseconds (was rounding), so OUT
+    shows 00:06.45 like the original.
+  * Crop-aspect combo is disabled until the crop is enabled; mask
+    buttons are equal-width (Layout.fillWidth parity).
+  * History empty state gained the accent icon tile (AppEmptyState).
+  * Dev capture: CLIPRELAY_CAPTURE_AFTER is now wall-clock (100ms per
+    unit) instead of a frame count, so boot states settle first.

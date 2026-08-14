@@ -376,11 +376,11 @@ impl PrepareState {
     }
 
     pub fn format_time_precise(&self, seconds: f64) -> String {
-        // Round to centiseconds first so the fraction can never overflow
-        // into a malformed 3-digit value (e.g. 65.999 -> 01:06.00, not
-        // 01:05.100), keeping the output parseable back to the input.
+        // Floor to centiseconds like the original's formatTime (the floor
+        // also keeps the fraction from overflowing into a malformed
+        // 3-digit value and stays parseable back to the input).
         let value = seconds.max(0.0);
-        let total_centis = (value * 100.0).round() as u64;
+        let total_centis = (value * 100.0).floor() as u64;
         let total = total_centis / 100;
         let hundredths = total_centis % 100;
         let hours = total / 3600;
@@ -583,11 +583,12 @@ mod prepare_tests {
     #[test]
     fn precise_time_never_overflows_hundredths() {
         let prepare = PrepareState::default();
-        // 65.999 must render as 01:06.00 (carried), not 01:05.100.
-        assert_eq!(prepare.format_time_precise(65.999), "01:06.00");
-        assert_eq!(prepare.format_time_precise(65.995), "01:06.00");
+        // Floors to centiseconds like the original's formatTime: 65.999
+        // renders as 01:05.99 (never a malformed 01:05.100).
+        assert_eq!(prepare.format_time_precise(65.999), "01:05.99");
+        assert_eq!(prepare.format_time_precise(65.995), "01:05.99");
         assert_eq!(prepare.format_time_precise(65.994), "01:05.99");
-        assert_eq!(prepare.format_time_precise(0.999), "00:01.00");
+        assert_eq!(prepare.format_time_precise(0.999), "00:00.99");
         assert_eq!(prepare.format_time_precise(0.0), "00:00.00");
         // Every output must round-trip through a parse back to ~the input.
         for seconds in [0.004, 0.995, 59.999, 65.999, 3599.999, 3661.25] {

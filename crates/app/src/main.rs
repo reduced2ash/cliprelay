@@ -111,6 +111,8 @@ pub struct App {
     pub last_scroll_y: f32,
     pub window_title: String,
     pub capture_after_frames: u32,
+    pub capture_after_target: u32,
+    pub capture_started_at: std::time::Instant,
     pub capture_path: Option<std::path::PathBuf>,
     pub saved_bounds: (f32, f32),
     pub last_history_scroll_y: f32,
@@ -324,10 +326,12 @@ impl App {
             random_loading: false,
             last_scroll_y: 0.0,
             window_title: String::new(),
-            capture_after_frames: std::env::var("CLIPRELAY_CAPTURE_AFTER")
+            capture_after_frames: 0,
+            capture_after_target: std::env::var("CLIPRELAY_CAPTURE_AFTER")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(40),
+                .unwrap_or(220),
+            capture_started_at: std::time::Instant::now(),
             capture_path: std::env::var("CLIPRELAY_CAPTURE").ok().map(std::path::PathBuf::from),
             saved_bounds: (0.0, 0.0),
             last_history_scroll_y: 0.0,
@@ -380,13 +384,19 @@ impl App {
                 smol::Timer::after(std::time::Duration::from_millis(2500)).await;
                 if initial_page != Page::Library {
                     if let Some(this) = this.upgrade() {
-                        this.update(
-                            cx,
-                            |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
-                                app.page = initial_page;
-                            },
-                        )
-                        .ok();
+                        let applied = this
+                            .update(
+                                cx,
+                                |app: &mut crate::App,
+                                 _cx: &mut gpui::Context<crate::App>| {
+                                    app.page = initial_page;
+                                    _cx.notify();
+                                },
+                            )
+                            .is_ok();
+                        eprintln!("[boot] page switch applied={applied}");
+                    } else {
+                        eprintln!("[boot] page switch: entity gone");
                     }
                 }
                 if open_command_at_boot_2 {
@@ -1684,8 +1694,16 @@ impl App {
         // Works with the physical display asleep (the Metal drawable is
         // read back after the GPU finishes).
         if let Some(path) = self.capture_path.clone() {
-            if self.capture_after_frames >= 40 {
+            // Wall-clock based: the boot envs (the page switch ~2.5s in)
+            // settle well before the threshold. Frames are unreliable
+            // because the render loop only repaints dirty windows.
+            let elapsed = self.capture_started_at.elapsed();
+            let target = std::time::Duration::from_millis(
+                (self.capture_after_target as u64) * 100,
+            );
+            if elapsed >= target {
                 self.capture_path = None;
+                eprintln!("[capture] firing for {:?}", path);
                 window.request_surface_capture(path);
             } else {
                 self.capture_after_frames += 1;

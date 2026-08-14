@@ -84,7 +84,18 @@ impl crate::App {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap(px(8.0))
+                    .gap(px(11.0))
+                    .child(
+                        div()
+                            .w(px(58.0))
+                            .h(px(58.0))
+                            .rounded(px(16.0))
+                            .bg(theme.active)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("▷", 27.0, theme.accent)),
+                    )
                     .child(
                         div()
                             .child(title)

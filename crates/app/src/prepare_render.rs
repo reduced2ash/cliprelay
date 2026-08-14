@@ -156,9 +156,9 @@ impl crate::App {
         frame = frame.child(self.render_edit_overlays(cx, theme, track_width, frame_height));
         stage = stage.child(frame);
 
-        // Transport row.
-        let time_label = self.prepare.format_time(position);
-        let duration_label = self.prepare.format_time(duration);
+        // Transport row (precise centiseconds like the original).
+        let time_label = self.prepare.format_time_precise(position);
+        let duration_label = self.prepare.format_time_precise(duration);
         stage = stage.child(
             div()
                 .id("transport")
@@ -193,11 +193,11 @@ impl crate::App {
                 .child(
                     workbench_button(
                         "play-pause",
-                        if playing { "Pause" } else { "Play" },
+                        "",
                         if playing { "⏸" } else { "▶" },
                         ButtonKind::Ghost,
                         !disabled && duration > 0.0,
-                        false,
+                        true,
                         if playing { "Pause  ·  Space" } else { "Play  ·  Space" },
                         cx,
                         |app, cx| {
@@ -205,8 +205,7 @@ impl crate::App {
                             app.save_draft();
                             cx.notify();
                         },
-                    )
-                    .w(px(44.0)),
+                    ),
                 )
                 .child(workbench_button(
                     "forward-5",
@@ -1358,7 +1357,8 @@ impl crate::App {
                             app.save_draft();
                             cx.notify();
                         },
-                    ))
+                    )
+                    .flex_1())
                     .child(button(
                         "add-square",
                         "Add square",
@@ -1371,7 +1371,8 @@ impl crate::App {
                             app.save_draft();
                             cx.notify();
                         },
-                    )),
+                    )
+                    .flex_1()),
             );
 
         // Mask list.
@@ -2228,7 +2229,9 @@ fn crop_aspect_combo(
     ];
     let selected = app.prepare_crop_preset();
     let open = app.open_combos.contains("crop-aspect");
-    let trigger = div()
+    // Disabled until the crop is enabled (mirrors the original's combo).
+    let crop_enabled = app.prepare.crop_enabled;
+    let mut trigger = div()
         .id("crop-aspect-trigger")
         .w(px(190.0))
         .h(px(40.0))
@@ -2237,7 +2240,6 @@ fn crop_aspect_combo(
         .bg(theme.raised)
         .border_1()
         .border_color(if open { theme.accent } else { theme.border })
-        .cursor_pointer()
         .flex()
         .flex_row()
         .items_center()
@@ -2248,10 +2250,16 @@ fn crop_aspect_combo(
                 .text_size(px(13.0))
                 .text_color(theme.text),
         )
-        .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted))
-        .on_click(cx.listener(|app, _event, _window, cx| {
-            app.toggle_combo("crop-aspect", cx);
-        }));
+        .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted));
+    if crop_enabled {
+        trigger = trigger
+            .cursor_pointer()
+            .on_click(cx.listener(|app, _event, _window, cx| {
+                app.toggle_combo("crop-aspect", cx);
+            }));
+    } else {
+        trigger = trigger.opacity(0.46).cursor_default();
+    }
     if !open {
         return trigger;
     }
