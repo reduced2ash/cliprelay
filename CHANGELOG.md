@@ -766,3 +766,8 @@ release.
 - Settings header colors: FAST PICKING / BACKGROUND LIBRARY INDEX and
   LIVE DIAGNOSTICS now use the muted color (not accent), matching the
   QML (FILES/TELEGRAM/X HANDOFF stay accent-colored).
+
+- Tabular figures (tnum): time codes, durations, tile duration badges,
+  metadata, the FULL/CUT readout, and the timeline ticks now use
+  fixed-width digits, matching the original's `font.features: { "tnum": 1 }`
+  and removing the proportional-digit jitter.

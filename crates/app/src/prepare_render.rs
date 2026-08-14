@@ -168,12 +168,13 @@ impl crate::App {
                 .items_center()
                 .gap(px(8.0))
                 .child(
-                    div()
-                        .w(px(70.0))
-                        .child(time_label)
-                        .text_size(px(12.0))
-                        .text_color(theme.text_soft)
-                        ,
+                    tabular(
+                        div()
+                            .w(px(70.0))
+                            .child(time_label)
+                            .text_size(px(12.0))
+                            .text_color(theme.text_soft),
+                    ),
                 )
                 .child(div().flex_1())
                 .child(workbench_button(
@@ -410,14 +411,16 @@ impl crate::App {
                 let seconds = duration * fraction as f64;
                 let label = self.prepare.format_time(seconds);
                 ticks = ticks.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(px((fraction * track_width - 16.0).clamp(0.0, track_width - 32.0)))
-                        .w(px(32.0))
-                        .child(label)
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft),
+                    tabular(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(px((fraction * track_width - 16.0).clamp(0.0, track_width - 32.0)))
+                            .w(px(32.0))
+                            .child(label)
+                            .text_size(px(10.0))
+                            .text_color(theme.muted_soft),
+                    ),
                 );
             }
             stage = stage.child(ticks);
@@ -497,19 +500,21 @@ impl crate::App {
                 )
                 .child(div().flex_1())
                 .child(if cut_active {
-                    div()
-                        .child(format!("CUT  {}", self.prepare.format_time_precise(trim_end - trim_start)))
-                        .text_size(px(12.0))
-                        .text_color(theme.accent_text)
-                        .font_weight(FontWeight::BOLD)
-                        
+                    tabular(
+                        div()
+                            .child(format!("CUT  {}", self.prepare.format_time_precise(trim_end - trim_start)))
+                            .text_size(px(12.0))
+                            .text_color(theme.accent_text)
+                            .font_weight(FontWeight::BOLD),
+                    )
                 } else {
-                    div()
-                        .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
-                        .text_size(px(12.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::BOLD)
-                        
+                    tabular(
+                        div()
+                            .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .font_weight(FontWeight::BOLD),
+                    )
                 })
                 .child(if cut_active {
                     workbench_button(

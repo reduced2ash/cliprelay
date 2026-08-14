@@ -260,6 +260,16 @@ pub fn field(
     field_with_icon(id, placeholder, state, focused, enabled, password, None, cx)
 }
 
+/// Apply the tabular-figures OpenType feature (tnum) so numeric text uses
+/// fixed-width digits (matches the original's `font.features: { "tnum": 1 }`
+/// on time codes, durations, and counts).
+pub fn tabular<E: Styled + 'static>(element: E) -> E {
+    element.font(gpui::Font {
+        features: gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])),
+        ..gpui::font(".SystemUIFont")
+    })
+}
+
 /// `field` with an optional leading glyph (used by the command center).
 #[allow(clippy::too_many_arguments)]
 pub fn field_with_icon(

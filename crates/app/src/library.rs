@@ -490,17 +490,19 @@ impl crate::App {
         let badge_h = if compact { 18.0 } else { 20.0 };
         if row.duration > 0.0 {
             poster = poster.child(
-                div()
-                    .absolute()
-                    .bottom(px(badge_margin))
-                    .right(px(badge_margin))
-                    .h(px(badge_h))
-                    .px(px(if compact { 5.0 } else { 6.0 }))
-                    .rounded(px(4.0))
-                    .bg(theme.media_overlay)
-                    .child(duration_label)
-                    .text_size(px(if compact { 10.0 } else { 12.0 }))
-                    .text_color(theme.media_text),
+                tabular(
+                    div()
+                        .absolute()
+                        .bottom(px(badge_margin))
+                        .right(px(badge_margin))
+                        .h(px(badge_h))
+                        .px(px(if compact { 5.0 } else { 6.0 }))
+                        .rounded(px(4.0))
+                        .bg(theme.media_overlay)
+                        .child(duration_label)
+                        .text_size(px(if compact { 10.0 } else { 12.0 }))
+                        .text_color(theme.media_text),
+                ),
             );
         }
         // Selection check.
@@ -537,12 +539,14 @@ impl crate::App {
                 div()
             })
             .child(
-                div()
-                    .flex_1()
-                    .child(metadata)
-                    .text_size(px(if compact { 11.0 } else { 12.0 }))
-                    .text_color(theme.muted)
-                    .text_ellipsis(),
+                tabular(
+                    div()
+                        .flex_1()
+                        .child(metadata)
+                        .text_size(px(if compact { 11.0 } else { 12.0 }))
+                        .text_color(theme.muted)
+                        .text_ellipsis(),
+                ),
             );
         if posted > 0 {
             meta_row = meta_row.child(
