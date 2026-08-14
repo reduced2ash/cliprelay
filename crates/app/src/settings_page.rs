@@ -622,15 +622,15 @@ impl crate::App {
                     ),
             );
 
-        // DIAGNOSTICS (the original renders this header muted, unlike the
-        // accent-colored FILES/TELEGRAM/X HANDOFF headers).
+        // DIAGNOSTICS (the accent-colored bottom header, distinct from the
+        // muted "LIVE DIAGNOSTICS" inside PERFORMANCE).
         inner = inner
             .child(div()
                 .mt(px(SPACING_XXL))
                 .mb(px(SPACING_SM))
-                .child("LIVE DIAGNOSTICS")
+                .child("DIAGNOSTICS")
                 .text_size(px(12.0))
-                .text_color(theme.muted)
+                .text_color(theme.accent_text)
                 .font_weight(FontWeight::SEMIBOLD))
             .child(
                 div()

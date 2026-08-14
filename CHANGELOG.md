@@ -780,3 +780,7 @@ release.
 - Command center rows are 46px tall with 15px glyphs and a 9px gap, and
   the sort menu rows are 28px with 24px section headers, matching
   CommandCenter.qml / LibrarySortControl.qml.
+
+- Settings: the bottom diagnostics header is "DIAGNOSTICS" (accent),
+  distinct from the muted "LIVE DIAGNOSTICS" inside PERFORMANCE — the two
+  sections were previously conflated.
