@@ -771,3 +771,8 @@ release.
   metadata, the FULL/CUT readout, and the timeline ticks now use
   fixed-width digits, matching the original's `font.features: { "tnum": 1 }`
   and removing the proportional-digit jitter.
+
+- Font weight: the heaviest weight is now Semibold (600) app-wide,
+  matching the original's exclusive use of Font.DemiBold (it never uses
+  Font.Bold 700); titles and labels are no longer heavier than the
+  reference.

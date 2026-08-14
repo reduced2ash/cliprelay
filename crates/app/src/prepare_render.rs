@@ -449,7 +449,7 @@ impl crate::App {
                         .child("IN")
                         .text_size(px(12.0))
                         .text_color(theme.muted)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     field(
@@ -476,7 +476,7 @@ impl crate::App {
                         .child("OUT")
                         .text_size(px(12.0))
                         .text_color(theme.muted)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     field(
@@ -505,7 +505,7 @@ impl crate::App {
                             .child(format!("CUT  {}", self.prepare.format_time_precise(trim_end - trim_start)))
                             .text_size(px(12.0))
                             .text_color(theme.accent_text)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                 } else {
                     tabular(
@@ -513,7 +513,7 @@ impl crate::App {
                             .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
                             .text_size(px(12.0))
                             .text_color(theme.muted)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                 })
                 .child(if cut_active {
@@ -580,7 +580,7 @@ impl crate::App {
                         .child(name)
                         .text_size(px(13.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::SEMIBOLD)
                         .text_ellipsis()
                         .w(px((panel_width * 0.28).clamp(92.0, 230.0)))
                         .flex_none(),
@@ -1089,7 +1089,7 @@ impl crate::App {
                     .child("Edit")
                     .text_size(px(13.0))
                     .text_color(if active_tab == 0 { theme.text } else { theme.text_soft })
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -1127,7 +1127,7 @@ impl crate::App {
                     .child("Publish")
                     .text_size(px(13.0))
                     .text_color(if active_tab == 1 { theme.text } else { theme.text_soft })
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -1221,7 +1221,7 @@ impl crate::App {
                                     .child("FRAME")
                                     .text_size(px(12.0))
                                     .text_color(theme.muted)
-                                    .font_weight(FontWeight::BOLD),
+                                    .font_weight(FontWeight::SEMIBOLD),
                             )
                             .child(
                                 div()
@@ -1325,7 +1325,7 @@ impl crate::App {
                             .child("BLACK MASKS")
                             .text_size(px(12.0))
                             .text_color(theme.muted)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(if shape_count > 0 {
                         status_pill("pill-masks", &format!("{shape_count} masks"), PillState::Neutral)
@@ -1425,7 +1425,7 @@ impl crate::App {
                                 .child(label)
                                 .text_size(px(12.0))
                                 .text_color(if is_selected { theme.text } else { theme.text_soft })
-                                .font_weight(if is_selected { FontWeight::BOLD } else { FontWeight::MEDIUM }),
+                                .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
                         )
                         .child(if is_selected {
                             workbench_button(
@@ -1521,7 +1521,7 @@ impl crate::App {
                                     .child("OUTPUT")
                                     .text_size(px(12.0))
                                     .text_color(theme.muted)
-                                    .font_weight(FontWeight::BOLD),
+                                    .font_weight(FontWeight::SEMIBOLD),
                             )
                             .child(
                                 div()
@@ -1580,7 +1580,7 @@ impl crate::App {
                     .child("DESTINATIONS")
                     .text_size(px(12.0))
                     .text_color(theme.text_soft)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -1595,7 +1595,7 @@ impl crate::App {
                             .child("Telegram")
                             .text_size(px(13.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(div().flex_1())
                     .child(status_pill(
@@ -1647,7 +1647,7 @@ impl crate::App {
                             .child("X")
                             .text_size(px(13.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(div().flex_1())
                     .child(status_pill(
@@ -1676,7 +1676,7 @@ impl crate::App {
                     .child("CAPTIONS")
                     .text_size(px(12.0))
                     .text_color(theme.text_soft)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(checkbox(
                 "shared-caption",
@@ -1700,7 +1700,7 @@ impl crate::App {
                         .child("Telegram and X")
                         .text_size(px(12.0))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(caption_area(self, cx, "caption-shared", "Caption for Telegram and X", &caption))
                 .child(
@@ -1732,7 +1732,7 @@ impl crate::App {
                         .child("Telegram")
                         .text_size(px(12.0))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(caption_area(self, cx, "caption-tg", "Telegram message", &caption))
                 .child(
@@ -1753,7 +1753,7 @@ impl crate::App {
                         .child("X")
                         .text_size(px(12.0))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(caption_area(self, cx, "caption-x", "X post text", &x_caption))
                 .child(
@@ -1775,7 +1775,7 @@ impl crate::App {
                     .child("Generated copy")
                     .text_size(px(13.0))
                     .text_color(theme.text_soft)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -1892,7 +1892,7 @@ impl crate::App {
                                 .child("X handoff ready · generated copy available")
                                 .text_size(px(12.0))
                                 .text_color(theme.text_soft)
-                                .font_weight(FontWeight::BOLD),
+                                .font_weight(FontWeight::SEMIBOLD),
                         ),
                 )
                 .child(

@@ -41,7 +41,7 @@ impl crate::App {
                                 .child("Relay history")
                                 .text_size(px(20.0))
                                 .text_color(theme.text)
-                                .font_weight(FontWeight::BOLD),
+                                .font_weight(FontWeight::SEMIBOLD),
                         )
                         .child(
                             div()
@@ -101,7 +101,7 @@ impl crate::App {
                             .child(title)
                             .text_size(px(20.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
                         div()
@@ -262,7 +262,7 @@ impl crate::App {
                                 .child(media_name)
                                 .text_size(px(15.0))
                                 .text_color(theme.text)
-                                .font_weight(FontWeight::BOLD)
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_ellipsis(),
                         )
                         .child(

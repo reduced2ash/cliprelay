@@ -692,7 +692,7 @@ impl crate::App {
                             .child(title.to_string().to_uppercase())
                             .text_size(px(9.0))
                             .text_color(theme.muted)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     );
                 }
                 CommandEntry::Action(action) => {
@@ -891,7 +891,7 @@ impl crate::App {
                             .child(title)
                             .text_size(px(12.0))
                             .text_color(theme.text_soft)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
                         div()
@@ -981,7 +981,7 @@ impl crate::App {
                     .child(page_name)
                     .text_size(px(10.0))
                     .text_color(theme.text_soft)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(div().w(px(1.0)).h(px(18.0)).bg(theme.border));
 
@@ -1026,7 +1026,7 @@ impl crate::App {
                                     .child("EXPLORER")
                                     .text_size(px(10.0))
                                     .text_color(theme.muted)
-                                    .font_weight(FontWeight::BOLD),
+                                    .font_weight(FontWeight::SEMIBOLD),
                             )
                             .child(
                                 div()
@@ -1062,7 +1062,7 @@ impl crate::App {
                             })
                             .text_size(px(12.0))
                             .text_color(if has_root { theme.accent_text } else { theme.muted })
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
                         div()
@@ -1193,7 +1193,7 @@ impl crate::App {
                                 .child("Prepare")
                                 .text_size(px(12.0))
                                 .text_color(theme.text)
-                                .font_weight(FontWeight::BOLD),
+                                .font_weight(FontWeight::SEMIBOLD),
                         )
                         .when(prepare_name_visible, |this| {
                             this.child(
@@ -1369,7 +1369,7 @@ impl crate::App {
                     .child(title)
                     .text_size(px(10.0))
                     .text_color(theme.muted_soft)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             );
             for (label, value) in options.iter() {
                 let label = *label;
@@ -1398,7 +1398,7 @@ impl crate::App {
                             .child(label)
                             .text_size(px(13.0))
                             .text_color(if selected { theme.text } else { theme.text_soft })
-                            .font_weight(if selected { FontWeight::BOLD } else { FontWeight::MEDIUM }),
+                            .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
                     );
                 item = item.on_click(cx.listener(move |app, _event, _window, cx| {
                     app.sort_menu_open = false;
@@ -1477,7 +1477,7 @@ impl crate::App {
                         .child("BACKGROUND ACTIVITY")
                         .text_size(px(10.0))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(div().flex_1())
                 .child(
@@ -1489,7 +1489,7 @@ impl crate::App {
                         })
                         .text_size(px(10.0))
                         .text_color(if active_count > 0 { theme.accent_text } else { theme.muted_soft })
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 ),
         );
 
@@ -2294,7 +2294,7 @@ impl crate::App {
                             .child(title)
                             .text_size(px(12.0))
                             .text_color(if active { theme.text } else { theme.text_soft })
-                            .font_weight(if active { FontWeight::BOLD } else { FontWeight::MEDIUM })
+                            .font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
                             .text_ellipsis(),
                     )
                     .child(
@@ -2470,7 +2470,7 @@ impl crate::App {
                             .child(label)
                             .text_size(px(15.0))
                             .text_color(if selected { theme.text } else { theme.muted })
-                            .font_weight(if selected { FontWeight::BOLD } else { FontWeight::MEDIUM }),
+                            .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
                     );
             }
             item.on_click(cx.listener(move |app, _event, _window, cx| {
@@ -2629,7 +2629,7 @@ impl crate::App {
                         .child("Prepare")
                         .text_size(px(12.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
@@ -2851,7 +2851,7 @@ impl crate::App {
                         .child("RANDOM SOURCES")
                         .text_size(px(12.0))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
@@ -2952,14 +2952,14 @@ impl crate::App {
                         .child("Entire library")
                         .text_size(px(12.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
                         .child(if all_selected { "SELECTED" } else { "SELECT ALL" })
                         .text_size(px(10.0))
                         .text_color(if all_selected { theme.accent_text } else { theme.muted_soft })
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     if app.random_all_selected {
@@ -3102,7 +3102,7 @@ impl crate::App {
                         .child(format!("{visible_count} VISIBLE"))
                         .text_size(px(10.0))
                         .text_color(theme.muted_soft)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 ),
         );
 
@@ -3217,7 +3217,7 @@ impl crate::App {
                         .child(name)
                         .text_size(px(12.0))
                         .text_color(if state > 0 { theme.text } else { theme.text_soft })
-                        .font_weight(if state > 0 { FontWeight::BOLD } else { FontWeight::MEDIUM })
+                        .font_weight(if state > 0 { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
                         .text_ellipsis(),
                 )
                 .child(
@@ -3313,7 +3313,7 @@ impl crate::App {
                         } else {
                             theme.text_soft
                         })
-                        .font_weight(FontWeight::BOLD)
+                        .font_weight(FontWeight::SEMIBOLD)
                         .child(
                             div()
                                 .child("Parent checks include every nested folder")

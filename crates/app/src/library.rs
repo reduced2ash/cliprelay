@@ -321,7 +321,7 @@ impl crate::App {
                     .child(title)
                     .text_size(px(20.0))
                     .text_color(theme.text)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -577,7 +577,7 @@ impl crate::App {
                         .child(name)
                         .text_size(px(if compact { 12.0 } else { 13.0 }))
                         .text_color(if is_selected { theme.text } else { theme.text_soft })
-                        .font_weight(if is_selected { FontWeight::BOLD } else { FontWeight::MEDIUM })
+                        .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
                         .text_ellipsis(),
                 )
                 .child(meta_row),
@@ -726,7 +726,7 @@ impl crate::App {
                         .child("EXPLORER")
                         .text_size(px(10.0))
                         .text_color(theme.muted)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
@@ -754,7 +754,7 @@ impl crate::App {
                         .child("All videos")
                         .text_size(px(12.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(div().flex_1())
                 .child(
@@ -829,7 +829,7 @@ impl crate::App {
                         .child(name)
                         .text_size(px(12.0))
                         .text_color(if is_active { theme.text } else { theme.text_soft })
-                        .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::MEDIUM })
+                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
                         .text_ellipsis(),
                 )
                 .child(

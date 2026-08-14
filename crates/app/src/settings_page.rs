@@ -47,7 +47,7 @@ impl crate::App {
                         .child("Settings")
                         .text_size(px(20.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
@@ -185,7 +185,7 @@ impl crate::App {
                     .child("LIVE DIAGNOSTICS")
                     .text_size(px(11.0))
                     .text_color(theme.muted)
-                    .font_weight(FontWeight::BOLD),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
@@ -631,7 +631,7 @@ impl crate::App {
                 .child("LIVE DIAGNOSTICS")
                 .text_size(px(12.0))
                 .text_color(theme.muted)
-                .font_weight(FontWeight::BOLD))
+                .font_weight(FontWeight::SEMIBOLD))
             .child(
                 div()
                     .w_full()
@@ -644,7 +644,7 @@ impl crate::App {
                             .child("Local tools")
                             .text_size(px(16.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::BOLD),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(div().flex_1())
                     .child(button(
@@ -707,7 +707,7 @@ fn section_label(theme: &crate::theme::Theme, label: &str) -> Div {
         .child(label.to_string())
         .text_size(px(12.0))
         .text_color(theme.accent_text)
-        .font_weight(FontWeight::BOLD)
+        .font_weight(FontWeight::SEMIBOLD)
 }
 
 fn group_title(theme: &crate::theme::Theme, title: &str) -> Div {
@@ -715,7 +715,7 @@ fn group_title(theme: &crate::theme::Theme, title: &str) -> Div {
         .child(title.to_string())
         .text_size(px(16.0))
         .text_color(theme.text)
-        .font_weight(FontWeight::BOLD)
+        .font_weight(FontWeight::SEMIBOLD)
 }
 
 fn help_text(theme: &crate::theme::Theme, text: &str) -> Div {
@@ -735,7 +735,7 @@ fn sub_label(theme: &crate::theme::Theme, label: &str) -> Div {
         .child(label.to_string())
         .text_size(px(12.0))
         .text_color(theme.muted)
-        .font_weight(FontWeight::BOLD)
+        .font_weight(FontWeight::SEMIBOLD)
 }
 
 fn static_field(id: &'static str, theme: &crate::theme::Theme, placeholder: &str, value: String) -> Stateful<Div> {
@@ -816,7 +816,7 @@ fn theme_choices(
                         .child(title)
                         .text_size(px(13.0))
                         .text_color(theme.text)
-                        .font_weight(FontWeight::BOLD),
+                        .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(
                     div()
@@ -947,7 +947,7 @@ fn combo(
                         .child(option)
                         .text_size(px(13.0))
                         .text_color(if index == selected { theme.text } else { theme.text_soft })
-                        .font_weight(if index == selected { FontWeight::BOLD } else { FontWeight::MEDIUM }),
+                        .font_weight(if index == selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
                 )
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.close_combo(id, cx);
@@ -984,7 +984,7 @@ fn chat_picker(
                 .child("Choose Telegram chat")
                 .text_size(px(12.0))
                 .text_color(theme.muted_soft)
-                .font_weight(FontWeight::BOLD),
+                .font_weight(FontWeight::SEMIBOLD),
         )
         .child(
             div()
