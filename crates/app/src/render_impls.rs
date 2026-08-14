@@ -706,13 +706,13 @@ impl crate::App {
                     let mut row = div()
                         .id(SharedString::from(format!("action-{action_id}")))
                         .w_full()
-                        .h(px(42.0))
+                        .h(px(46.0))
                         .px(px(12.0))
                         .cursor_pointer()
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(10.0))
+                        .gap(px(9.0))
                         .hover(|style| style.bg(theme.active.opacity(0.5)))
                         .bg(if is_selected { theme.active } else { theme.transparent() })
                         .opacity(if enabled { 1.0 } else { 0.45 })
@@ -727,7 +727,7 @@ impl crate::App {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(glyph, 13.0, if is_selected { theme.accent_text } else { theme.muted })),
+                                .child(icon(glyph, 15.0, if is_selected { theme.accent_text } else { theme.muted })),
                         )
                         .child(
                             div()
@@ -1362,7 +1362,7 @@ impl crate::App {
             section = section.child(
                 div()
                     .w_full()
-                    .h(px(28.0))
+                    .h(px(24.0))
                     .px(px(12.0))
                     .flex()
                     .items_center()
@@ -1378,7 +1378,7 @@ impl crate::App {
                 let mut item = div()
                     .id(SharedString::from(format!("sort-{value}")))
                     .w_full()
-                    .h(px(31.0))
+                    .h(px(28.0))
                     .px(px(12.0))
                     .cursor_pointer()
                     .flex()

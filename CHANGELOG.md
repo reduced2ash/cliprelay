@@ -776,3 +776,7 @@ release.
   matching the original's exclusive use of Font.DemiBold (it never uses
   Font.Bold 700); titles and labels are no longer heavier than the
   reference.
+
+- Command center rows are 46px tall with 15px glyphs and a 9px gap, and
+  the sort menu rows are 28px with 24px section headers, matching
+  CommandCenter.qml / LibrarySortControl.qml.
