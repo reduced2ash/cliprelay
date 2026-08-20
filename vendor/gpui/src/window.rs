@@ -1041,20 +1041,7 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                let dirty = invalidator.is_dirty() || request_frame_options.force_render;
-                static DRAW_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                static DIRTY_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                if dirty {
-                    DIRTY_SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                let n = DRAW_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if n % 250 == 0 {
-                    eprintln!(
-                        "[frame] callbacks={n} dirty_seen={}",
-                        DIRTY_SEEN.load(std::sync::atomic::Ordering::Relaxed)
-                    );
-                }
-                if dirty {
+                if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {

@@ -7,6 +7,7 @@ mod controller;
 use crate::settings_import::*;
 mod settings_import { pub use cliprelay_core::settings::*; }
 mod history;
+mod icons;
 mod library;
 mod prepare;
 mod settings_page;
@@ -128,6 +129,7 @@ pub struct App {
     pub window_size: (f32, f32),
     pub fields: HashMap<String, widgets::FieldState>,
     pub focused_field: Option<String>,
+    focus_handle: FocusHandle,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
     pub workspace_menu_open: bool,
@@ -254,6 +256,7 @@ impl App {
             } else {
                 None
             },
+            focus_handle: cx.focus_handle(),
             theme_mode: ThemeMode::Relay,
             ui_scale: 1.0,
             sidebar_collapsed: false,
@@ -384,19 +387,15 @@ impl App {
                 smol::Timer::after(std::time::Duration::from_millis(2500)).await;
                 if initial_page != Page::Library {
                     if let Some(this) = this.upgrade() {
-                        let applied = this
-                            .update(
-                                cx,
-                                |app: &mut crate::App,
-                                 _cx: &mut gpui::Context<crate::App>| {
-                                    app.page = initial_page;
-                                    _cx.notify();
-                                },
-                            )
-                            .is_ok();
-                        eprintln!("[boot] page switch applied={applied}");
-                    } else {
-                        eprintln!("[boot] page switch: entity gone");
+                        this.update(
+                            cx,
+                            |app: &mut crate::App,
+                             _cx: &mut gpui::Context<crate::App>| {
+                                app.page = initial_page;
+                                _cx.notify();
+                            },
+                        )
+                        .ok();
                     }
                 }
                 if open_command_at_boot_2 {
@@ -1212,10 +1211,14 @@ impl App {
         let keystroke = &event.keystroke;
         let key = keystroke.key.as_str();
         let modifiers = keystroke.modifiers;
-        // macOS: the Command key maps to `platform` in GPUI's keystrokes
-        // (verified against gpui 0.2.2's mac/events.rs); `control` is the
-        // physical Control key.
-        let cmd = modifiers.platform;
+        // GPUI maps the platform shortcut modifier to Command on macOS
+        // and the logo key elsewhere. ClipRelay follows desktop convention:
+        // Command on macOS, Control on Linux and Windows.
+        let cmd = if cfg!(target_os = "macos") {
+            modifiers.platform
+        } else {
+            modifiers.control
+        };
         let shift = modifiers.shift;
 
         // Text field editing takes priority.
@@ -1745,6 +1748,7 @@ impl App {
             .text_color(theme.text)
             .text_size(px(15.0))
             .font_family("System Font")
+            .track_focus(&self.focus_handle)
             .key_context("cliprelay")
             .on_key_down(cx.listener(|app, event, window, cx| {
                 app.on_key_down(event, window, cx);
@@ -1755,9 +1759,14 @@ impl App {
         // Context toolbar.
         root = root.child(self.render_context_toolbar(cx));
 
-        let mut body = div().id("body").flex_1().flex().flex_row().min_h(px(0.0));
+        let mut body = div()
+            .id("body")
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .min_h(px(0.0));
         body = body.child(self.render_sidebar(cx));
-        body = body.child(v_divider());
         let page = self.page;
         body = body.child(match page {
             Page::Library => {
@@ -2097,8 +2106,42 @@ fn apply_dock_icon() {
 #[cfg(not(target_os = "macos"))]
 fn apply_dock_icon() {}
 
+#[cfg(target_os = "linux")]
+fn should_prefer_x11(
+    desktop: Option<&str>,
+    display_available: bool,
+    wayland_available: bool,
+) -> bool {
+    display_available
+        && wayland_available
+        && desktop.is_some_and(|value| {
+            value
+                .split(':')
+                .any(|part| part.eq_ignore_ascii_case("niri"))
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_backend() {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let display_available = std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty());
+    let wayland_available =
+        std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
+
+    // GPUI 0.2.2's native Wayland Blade path can accept input under niri
+    // without presenting the resulting frames. Its X11 path presents
+    // reliably through XWayland, so prefer that path when it is available.
+    if should_prefer_x11(desktop.as_deref(), display_available, wayland_available) {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_linux_backend() {}
+
 fn main() {
     env_logger::init();
+    configure_linux_backend();
     let (mut window_width, mut window_height) = parse_cli_args();
     let cli_size = std::env::args().any(|a| {
         a == "--window-width" || a == "--window_width" || a == "--window-height" || a == "--window_height"
@@ -2109,7 +2152,7 @@ fn main() {
             window_height = saved_h;
         }
     }
-    Application::new().run(move |app| {
+    Application::new().with_assets(icons::ClipRelayAssets).run(move |app| {
         // After the platform is up (the gpui registers its NSApplication
         // ivars during init, so the icon must be applied later).
         apply_dock_icon();
@@ -2123,6 +2166,7 @@ fn main() {
             // layouts routinely give the app less; the adaptive header and
             // toolbar keep everything reachable down to this size.
             window_min_size: Some(size(px(700.0), px(520.0))),
+            app_id: Some("cliprelay".to_string()),
             titlebar: Some(TitlebarOptions {
                 title: Some("ClipRelay".into()),
                 // Custom flush title bar: the app's own header row is the
@@ -2135,8 +2179,12 @@ fn main() {
             }),
             ..Default::default()
         };
-        app.open_window(options, |_window, cx| cx.new(App::new))
-            .expect("failed to open window");
+        app.open_window(options, |window, cx| {
+            let view = cx.new(App::new);
+            window.focus(&view.read(cx).focus_handle);
+            view
+        })
+        .expect("failed to open window");
         // Quit when the window closes (gpui does not exit by default).
         app.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -2175,5 +2223,20 @@ mod page_tests {
         // Full-page replaces apply with a fresh generation.
         assert!(3 >= 3);
         assert!(!(2 >= 4));
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_backend_tests {
+    use super::should_prefer_x11;
+
+    #[test]
+    fn niri_prefers_x11_only_when_both_backends_are_available() {
+        assert!(should_prefer_x11(Some("niri"), true, true));
+        assert!(should_prefer_x11(Some("GNOME:niri"), true, true));
+        assert!(!should_prefer_x11(Some("niri"), false, true));
+        assert!(!should_prefer_x11(Some("niri"), true, false));
+        assert!(!should_prefer_x11(Some("GNOME"), true, true));
+        assert!(!should_prefer_x11(None, true, true));
     }
 }

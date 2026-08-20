@@ -955,40 +955,50 @@ impl crate::App {
     pub fn render_context_toolbar(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let page = self.page;
+        let wide = self.window_size.0 >= 1180.0;
+        let roomy = self.window_size.0 >= 1360.0;
+        let narrow = self.window_size.0 < 920.0;
         let mut toolbar = div()
             .id("context-toolbar")
             .w_full()
-            .h(px(42.0))
-            .px(px(16.0))
+            .min_w(px(0.0))
+            .h(px(38.0))
+            .px(px(8.0))
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(10.0));
+            .gap(px(6.0));
 
-        // Page band.
         let (page_icon, page_name) = match page {
-            Page::Library => ("▤", "LIBRARY"),
-            Page::History => ("◷", "HISTORY"),
-            Page::Settings => ("⚙", "SETTINGS"),
+            Page::Library => ("library", "LIBRARY"),
+            Page::History => ("history", "HISTORY"),
+            Page::Settings => ("settings", "SETTINGS"),
         };
-        toolbar = toolbar
-            .child(icon(page_icon, 16.0, theme.accent_text))
-            .child(
+        let mut page_band = div()
+            .flex_none()
+            .h(px(30.0))
+            .flex()
+            .items_center()
+            .gap(px(7.0))
+            .child(icon(page_icon, 15.0, theme.accent_text));
+        if !narrow {
+            page_band = page_band.child(
                 div()
                     .child(tracked(page_name))
-                    .text_size(px(10.0))
+                    .text_size(px(9.0))
                     .text_color(theme.text_soft)
                     .font_weight(FontWeight::SEMIBOLD),
-            )
-            .child(div().w(px(1.0)).h(px(18.0)).bg(theme.border));
+            );
+        }
+        toolbar = toolbar
+            .child(page_band)
+            .child(div().flex_none().w(px(1.0)).h(px(18.0)).bg(theme.border));
 
         match page {
             Page::Library => {
-                let toolbar_compact = self.window_size.0 < 1060.0;
-                let toolbar_narrow = self.window_size.0 < 880.0;
                 let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
                 let location = if self.active_folder.is_empty() {
                     self.settings_value(LIBRARY_ROOT)
@@ -1008,36 +1018,36 @@ impl crate::App {
                 } else {
                     location
                 };
-                // Explorer band (hidden on narrow windows).
-                if has_root && self.show_folders && !toolbar_narrow {
-                    toolbar = toolbar.child(
+
+                let mut context = div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(7.0));
+                if roomy && has_root && self.show_folders {
+                    context = context.child(
                         div()
-                            .h(px(30.0))
-                            .px(px(10.0))
+                            .flex_none()
+                            .h(px(28.0))
+                            .px(px(8.0))
                             .rounded(px(4.0))
                             .bg(theme.surface_soft)
                             .flex()
-                            .flex_row()
                             .items_center()
                             .gap(px(6.0))
-                            .child(icon("▤", 13.0, theme.muted))
+                            .child(icon("folders", 13.0, theme.muted))
                             .child(
                                 div()
-                                    .child(tracked("EXPLORER"))
+                                    .child(format!("{} folders", self.folders.len()))
                                     .text_size(px(10.0))
-                                    .text_color(theme.muted)
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            )
-                            .child(
-                                div()
-                                    .child(format!("{}", self.folders.len()))
-                                    .text_size(px(10.0))
-                                    .text_color(theme.muted_soft),
+                                    .text_color(theme.muted),
                             )
                             .child(workbench_button(
                                 "collapse-folders",
                                 "",
-                                "▴",
+                                "chevron-up",
                                 ButtonKind::Ghost,
                                 true,
                                 true,
@@ -1052,40 +1062,52 @@ impl crate::App {
                             )),
                     );
                 }
-                // Library context (text labels collapse on narrow windows).
-                toolbar = toolbar
-                    .child(icon("▤", 15.0, if has_root { theme.accent_text } else { theme.muted }))
+                context = context
+                    .child(icon(
+                        "folder",
+                        14.0,
+                        if has_root { theme.accent_text } else { theme.muted },
+                    ))
+                    .when(!narrow, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .child("Video library")
+                                .text_size(px(12.0))
+                                .text_color(if has_root { theme.text } else { theme.muted })
+                                .font_weight(FontWeight::SEMIBOLD),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .child("/")
+                                .text_size(px(12.0))
+                                .text_color(theme.muted_soft),
+                        )
+                    })
                     .child(
                         div()
-                            .when(!toolbar_narrow, |this| {
-                                this.child("Video library")
-                            })
-                            .text_size(px(12.0))
-                            .text_color(if has_root { theme.accent_text } else { theme.muted })
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        div()
-                            .when(!toolbar_narrow, |this| this.child("/"))
-                            .text_size(px(12.0))
-                            .text_color(theme.muted),
-                    )
-                    .child(
-                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
                             .child(location)
                             .text_size(px(12.0))
                             .text_color(theme.text_soft)
-                            .max_w(px(if toolbar_narrow { 130.0 } else { 220.0 }))
                             .text_ellipsis(),
-                    )
-                    .child(div().flex_1())
+                    );
+
+                let mut actions = div()
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
                     .child(workbench_button(
                         "toggle-folders",
                         if self.show_folders { "Hide folders" } else { "Show folders" },
-                        "▤",
+                        "panel-left",
                         ButtonKind::Ghost,
                         has_root,
-                        toolbar_compact,
+                        !wide,
                         "Toggle the hierarchical folder column",
                         cx,
                         |app, cx| {
@@ -1096,21 +1118,19 @@ impl crate::App {
                     .child(workbench_button(
                         "choose-root",
                         "",
-                        "▸",
+                        "folder",
                         ButtonKind::Ghost,
                         true,
                         true,
-                        "Choose root",
+                        "Choose library root",
                         cx,
-                        |app, cx| {
-                            app.choose_library_folder(cx);
-                        },
+                        |app, cx| app.choose_library_folder(cx),
                     ));
-                // Sort control.
+
                 let sort_label = match self
                     .settings
                     .get(SORT_MODE)
-                    .and_then(|v| v.as_str())
+                    .and_then(|value| value.as_str())
                     .unwrap_or("newest")
                 {
                     "newest" => "Newest",
@@ -1120,27 +1140,37 @@ impl crate::App {
                     "size" => "Size",
                     _ => "Newest",
                 };
-                toolbar = toolbar.child(
+                actions = actions.child(
                     div()
                         .id("sort-trigger")
+                        .flex_none()
                         .h(px(30.0))
-                        .px(px(10.0))
+                        .px(if narrow { px(0.0) } else { px(8.0) })
+                        .w(if narrow { px(30.0) } else { px(0.0) })
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .bg(if self.sort_menu_open { theme.active } else { theme.transparent() })
                         .border_1()
                         .border_color(if self.sort_menu_open { theme.accent } else { theme.transparent() })
+                        .hover(|style| style.bg(theme.hover))
                         .flex()
-                        .flex_row()
                         .items_center()
-                        .gap(px(6.0))
-                        .child(
-                            div()
-                                .child(sort_label)
-                                .text_size(px(12.0))
-                                .text_color(theme.text_soft),
-                        )
-                        .child(icon(if self.sort_menu_open { "▴" } else { "▾" }, 10.0, theme.muted))
+                        .justify_center()
+                        .gap(px(5.0))
+                        .when(!narrow, |this| {
+                            this.child(
+                                div()
+                                    .child(sort_label)
+                                    .text_size(px(12.0))
+                                    .text_color(theme.text_soft),
+                            )
+                        })
+                        .child(icon(
+                            if self.sort_menu_open { "chevron-up" } else { "chevron-down" },
+                            13.0,
+                            theme.muted,
+                        ))
+                        .tooltip(move |_window, cx| crate::tooltip_view(cx, "Sort library".into()))
                         .on_click(cx.listener(|app, _event, _window, cx| {
                             if app.sort_menu_open {
                                 app.sort_menu_open = false;
@@ -1151,7 +1181,7 @@ impl crate::App {
                             cx.notify();
                         })),
                 );
-                // Rescan.
+
                 let scanning = self.scan.active;
                 let cancelling = self.scan.cancelling;
                 let scanning_label = if cancelling {
@@ -1161,13 +1191,13 @@ impl crate::App {
                 } else {
                     "Rescan"
                 };
-                toolbar = toolbar.child(workbench_button(
+                actions = actions.child(workbench_button(
                     "rescan",
                     scanning_label,
-                    if cancelling { "■" } else if scanning { "▣" } else { "↻" },
+                    if cancelling || scanning { "square" } else { "refresh" },
                     ButtonKind::Ghost,
                     !(scanning && cancelling),
-                    toolbar_compact,
+                    !wide,
                     "Rescan library",
                     cx,
                     |app, cx| {
@@ -1179,58 +1209,34 @@ impl crate::App {
                         cx.notify();
                     },
                 ));
-                // Prepare band when the dock is visible. The name and "/"
-                // collapse on narrow windows / narrow docks (mirrors the
-                // original's prepareWidth >= 470 gate).
-                let prepare_name_visible =
-                    !toolbar_narrow && self.prepare_dock_width() >= 470.0;
+
                 if self.selected.is_some() && !self.prepare.studio_mode {
-                    toolbar = toolbar
-                        .child(div().w(px(1.0)).h(px(18.0)).bg(theme.border))
-                        .child(icon("✎", 14.0, theme.accent_text))
-                        .child(
-                            div()
-                                .child("Prepare")
-                                .text_size(px(12.0))
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::SEMIBOLD),
-                        )
-                        .when(prepare_name_visible, |this| {
+                    actions = actions
+                        .child(div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(3.0)).bg(theme.border))
+                        .child(icon("pencil", 14.0, theme.accent_text))
+                        .when(roomy, |this| {
                             this.child(
                                 div()
-                                    .child("/")
+                                    .child("Prepare")
                                     .text_size(px(12.0))
-                                    .text_color(theme.muted),
+                                    .text_color(theme.text)
+                                    .font_weight(FontWeight::SEMIBOLD),
                             )
                         })
-                        .when(prepare_name_visible, |this| {
+                        .when(self.prepare.has_edits(), |this| {
                             this.child(
                                 div()
-                                    .child(
-                                        self.selected
-                                            .as_ref()
-                                            .map(|m| m.name.clone())
-                                            .unwrap_or_default(),
-                                    )
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text_soft)
-                                    .max_w(px(180.0))
-                                    .text_ellipsis(),
+                                    .id("toolbar-edited")
+                                    .child(icon("square", 12.0, theme.accent_text))
+                                    .tooltip(move |_window, cx| {
+                                        crate::tooltip_view(cx, "Frame edits active".into())
+                                    }),
                             )
-                        })
-                        .child(if self.prepare.has_edits() {
-                            div()
-                                .id("toolbar-edited")
-                                .child(icon("▣", 14.0, theme.accent_text))
-                                .tooltip(move |_window, cx| crate::tooltip_view(cx, "Frame edits active".into()))
-                                .into_any()
-                        } else {
-                            div().into_any()
                         })
                         .child(workbench_button(
                             "toolbar-open-player",
                             "",
-                            "↗",
+                            "external-link",
                             ButtonKind::Ghost,
                             true,
                             true,
@@ -1241,7 +1247,7 @@ impl crate::App {
                         .child(workbench_button(
                             "toolbar-widen",
                             "",
-                            "⇔",
+                            "expand-horizontal",
                             ButtonKind::Ghost,
                             true,
                             true,
@@ -1254,7 +1260,7 @@ impl crate::App {
                         .child(workbench_button(
                             "toolbar-fullscreen",
                             "",
-                            "⛶",
+                            "maximize",
                             ButtonKind::Ghost,
                             true,
                             true,
@@ -1268,7 +1274,7 @@ impl crate::App {
                         .child(workbench_button(
                             "toolbar-close",
                             "",
-                            "✕",
+                            "x",
                             ButtonKind::Ghost,
                             true,
                             true,
@@ -1280,21 +1286,28 @@ impl crate::App {
                             },
                         ));
                 }
+                toolbar = toolbar.child(context).child(actions);
             }
             Page::History => {
                 toolbar = toolbar.child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .child("Recorded relays and delivery outcomes")
                         .text_size(px(12.0))
-                        .text_color(theme.muted),
+                        .text_color(theme.muted)
+                        .text_ellipsis(),
                 );
             }
             Page::Settings => {
                 toolbar = toolbar.child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .child("Application preferences and integrations")
                         .text_size(px(12.0))
-                        .text_color(theme.muted),
+                        .text_color(theme.muted)
+                        .text_ellipsis(),
                 );
             }
         }
@@ -1861,25 +1874,28 @@ impl crate::App {
     pub fn render_header(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
-        let random_enabled = has_root;
         let picking = self.random_picking;
-
+        let width = self.window_size.0;
+        let compact = width < 1220.0;
+        let narrow = width < 960.0;
+        let tiny = width < 790.0;
+        let titlebar_leading = if cfg!(target_os = "macos") { 96.0 } else { 8.0 };
         let mut header = div()
             .id("header")
             .w_full()
+            .min_w(px(0.0))
             .h(px(40.0))
-            .pl(px(96.0)) // clears the traffic lights on the flush title bar
-            .pr(px(16.0))
+            .pl(px(titlebar_leading))
+            .pr(px(8.0))
+            .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
             .relative()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0));
+            .gap(px(6.0));
 
-        // Window-drag region: the title-bar background moves the window;
-        // interactive children sit above it and receive their own clicks.
         header = header.child(
             div()
                 .id("titlebar-drag")
@@ -1894,70 +1910,68 @@ impl crate::App {
                     }
                 }))
                 .on_click(cx.listener(|_app, event: &gpui::ClickEvent, window, _cx| {
-                    // Double-click the title bar zooms the window.
                     if event.click_count() >= 2 && !window.is_fullscreen() {
                         window.zoom_window();
                     }
                 })),
         );
 
-        // Command palette (primary, like the original's first title-bar
-        // button).
-        header = header.child(workbench_button(
-            "command-palette",
-            "",
-            ">_",
-            ButtonKind::Primary,
-            true,
-            true,
-            "Command palette  ·  ⌘⇧P",
-            cx,
-            |app, cx| {
-                if app.command_open {
-                    app.close_command_center();
-                } else {
-                    app.command_scope = "commands".to_string();
-                    app.command_query.clear();
-                    let state = app.field_state_mut("command-center");
-                    state.text.clear();
-                    state.caret = 0;
-                    app.open_command_center(cx);
-                }
-                cx.notify();
-            },
-        )
-        .w(px(28.0)));
+        header = header.child(
+            workbench_button(
+                "command-palette",
+                "",
+                "terminal",
+                ButtonKind::Primary,
+                true,
+                true,
+                "Command palette  ·  ⌘⇧P",
+                cx,
+                |app, cx| {
+                    if app.command_open {
+                        app.close_command_center();
+                    } else {
+                        app.command_scope = "commands".to_string();
+                        app.command_query.clear();
+                        let state = app.field_state_mut("command-center");
+                        state.text.clear();
+                        state.caret = 0;
+                        app.open_command_center(cx);
+                    }
+                    cx.notify();
+                },
+            )
+            .w(px(28.0)),
+        );
 
-        // Back / forward.
         let can_back = self
             .workspaces
             .get(self.active_workspace_index)
-            .map(|w| w.has_back)
+            .map(|workspace| workspace.has_back)
             .unwrap_or(false);
         let can_forward = self
             .workspaces
             .get(self.active_workspace_index)
-            .map(|w| w.has_forward)
+            .map(|workspace| workspace.has_forward)
             .unwrap_or(false);
-        header = header
-            .child(workbench_button(
-                "nav-back",
-                "Go back",
-                "←",
-                ButtonKind::Ghost,
-                can_back,
-                true,
-                "Go back  ·  ⌘[",
-                cx,
-                |app, cx| {
-                    app.command(Command::NavigateBack);
-                    cx.notify();
-                },
-            ))
-            .child(workbench_button(
+        header = header.child(workbench_button(
+            "nav-back",
+            "",
+            "chevron-left",
+            ButtonKind::Ghost,
+            can_back,
+            true,
+            "Go back  ·  ⌘[",
+            cx,
+            |app, cx| {
+                app.command(Command::NavigateBack);
+                cx.notify();
+            },
+        ));
+        if !tiny {
+            header = header.child(workbench_button(
                 "nav-forward",
-                "Go forward",
-                "→",
+                "",
+                "chevron-right",
                 ButtonKind::Ghost,
                 can_forward,
                 true,
@@ -1968,44 +1982,46 @@ impl crate::App {
                     cx.notify();
                 },
             ));
+        }
 
-        // Command center field (library search). The field shrinks on
-        // narrow windows instead of pushing the right-side buttons out.
-        // Tiers mirror the original: compact <1120, veryCompact <1000.
-        let header_compact = self.window_size.0 < 1120.0;
-        let header_very_compact = self.window_size.0 < 1000.0;
+        let empty_field = FieldState::default();
         header = header.child(
             crate::widgets::field_with_icon_hint(
                 "command-center",
                 if self.effective_command_scope() == "commands" {
                     "Run a command"
+                } else if tiny {
+                    "Search ClipRelay"
                 } else {
                     "Search videos, folders, and commands"
                 },
-                self.fields.get("command-center").unwrap_or(&FieldState::default()),
+                self.fields.get("command-center").unwrap_or(&empty_field),
                 self.focused_field.as_deref() == Some("command-center"),
                 true,
                 false,
-                Some("⌕"),
-                Some("⌘K"),
+                Some("search"),
+                if narrow { None } else { Some("⌘K") },
                 cx,
             )
             .flex_1()
-            .max_w(px(860.0))
-            .min_w(px(if header_very_compact { 230.0 } else { 280.0 })),
+            .min_w(px(if tiny { 120.0 } else if narrow { 180.0 } else { 240.0 }))
+            .max_w(px(720.0))
+            .h(px(30.0))
+            .px(px(10.0))
+            .rounded(px(5.0))
+            .bg(theme.ink),
         );
 
-        // Clear-search affordance.
         let has_query = !self
             .fields
             .get("command-center")
-            .map(|f| f.text.trim().is_empty())
+            .map(|field| field.text.trim().is_empty())
             .unwrap_or(true);
-        if has_query {
+        if has_query && !narrow {
             header = header.child(workbench_button(
                 "clear-search",
                 "",
-                "✕",
+                "x",
                 ButtonKind::Ghost,
                 true,
                 true,
@@ -2027,14 +2043,12 @@ impl crate::App {
             ));
         }
 
-        // Background activity indicator + popup.
-        let activity_active = self.scan.active
-            || self.checking
-            || self.timeline_loading
-            || self.publish.active;
+        let activity_active =
+            self.scan.active || self.checking || self.timeline_loading || self.publish.active;
         header = header.child(
             div()
                 .id("activity-button")
+                .flex_none()
                 .h(px(WORKBENCH_CONTROL_HEIGHT))
                 .w(px(WORKBENCH_CONTROL_HEIGHT))
                 .rounded(px(4.0))
@@ -2044,28 +2058,31 @@ impl crate::App {
                 .items_center()
                 .justify_center()
                 .bg(if self.activity_open { theme.active } else { theme.transparent() })
-                .child(icon("⚡", 14.0, theme.muted))
-                .child(if activity_active {
-                    div()
-                        .absolute()
-                        .top_0()
-                        .right_0()
-                        .w(px(6.0))
-                        .h(px(6.0))
-                        .rounded(px(3.0))
-                        .bg(theme.accent)
-                        .border_1()
-                        .border_color(theme.ink)
-                        .into_any()
-                } else {
-                    div().into_any()
+                .hover(|style| style.bg(theme.hover))
+                .child(icon("activity", 15.0, theme.muted))
+                .when(activity_active, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top(px(3.0))
+                            .right(px(3.0))
+                            .w(px(6.0))
+                            .h(px(6.0))
+                            .rounded(px(3.0))
+                            .bg(theme.accent)
+                            .border_1()
+                            .border_color(theme.surface),
+                    )
                 })
                 .tooltip(move |_window, cx| {
-                    crate::tooltip_view(cx, if activity_active {
-                        SharedString::from("Background activity")
-                    } else {
-                        SharedString::from("No background work  ·  View activity")
-                    })
+                    crate::tooltip_view(
+                        cx,
+                        if activity_active {
+                            "Background activity".into()
+                        } else {
+                            "No background work  ·  View activity".into()
+                        },
+                    )
                 })
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     if app.activity_open {
@@ -2078,64 +2095,59 @@ impl crate::App {
                 })),
         );
 
-        // Random source summary button.
         let summary = self.random_summary.clone();
-        let has_selection = self.random_has_selection;
-        // Random source summary (the trailing chevron mirrors the original).
-        {
-            let kind = if has_selection || self.random_popup_open {
-                ButtonKind::Secondary
-            } else {
-                ButtonKind::Ghost
-            };
+        if narrow {
+            let tooltip: SharedString = format!("Random sources: {summary}").into();
+            header = header.child(workbench_button(
+                "random-sources",
+                "",
+                "folders",
+                if self.random_popup_open { ButtonKind::Secondary } else { ButtonKind::Ghost },
+                has_root,
+                true,
+                tooltip,
+                cx,
+                |app, cx| app.toggle_random_popup(cx),
+            ));
+        } else {
+            let tooltip: SharedString = format!("Random sources: {summary}").into();
             let mut sources = div()
                 .id("random-sources")
                 .flex_none()
                 .h(px(WORKBENCH_CONTROL_HEIGHT))
-                .px(px(10.0))
-                .w(px(if header_compact { 132.0 } else { 150.0 }))
+                .px(px(9.0))
+                .w(px(if compact { 128.0 } else { 150.0 }))
                 .rounded(px(4.0))
                 .flex()
                 .items_center()
-                .justify_between()
                 .gap(px(6.0))
                 .cursor_pointer()
-                .text_size(px(12.0))
-                .font_weight(FontWeight::MEDIUM)
-                .tooltip({
-                    let tooltip: SharedString = format!("Random sources: {summary}").into();
-                    move |_window, cx| crate::tooltip_view(cx, tooltip.clone())
+                .bg(if self.random_has_selection || self.random_popup_open {
+                    theme.raised
+                } else {
+                    theme.transparent()
                 })
-                .when(!random_enabled, |this| this.opacity(0.42).cursor_default());
-            match kind {
-                ButtonKind::Secondary => {
-                    sources = sources.bg(theme.raised).border_1().border_color(theme.border).text_color(theme.text);
-                }
-                _ => {
-                    sources = sources
-                        .text_color(theme.muted)
-                        .active(|style| style.bg(theme.active).text_color(theme.text));
-                }
-            }
-            sources = sources
-                .child(icon("▤", 13.0, theme.muted))
+                .border_1()
+                .border_color(if self.random_popup_open { theme.accent } else { theme.transparent() })
+                .hover(|style| style.bg(theme.hover))
+                .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
+                .when(!has_root, |this| this.opacity(0.42).cursor_default())
+                .child(icon("folders", 14.0, theme.muted))
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.0))
-                        .child(if header_very_compact {
-                            summary.chars().take(12).collect::<String>()
-                        } else {
-                            summary.clone()
-                        })
+                        .child(summary)
+                        .text_size(px(12.0))
+                        .text_color(theme.text_soft)
                         .text_ellipsis(),
                 )
                 .child(icon(
-                    if self.random_popup_open { "▴" } else { "▾" },
-                    9.0,
+                    if self.random_popup_open { "chevron-up" } else { "chevron-down" },
+                    12.0,
                     theme.muted,
                 ));
-            if random_enabled {
+            if has_root {
                 sources = sources.on_click(cx.listener(|app, _event, _window, cx| {
                     app.toggle_random_popup(cx);
                 }));
@@ -2143,14 +2155,13 @@ impl crate::App {
             header = header.child(sources);
         }
 
-        // Reset shuffle (hidden when compact, like the original).
-        if !header_compact {
+        if !compact {
             header = header.child(workbench_button(
                 "reset-shuffle",
                 "",
-                "↺",
+                "refresh",
                 ButtonKind::Ghost,
-                random_enabled,
+                has_root,
                 true,
                 "Reset shuffle history",
                 cx,
@@ -2161,10 +2172,10 @@ impl crate::App {
             ));
         }
 
-        // Pick random (short label when very compact, like the original).
-        let label = if picking {
+        let pick_icon_only = tiny;
+        let pick_label = if picking {
             "Picking…"
-        } else if header_very_compact {
+        } else if narrow {
             "Random"
         } else {
             "Pick random"
@@ -2172,11 +2183,11 @@ impl crate::App {
         header = header.child(
             workbench_button(
                 "pick-random",
-                label,
-                "⇄",
+                pick_label,
+                "shuffle",
                 ButtonKind::Primary,
-                random_enabled,
-                false,
+                has_root,
+                pick_icon_only,
                 "Pick random video  ·  R",
                 cx,
                 |app, cx| {
@@ -2184,9 +2195,11 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(if header_very_compact {
-                96.0
-            } else if header_compact {
+            .w(px(if tiny {
+                30.0
+            } else if narrow {
+                88.0
+            } else if compact {
                 112.0
             } else {
                 128.0
@@ -2200,25 +2213,23 @@ impl crate::App {
         let theme = self.theme.clone();
         let workspaces = self.workspaces.clone();
         let active_index = self.active_workspace_index;
-        let mut bar = div()
-            .id("workspace-tabs")
-            .w_full()
-            .h(px(34.0))
-            .px(px(8.0))
-            .bg(theme.surface)
-            .border_t_1()
-            .border_color(theme.border)
+        let action_rail_width = 68.0;
+        let available = (self.window_size.0 - action_rail_width - 8.0).max(160.0);
+        let tab_width = (available / workspaces.len().max(1) as f32).clamp(132.0, 218.0);
+        let renaming = self.renaming_workspace;
+        let empty_field = FieldState::default();
+        let mut tabs = div()
+            .id("workspace-tabs-scroll")
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.0))
             .overflow_x_scroll()
-            .scrollbar_width(px(8.0))
+            .scrollbar_width(px(4.0))
             .track_scroll(&self.tab_scroll);
 
-        let available = (self.window_size.0 - 24.0).max(200.0);
-        let tab_width = (available / workspaces.len().max(1) as f32).clamp(150.0, 218.0);
-        let renaming = self.renaming_workspace;
         for (index, workspace) in workspaces.iter().enumerate() {
             let id = workspace.id.clone();
             let middle_click_id = id.clone();
@@ -2232,19 +2243,18 @@ impl crate::App {
                 .id(SharedString::from(format!("tab-{id}")))
                 .w(px(tab_width))
                 .flex_none()
-                .h(px(34.0))
-                .px(px(10.0))
-                .rounded_b(px(6.0))
+                .h_full()
+                .px(px(9.0))
                 .relative()
                 .cursor_pointer()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.0))
-                .bg(if active { theme.active } else { theme.transparent() })
-                .when(active, |this| {
-                    this.border_t_2().border_color(theme.accent)
-                })
+                .gap(px(7.0))
+                .bg(if active { theme.raised } else { theme.transparent() })
+                .border_r_1()
+                .border_color(theme.border)
+                .hover(|style| style.bg(theme.hover))
                 .tooltip({
                     let title = title.clone();
                     let root = root.clone();
@@ -2261,52 +2271,61 @@ impl crate::App {
                         crate::tooltip_view(cx, tip.into())
                     }
                 })
-                .child(
-                    div()
-                        .child(if cancelling {
-                            "■"
-                        } else if scanning {
-                            "↻"
-                        } else {
-                            "▤"
-                        })
-                        .text_size(px(14.0))
-                        .text_color(if active || scanning { theme.accent_text } else { theme.muted }),
-                );
+                .child(icon(
+                    if cancelling {
+                        "square"
+                    } else if scanning {
+                        "refresh"
+                    } else {
+                        "folder"
+                    },
+                    14.0,
+                    if active || scanning { theme.accent_text } else { theme.muted },
+                ));
             if is_renaming {
                 tab = tab.child(
                     field(
                         "workspace-rename",
                         "",
-                        self.fields.get("workspace-rename").unwrap_or(&FieldState::default()),
+                        self.fields.get("workspace-rename").unwrap_or(&empty_field),
                         self.focused_field.as_deref() == Some("workspace-rename"),
                         true,
                         false,
                         cx,
                     )
-                    .flex_1(),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h(px(26.0))
+                    .px(px(6.0)),
                 );
             } else {
                 tab = tab
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.0))
                             .child(title)
                             .text_size(px(12.0))
                             .text_color(if active { theme.text } else { theme.text_soft })
-                            .font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                            .font_weight(if active {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::MEDIUM
+                            })
                             .text_ellipsis(),
                     )
                     .child(
                         div()
                             .id(SharedString::from(format!("tab-close-{id}")))
+                            .flex_none()
                             .w(px(22.0))
                             .h(px(22.0))
                             .rounded(px(4.0))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(icon("✕", 11.0, theme.muted_soft))
+                            .hover(|style| style.bg(theme.active))
+                            .child(icon("x", 12.0, theme.muted_soft))
                             .on_click(cx.listener(move |app, _event, _window, cx| {
                                 app.pending_close_workspace = Some(index);
                                 app.command(Command::CloseWorkspace(id.clone()));
@@ -2318,7 +2337,6 @@ impl crate::App {
                 .on_mouse_down(gpui::MouseButton::Middle, {
                     let close_id = middle_click_id.clone();
                     cx.listener(move |app, _event, _window, cx| {
-                        // Middle-click closes the tab (mirrors the original).
                         app.command(Command::CloseWorkspace(close_id.clone()));
                         cx.notify();
                     })
@@ -2330,7 +2348,11 @@ impl crate::App {
                     }
                     if event.click_count() >= 2 && app.renaming_workspace != Some(index) {
                         app.renaming_workspace = Some(index);
-                        let title = app.workspaces.get(index).map(|w| w.title.clone()).unwrap_or_default();
+                        let title = app
+                            .workspaces
+                            .get(index)
+                            .map(|workspace| workspace.title.clone())
+                            .unwrap_or_default();
                         let state = app.field_state_mut("workspace-rename");
                         state.text = title;
                         state.caret = state.text.chars().count();
@@ -2362,59 +2384,75 @@ impl crate::App {
                         .bg(theme.accent),
                 );
             }
-            bar = bar.child(tab);
+            tabs = tabs.child(tab);
         }
 
-        // Keep the active tab inside the viewport (Ctrl+Tab cycling with
-        // many open workspaces).
-        {
-            let gap = 4.0;
-            let active_left = 8.0 + active_index as f32 * (tab_width + gap);
-            let scroll = f32::from(self.tab_scroll.offset().x);
-            let viewport = (self.window_size.0 - 16.0).max(100.0);
-            if active_left < scroll {
-                self.tab_scroll.set_offset(point(px(active_left - 8.0), px(0.0)));
-            } else if active_left + tab_width > scroll + viewport {
-                self.tab_scroll
-                    .set_offset(point(px(active_left + tab_width - viewport + 8.0), px(0.0)));
-            }
+        let gap = 0.0;
+        let active_left = active_index as f32 * (tab_width + gap);
+        let scroll = f32::from(self.tab_scroll.offset().x);
+        let viewport_width = available.max(100.0);
+        if active_left < scroll {
+            self.tab_scroll.set_offset(point(px(active_left), px(0.0)));
+        } else if active_left + tab_width > scroll + viewport_width {
+            self.tab_scroll
+                .set_offset(point(px(active_left + tab_width - viewport_width), px(0.0)));
         }
 
-        // New workspace + actions.
-        bar = bar.child(workbench_button(
-            "new-workspace",
-            "",
-            "+",
-            ButtonKind::Ghost,
-            true,
-            true,
-            "New workspace",
-            cx,
-            |app, cx| {
-                app.choose_new_workspace_folder(cx);
-            },
-        ));
-        bar = bar.child(workbench_button(
-            "workspace-actions",
-            "",
-            "⋯",
-            ButtonKind::Ghost,
-            true,
-            true,
-            "Workspace actions",
-            cx,
-            |app, cx| {
-                app.workspace_menu_target = app.active_workspace_index;
-                if app.workspace_menu_open {
-                    app.workspace_menu_open = false;
-                    app.mark_menu_closed();
-                } else if app.menu_reopen_allowed() {
-                    app.workspace_menu_open = true;
-                }
-                cx.notify();
-            },
-        ));
-        bar
+        let actions = div()
+            .flex_none()
+            .w(px(action_rail_width))
+            .h_full()
+            .px(px(4.0))
+            .border_l_1()
+            .border_color(theme.border)
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .child(workbench_button(
+                "new-workspace",
+                "",
+                "plus",
+                ButtonKind::Ghost,
+                true,
+                true,
+                "New workspace",
+                cx,
+                |app, cx| app.choose_new_workspace_folder(cx),
+            ))
+            .child(workbench_button(
+                "workspace-actions",
+                "",
+                "ellipsis",
+                ButtonKind::Ghost,
+                true,
+                true,
+                "Workspace actions",
+                cx,
+                |app, cx| {
+                    app.workspace_menu_target = app.active_workspace_index;
+                    if app.workspace_menu_open {
+                        app.workspace_menu_open = false;
+                        app.mark_menu_closed();
+                    } else if app.menu_reopen_allowed() {
+                        app.workspace_menu_open = true;
+                    }
+                    cx.notify();
+                },
+            ));
+
+        div()
+            .id("workspace-tabs")
+            .w_full()
+            .min_w(px(0.0))
+            .h(px(34.0))
+            .bg(theme.surface)
+            .border_t_1()
+            .border_color(theme.border)
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(tabs)
+            .child(actions)
     }
 
     pub fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -2429,49 +2467,70 @@ impl crate::App {
             .flex_none()
             .h_full()
             .bg(theme.surface)
-            .px(if collapsed { px(10.0) } else { px(14.0) })
+            .border_r_1()
+            .border_color(theme.border)
+            .px(if collapsed { px(8.0) } else { px(10.0) })
             .py(px(8.0))
             .flex()
             .flex_col()
-            .gap(px(5.0));
+            .gap(px(3.0));
 
         let nav_item = |app: &mut crate::App,
-                            id: &'static str,
-                            label: &'static str,
-                            glyph: &'static str,
-                            target: Page,
-                            cx: &mut Context<crate::App>|
+                        id: &'static str,
+                        label: &'static str,
+                        glyph: &'static str,
+                        target: Page,
+                        cx: &mut Context<crate::App>|
          -> Stateful<Div> {
             let selected = page == target;
             let theme = app.theme.clone();
             let mut item = div()
                 .id(id)
                 .w_full()
-                .h(px(48.0))
-                .rounded(px(if collapsed { 12.0 } else { 10.0 }))
+                .h(px(44.0))
+                .px(if collapsed { px(0.0) } else { px(9.0) })
+                .rounded(px(6.0))
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
                 .justify_center()
-                .gap(px(10.0))
+                .gap(px(9.0))
                 .cursor_pointer()
                 .bg(if selected { theme.active } else { theme.transparent() })
-                .child(
-                    div()
-                        .child(glyph)
-                        .text_size(px(21.0))
-                        .text_color(if selected { theme.accent } else { theme.muted }),
-                );
+                .hover(|style| style.bg(theme.hover))
+                .child(icon(
+                    glyph,
+                    17.0,
+                    if selected { theme.accent_text } else { theme.muted },
+                ));
             if !collapsed {
-                item = item
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(label)
-                            .text_size(px(15.0))
-                            .text_color(if selected { theme.text } else { theme.muted })
-                            .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
-                    );
+                item = item.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(label)
+                        .text_size(px(13.0))
+                        .text_color(if selected { theme.text } else { theme.muted })
+                        .font_weight(if selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
+                        .text_ellipsis(),
+                );
+            }
+            if selected {
+                item = item.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(px(10.0))
+                        .w(px(2.0))
+                        .h(px(24.0))
+                        .rounded_r(px(1.0))
+                        .bg(theme.accent),
+                );
             }
             item.on_click(cx.listener(move |app, _event, _window, cx| {
                 app.page = target;
@@ -2480,55 +2539,55 @@ impl crate::App {
         };
 
         sidebar = sidebar
-            .child(nav_item(self, "nav-library", "Library", "▤", Page::Library, cx))
-            .child(nav_item(self, "nav-history", "History", "◷", Page::History, cx))
-            .child(nav_item(self, "nav-settings", "Settings", "⚙", Page::Settings, cx));
-
-        sidebar = sidebar.child(div().flex_1());
-        // Collapse toggle.
-        sidebar = sidebar.child(
-            div()
-                .id("toggle-sidebar")
-                .w_full()
-                .h(px(48.0))
-                .rounded(px(10.0))
-                .cursor_pointer()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap(px(10.0))
-                .child(icon(if collapsed { "▸" } else { "◂" }, 18.0, theme.muted))
-                .when(!collapsed, |this| {
-                    this.child(
-                        div()
-                            .flex_1()
-                            .child(if collapsed {
-                                "Expand sidebar"
-                            } else {
-                                "Collapse sidebar"
-                            })
-                            .text_size(px(13.0))
-                            .text_color(theme.muted),
-                    )
-                })
-                .opacity(if narrow { 0.45 } else { 1.0 })
-                .tooltip(move |_window, cx| {
-                    let text = if narrow {
-                        "Widen the window to expand the sidebar".to_string()
-                    } else if collapsed {
-                        "Expand sidebar".to_string()
-                    } else {
-                        "Collapse sidebar".to_string()
-                    };
-                    crate::tooltip_view(cx, text.into())
-                })
-                .on_click(cx.listener(|app, _event, _window, cx| {
-                    if app.window_size.0 >= 1080.0 {
-                        app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
-                    }
-                })),
-        );
+            .child(nav_item(self, "nav-library", "Library", "library", Page::Library, cx))
+            .child(nav_item(self, "nav-history", "History", "history", Page::History, cx))
+            .child(nav_item(self, "nav-settings", "Settings", "settings", Page::Settings, cx))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("toggle-sidebar")
+                    .w_full()
+                    .h(px(44.0))
+                    .px(if collapsed { px(0.0) } else { px(9.0) })
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(9.0))
+                    .hover(|style| style.bg(theme.hover))
+                    .child(icon(
+                        if collapsed { "chevron-right" } else { "chevron-left" },
+                        16.0,
+                        theme.muted,
+                    ))
+                    .when(!collapsed, |this| {
+                        this.child(
+                            div()
+                                .flex_1()
+                                .child("Collapse sidebar")
+                                .text_size(px(12.0))
+                                .text_color(theme.muted),
+                        )
+                    })
+                    .opacity(if narrow { 0.45 } else { 1.0 })
+                    .tooltip(move |_window, cx| {
+                        let text = if narrow {
+                            "Widen the window to expand the sidebar"
+                        } else if collapsed {
+                            "Expand sidebar"
+                        } else {
+                            "Collapse sidebar"
+                        };
+                        crate::tooltip_view(cx, text.into())
+                    })
+                    .on_click(cx.listener(|app, _event, _window, cx| {
+                        if app.window_size.0 >= 1080.0 {
+                            app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                        }
+                    })),
+            );
         sidebar
     }
 
@@ -3502,25 +3561,34 @@ impl crate::App {
     /// Width of the docked Prepare panel.
     pub fn prepare_dock_width(&self) -> f32 {
         let window = self.window_size.0;
-        let sidebar = if self.sidebar_collapsed {
+        let sidebar = if self.sidebar_collapsed || window < 1080.0 {
             SIDEBAR_COLLAPSED_WIDTH
         } else {
             SIDEBAR_EXPANDED_WIDTH
         };
         let page_width = (window - sidebar).max(1.0);
-        if self.prepare_expanded {
-            // Port of the original's expanded formula: the dock widens when
-            // space allows but never squeezes the grid below 460px.
-            let base = (page_width * 0.34).clamp(360.0, 420.0);
-            let explorer = if self.explorer_visible() {
-                EXPLORER_WIDTH
-            } else {
-                0.0
-            };
-            let grid_floor = (page_width - explorer - 460.0).max(1.0);
-            base.max(grid_floor).min(680.0)
+        let explorer = if window >= 980.0 && self.explorer_visible() {
+            EXPLORER_WIDTH
         } else {
-            (page_width * 0.34).clamp(360.0, 420.0)
+            0.0
+        };
+        let min_grid = if window < 900.0 {
+            280.0
+        } else if window < 1180.0 {
+            360.0
+        } else {
+            460.0
+        };
+        let preferred = if window < 900.0 {
+            (page_width * 0.42).clamp(280.0, 320.0)
+        } else {
+            (page_width * 0.34).clamp(340.0, 420.0)
+        };
+        let available = (page_width - explorer - min_grid).max(280.0);
+        if self.prepare_expanded && window >= 1180.0 {
+            available.min(680.0)
+        } else {
+            preferred.min(available).max(280.0)
         }
     }
 }

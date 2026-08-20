@@ -3,8 +3,26 @@
 
 use crate::state::*;
 use cliprelay_core::media::CropSpec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+/// Test-only gate invoked inside frame-extraction workers (see
+/// `request_frame`). Tests hold workers in flight to assert the concurrency
+/// budget deterministically; production never sets it. A `Mutex` (not
+/// `OnceLock`) so consecutive test runs can replace a stale gate whose
+/// channels were closed when the previous run ended.
+static FRAME_WORKER_GATE: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn set_frame_worker_gate(gate: Box<dyn Fn() + Send + Sync>) {
+    *FRAME_WORKER_GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(gate);
+}
+
+#[cfg(test)]
+fn clear_frame_worker_gate() {
+    *FRAME_WORKER_GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
 
 pub const COMPRESSION_OPTIONS: [(&str, &str); 7] = [
     ("Original when possible", "original"),
@@ -76,6 +94,9 @@ pub struct PrepareState {
     pub shapes: Vec<Shape>,
     pub selected_shape: Option<usize>,
     pub frame_cache: HashMap<String, PathBuf>,
+    /// Frame keys currently owned by extractor workers. This is both a
+    /// deduplication set and the hard concurrency budget for FFmpeg.
+    pub frame_pending: HashSet<String>,
     pub last_frame_key: String,
     last_frame_request_at: std::time::Instant,
     pub frame_generation: u64,
@@ -131,6 +152,7 @@ impl Default for PrepareState {
             shapes: Vec::new(),
             selected_shape: None,
             frame_cache: HashMap::new(),
+            frame_pending: HashSet::new(),
             last_frame_key: String::new(),
             last_frame_request_at: std::time::Instant::now(),
             frame_generation: 0,
@@ -172,6 +194,7 @@ impl PrepareState {
             self.shapes.clear();
             self.selected_shape = None;
             self.frame_cache.clear();
+            self.frame_pending.clear();
             self.last_frame_key.clear();
             self.timeline_ready = false;
         } else if duration > 0.0 && self.trim_end <= 0.0 {
@@ -331,22 +354,41 @@ impl PrepareState {
     }
 
     pub fn request_frame(&mut self, seconds: f64) {
-        self.frame_generation += 1;
-        let generation = self.frame_generation;
+        const MAX_FRAME_EXTRACTIONS: usize = 2;
+
         let media_id = self.media_id;
         let key = frame_key(seconds);
         let seconds = seconds.max(0.0);
         let Some(media_path) = self.media_path.clone() else {
             return;
         };
+        if self.frame_cache.contains_key(&key)
+            || self.frame_pending.contains(&key)
+            || self.frame_pending.len() >= MAX_FRAME_EXTRACTIONS
+        {
+            return;
+        }
+        self.frame_pending.insert(key.clone());
+        self.frame_generation += 1;
+        let generation = self.frame_generation;
         std::thread::spawn(move || {
+            // Test-only gate: lets unit tests hold workers in flight while
+            // asserting the concurrency budget. Never set in production.
+            if let Some(gate) = FRAME_WORKER_GATE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_deref()
+            {
+                gate();
+            }
             let path = extract_frame(media_id, seconds, &media_path);
             if let Some(tx) = crate::FRAME_TX.get() {
-                if let Some(path) = path {
-                    let _ = tx.send((media_id, format!("{key}|{generation}"), path));
+                let result_key = if path.is_some() {
+                    format!("{key}|{generation}")
                 } else {
-                    let _ = tx.send((media_id, "fail".into(), PathBuf::new()));
-                }
+                    format!("fail:{key}|{generation}")
+                };
+                let _ = tx.send((media_id, result_key, path.unwrap_or_default()));
             }
         });
     }
@@ -355,13 +397,23 @@ impl PrepareState {
         if media_id != self.media_id {
             return;
         }
-        if key == "fail" {
+        let (failed, payload) = if let Some(payload) = key.strip_prefix("fail:") {
+            (true, payload)
+        } else if key == "fail" {
+            self.frame_pending.clear();
             self.frame_failures = self.frame_failures.saturating_add(1);
             return;
+        } else {
+            (false, key.as_str())
+        };
+        let (frame_key, _generation) = payload.split_once('|').unwrap_or((payload, ""));
+        self.frame_pending.remove(frame_key);
+        if failed {
+            self.frame_failures = self.frame_failures.saturating_add(1);
+        } else {
+            self.frame_cache.insert(frame_key.to_string(), path);
+            self.last_frame_key = frame_key.to_string();
         }
-        let (frame_key, generation) = key.split_once('|').unwrap_or((&key, ""));
-        self.frame_cache.insert(frame_key.to_string(), path);
-        let _ = generation;
     }
 
     pub fn current_frame_path(&self) -> Option<PathBuf> {
@@ -628,5 +680,68 @@ mod prepare_tests {
         prepare.trim_start = 0.0;
         prepare.trim_end = 10.0;
         assert!(!prepare.cut_active());
+    }
+
+    #[test]
+    fn frame_requests_dedupe_and_cap_concurrent_ffmpeg() {
+        use std::sync::mpsc;
+        use std::sync::Mutex;
+
+        // Workers report in and then block until the test releases them,
+        // so the budget assertions cannot race worker completion.
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let release = std::sync::Arc::new(Mutex::new(()));
+        let release_worker = release.clone();
+        set_frame_worker_gate(Box::new(move || {
+            let _ = started_tx.send(());
+            // Block until the test drops the guard after its assertions.
+            let _guard = release_worker.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        }));
+
+        let mut prepare = PrepareState::default();
+        prepare.duration = 120.0;
+        prepare.set_media_path(std::path::PathBuf::from("/tmp/cliprelay-test.mp4"));
+
+        // First request spawns one extraction worker.
+        prepare.request_frame(5.0);
+        assert_eq!(prepare.frame_pending.len(), 1);
+        assert_eq!(prepare.frame_generation, 1);
+
+        // Same key while in flight must not spawn a second worker.
+        prepare.request_frame(5.0);
+        assert_eq!(prepare.frame_pending.len(), 1);
+        assert_eq!(prepare.frame_generation, 1);
+
+        // One more distinct key fills the two-worker budget.
+        prepare.request_frame_at(5.2, true);
+        assert_eq!(prepare.frame_pending.len(), 2);
+        assert_eq!(prepare.frame_generation, 2);
+
+        // While the budget is full, further distinct keys — including the
+        // force-prefetch path — must be deferred, never spawned.
+        prepare.request_frame_at(5.4, true);
+        prepare.request_frame(5.6);
+        assert_eq!(prepare.frame_pending.len(), 2);
+        assert_eq!(prepare.frame_generation, 2);
+
+        // Completion releases its slot (success and failure alike).
+        prepare.on_frame_ready(0, "f005200|2".into(), std::path::PathBuf::new());
+        assert_eq!(prepare.frame_pending.len(), 1);
+        prepare.on_frame_ready(0, "fail:f005000|1".into(), std::path::PathBuf::new());
+        assert_eq!(prepare.frame_pending.len(), 0);
+        assert_eq!(prepare.frame_failures, 1);
+        assert!(prepare.frame_cache.contains_key("f005200"));
+
+        // A released slot unblocks further requests.
+        prepare.request_frame(5.6);
+        assert_eq!(prepare.frame_pending.len(), 1);
+        assert_eq!(prepare.frame_generation, 3);
+
+        // Release every worker so the test ends clean.
+        for _ in 0..3 {
+            let _ = started_rx.recv_timeout(std::time::Duration::from_secs(5));
+        }
+        drop(release.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        clear_frame_worker_gate();
     }
 }

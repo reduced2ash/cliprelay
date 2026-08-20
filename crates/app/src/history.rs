@@ -12,51 +12,65 @@ impl crate::App {
         let rows = self.history.rows.clone();
         let has_more = self.history.has_more;
         let search = self.history_search.clone();
+        let narrow = self.window_size.0 < 820.0;
+        let empty_field = FieldState::default();
 
         let mut page = div()
             .id("history")
             .flex_1()
+            .min_w(px(0.0))
             .flex()
             .flex_col()
             .bg(theme.ink);
 
-        // Header.
-        page = page.child(
-            div()
-                .w_full()
-                .px(px(26.0))
-                .py(px(24.0))
-                .flex()
-                .flex_row()
-                .items_end()
-                .gap(px(16.0))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .child(
-                            div()
-                                .child("Relay history")
-                                .text_size(px(20.0))
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::SEMIBOLD),
-                        )
-                        .child(
-                            div()
-                                .child("Every post prepared through this app stays visible here")
-                                .text_size(px(12.0))
-                                .text_color(theme.muted),
-                        ),
+        // Header collapses to two rows before the title and search compete.
+        let mut header = div()
+            .w_full()
+            .px(px(if narrow { 16.0 } else { 26.0 }))
+            .py(px(if narrow { 16.0 } else { 24.0 }))
+            .flex()
+            .gap(px(if narrow { 12.0 } else { 16.0 }));
+        if narrow {
+            header = header.flex_col();
+        } else {
+            header = header.flex_row().items_end();
+        }
+        header = header
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .child("Relay history")
+                            .text_size(px(20.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("Every post prepared through this app stays visible here")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    ),
+            )
+            .child(
+                field(
+                    "history-search",
+                    "Search history",
+                    self.fields.get("history-search").unwrap_or(&empty_field),
+                    self.focused_field.as_deref() == Some("history-search"),
+                    true,
+                    false,
+                    cx,
                 )
-                .child(
-                    field("history-search", "Search history",
-                        self.fields.get("history-search").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("history-search"), true, false, cx)
-                        .w(px(300.0)),
-                ),
-        );
+                .w(px(if narrow { (self.window_size.0 - 96.0).max(240.0) } else { 280.0 })),
+            );
+        page = page.child(header);
 
         // List.
         let mut list = div()

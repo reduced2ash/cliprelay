@@ -15,11 +15,27 @@ pub struct FieldState {
 }
 
 pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
-    div()
-        .child(glyph)
-        .text_size(px(size))
-        .text_color(color)
+    let container = div()
+        .w(px(size))
+        .h(px(size))
         .flex_none()
+        .flex()
+        .items_center()
+        .justify_center();
+    if let Some(path) = crate::icons::icon_path(glyph) {
+        container.child(
+            svg()
+                .path(path)
+                .w(px(size))
+                .h(px(size))
+                .text_color(color),
+        )
+    } else {
+        container
+            .child(glyph)
+            .text_size(px(size))
+            .text_color(color)
+    }
 }
 
 #[allow(dead_code)]
@@ -133,6 +149,15 @@ fn button_base(
 ) -> Stateful<Div> {
     let theme = current_theme();
     let id: SharedString = id.into();
+    let icon_color = if !enabled {
+        theme.muted
+    } else {
+        match kind {
+            ButtonKind::Primary => theme.accent_content,
+            ButtonKind::Danger => theme.error,
+            _ => theme.text,
+        }
+    };
     let mut element = div()
         .id(id)
         .h(px(CONTROL_HEIGHT))
@@ -147,27 +172,35 @@ fn button_base(
         .font_weight(FontWeight::SEMIBOLD);
     match kind {
         ButtonKind::Primary => {
-            element = element.bg(theme.accent).text_color(theme.accent_content);
-            element = element.active(|style| style.bg(theme.accent_pressed));
+            element = element
+                .bg(theme.accent)
+                .text_color(theme.accent_content)
+                .hover(|style| style.bg(theme.accent_pressed))
+                .active(|style| style.bg(theme.accent_pressed));
         }
         ButtonKind::Secondary => {
             element = element
                 .bg(theme.raised)
                 .border_1()
                 .border_color(theme.border)
-                .text_color(theme.text);
+                .text_color(theme.text)
+                .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
         }
         ButtonKind::Ghost => {
-            element = element.text_color(theme.text);
-            element = element.active(|style| style.bg(theme.active));
+            element = element
+                .text_color(theme.text)
+                .hover(|style| style.bg(theme.hover))
+                .active(|style| style.bg(theme.active));
         }
         ButtonKind::Danger => {
-            element = element.text_color(theme.error);
-            element = element.active(|style| style.bg(theme.error_soft));
+            element = element
+                .text_color(theme.error)
+                .hover(|style| style.bg(theme.error_soft))
+                .active(|style| style.bg(theme.error_soft));
         }
     }
     if let Some(icon) = icon {
-        element = element.child(icon);
+        element = element.child(self::icon(icon, 15.0, icon_color));
     }
     element = element.child(
         div()
@@ -201,11 +234,21 @@ pub fn workbench_button(
     let theme = current_theme();
     let tooltip = tooltip.into();
     let id: SharedString = id.into();
+    let icon_color = if !enabled {
+        theme.muted_soft
+    } else {
+        match kind {
+            ButtonKind::Primary => theme.accent_content,
+            ButtonKind::Danger => theme.error,
+            ButtonKind::Ghost => theme.muted,
+            ButtonKind::Secondary => theme.text,
+        }
+    };
     let mut element = div()
         .id(id)
         .flex_none()
         .h(px(WORKBENCH_CONTROL_HEIGHT))
-        .px(if icon_only { px(0.0) } else { px(10.0) })
+        .px(if icon_only { px(0.0) } else { px(9.0) })
         .w(if icon_only { px(WORKBENCH_CONTROL_HEIGHT) } else { px(0.0) })
         .rounded(px(4.0))
         .flex()
@@ -217,28 +260,36 @@ pub fn workbench_button(
         .font_weight(FontWeight::MEDIUM);
     match kind {
         ButtonKind::Primary => {
-            element = element.bg(theme.accent).text_color(theme.accent_content);
-            element = element.active(|style| style.bg(theme.accent_pressed));
+            element = element
+                .bg(theme.accent)
+                .text_color(theme.accent_content)
+                .hover(|style| style.bg(theme.accent_pressed))
+                .active(|style| style.bg(theme.accent_pressed));
         }
         ButtonKind::Secondary => {
             element = element
                 .bg(theme.raised)
                 .border_1()
                 .border_color(theme.border)
-                .text_color(theme.text);
+                .text_color(theme.text)
+                .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
         }
         ButtonKind::Ghost => {
-            element = element.text_color(theme.muted);
-            element = element.active(|style| style.bg(theme.active).text_color(theme.text));
+            element = element
+                .text_color(theme.muted)
+                .hover(|style| style.bg(theme.hover).text_color(theme.text))
+                .active(|style| style.bg(theme.active).text_color(theme.text));
         }
         ButtonKind::Danger => {
-            element = element.text_color(theme.error);
-            element = element.active(|style| style.bg(theme.error_soft));
+            element = element
+                .text_color(theme.error)
+                .hover(|style| style.bg(theme.error_soft))
+                .active(|style| style.bg(theme.error_soft));
         }
     }
-    element = element.child(icon);
+    element = element.child(self::icon(icon, 15.0, icon_color));
     if !icon_only {
-        element = element.child(label.into());
+        element = element.child(div().min_w(px(0.0)).text_ellipsis().child(label.into()));
     }
     element
         .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
@@ -437,8 +488,10 @@ pub fn checkbox(
         .text_color(theme.accent_content)
         // Mirrors the original: the indicator fills with the accent on hover.
         .hover(|style| style.bg(theme.accent))
-        .when(checked, |this| this.bg(theme.accent))
-        .child(if checked { "✓" } else { "" });
+        .when(checked, |this| {
+            this.bg(theme.accent)
+                .child(icon("check", 13.0, theme.accent_content))
+        });
     div()
         .id(id)
         .h(px(CONTROL_HEIGHT))
@@ -540,9 +593,6 @@ pub fn divider() -> Div {
     div().h(px(1.0)).w_full().bg(current_theme().border)
 }
 
-pub fn v_divider() -> Div {
-    div().w(px(1.0)).h_full().bg(current_theme().border)
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {

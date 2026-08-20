@@ -30,6 +30,7 @@ impl crate::App {
         let mut page = div()
             .id("settings")
             .flex_1()
+            .min_w(px(0.0))
             .flex()
             .flex_col()
             .bg(theme.ink);
@@ -58,7 +59,7 @@ impl crate::App {
         );
 
         // Content width matches the original: min(820, page − 48).
-        let sidebar = if self.sidebar_collapsed {
+        let sidebar = if self.sidebar_collapsed || self.window_size.0 < 1080.0 {
             SIDEBAR_COLLAPSED_WIDTH
         } else {
             SIDEBAR_EXPANDED_WIDTH
@@ -71,6 +72,7 @@ impl crate::App {
             .scrollbar_width(px(10.0))
             .track_scroll(&self.settings_scroll)
             .flex_1()
+            .min_w(px(0.0))
             .overflow_scroll()
             .scrollbar_width(px(10.0))
             .child(

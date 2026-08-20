@@ -1019,7 +1019,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, None);
     }
 
     fn completed_frame(&self) {

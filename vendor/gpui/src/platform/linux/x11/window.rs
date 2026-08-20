@@ -1472,7 +1472,7 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene, None);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

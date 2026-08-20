@@ -42,7 +42,8 @@ impl Layout {
             SIDEBAR_EXPANDED_WIDTH
         };
         let page_width = (window_width - sidebar_width).max(1.0);
-        let explorer_visible = app.page == Page::Library
+        let explorer_visible = window_width >= 980.0
+            && app.page == Page::Library
             && !app.settings_value(LIBRARY_ROOT).is_empty()
             && app.explorer_visible();
         let explorer_width = if explorer_visible { EXPLORER_WIDTH } else { 0.0 };
@@ -113,6 +114,7 @@ impl crate::App {
         let mut column = div()
             .id("library")
             .flex_1()
+            .min_w(px(0.0))
             .flex()
             .flex_row()
             .bg(theme.ink)
@@ -127,6 +129,7 @@ impl crate::App {
         let mut grid = div()
             .id("library-grid")
             .flex_1()
+            .min_w(px(0.0))
             .flex()
             .flex_col()
             .relative();

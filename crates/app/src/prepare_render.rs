@@ -437,106 +437,125 @@ impl crate::App {
         } else {
             self.prepare.format_time_precise(trim_end)
         };
-        stage = stage.child(
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(7.0))
-                .child(
+        let compact_precision = panel_width < 360.0;
+        let input_width = if compact_precision { 72.0 } else { 90.0 };
+        let mut precision = div()
+            .w_full()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(7.0))
+            .child(
+                div()
+                    .flex_none()
+                    .child("IN")
+                    .text_size(px(12.0))
+                    .text_color(theme.muted)
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
+            .child(
+                field(
+                    "prepare-in",
+                    "00:00.00",
+                    &self
+                        .fields
+                        .get("prepare-in")
+                        .cloned()
+                        .unwrap_or_else(|| crate::widgets::FieldState {
+                            text: in_text.clone(),
+                            caret: in_text.chars().count(),
+                            committed: false,
+                        }),
+                    self.focused_field.as_deref() == Some("prepare-in"),
+                    !disabled,
+                    false,
+                    cx,
+                )
+                .flex_none()
+                .w(px(input_width)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .child("OUT")
+                    .text_size(px(12.0))
+                    .text_color(theme.muted)
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
+            .child(
+                field(
+                    "prepare-out",
+                    "00:00.00",
+                    &self
+                        .fields
+                        .get("prepare-out")
+                        .cloned()
+                        .unwrap_or_else(|| crate::widgets::FieldState {
+                            text: out_text.clone(),
+                            caret: out_text.chars().count(),
+                            committed: false,
+                        }),
+                    self.focused_field.as_deref() == Some("prepare-out"),
+                    !disabled,
+                    false,
+                    cx,
+                )
+                .flex_none()
+                .w(px(input_width)),
+            );
+        let mut trailing = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(if cut_active {
+                tabular(
                     div()
-                        .child("IN")
+                        .child(format!(
+                            "CUT  {}",
+                            self.prepare.format_time_precise(trim_end - trim_start)
+                        ))
+                        .text_size(px(12.0))
+                        .text_color(theme.accent_text)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+                .into_any()
+            } else {
+                tabular(
+                    div()
+                        .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
                         .text_size(px(12.0))
                         .text_color(theme.muted)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(
-                    field(
-                        "prepare-in",
-                        "00:00.00",
-                        &self
-                            .fields
-                            .get("prepare-in")
-                            .cloned()
-                            .unwrap_or_else(|| crate::widgets::FieldState {
-                                text: in_text.clone(),
-                                caret: in_text.chars().count(),
-                                committed: false,
-                            }),
-                        self.focused_field.as_deref() == Some("prepare-in"),
-                        !disabled,
-                        false,
-                        cx,
-                    )
-                    .w(px(90.0)),
-                )
-                .child(
-                    div()
-                        .child("OUT")
-                        .text_size(px(12.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    field(
-                        "prepare-out",
-                        "00:00.00",
-                        &self
-                            .fields
-                            .get("prepare-out")
-                            .cloned()
-                            .unwrap_or_else(|| crate::widgets::FieldState {
-                                text: out_text.clone(),
-                                caret: out_text.chars().count(),
-                                committed: false,
-                            }),
-                        self.focused_field.as_deref() == Some("prepare-out"),
-                        !disabled,
-                        false,
-                        cx,
-                    )
-                    .w(px(90.0)),
-                )
-                .child(div().flex_1())
-                .child(if cut_active {
-                    tabular(
-                        div()
-                            .child(format!("CUT  {}", self.prepare.format_time_precise(trim_end - trim_start)))
-                            .text_size(px(12.0))
-                            .text_color(theme.accent_text)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                } else {
-                    tabular(
-                        div()
-                            .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
-                            .text_size(px(12.0))
-                            .text_color(theme.muted)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                })
-                .child(if cut_active {
-                    workbench_button(
-                        "reset-cut",
-                        "",
-                        "↺",
-                        ButtonKind::Ghost,
-                        true,
-                        true,
-                        "Reset cut to full video",
-                        cx,
-                        |app, cx| {
-                            app.prepare.reset_cut();
-                            app.save_draft();
-                            cx.notify();
-                        },
-                    )
-                    .into_any()
-                } else {
-                    div().into_any()
-                }),
-        );
+                .into_any()
+            });
+        if cut_active {
+            trailing = trailing.child(workbench_button(
+                "reset-cut",
+                "",
+                "refresh",
+                ButtonKind::Ghost,
+                true,
+                true,
+                "Reset cut to full video",
+                cx,
+                |app, cx| {
+                    app.prepare.reset_cut();
+                    app.save_draft();
+                    cx.notify();
+                },
+            ));
+        }
+        if compact_precision {
+            stage = stage
+                .child(precision)
+                .child(div().w_full().flex().justify_end().child(trailing));
+        } else {
+            precision = precision.child(div().flex_1()).child(trailing);
+            stage = stage.child(precision);
+        }
 
         // Source strip.
         let name = self
@@ -1213,6 +1232,7 @@ impl crate::App {
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.0))
                             .flex()
                             .flex_col()
                             .gap(px(2.0))
@@ -1227,7 +1247,8 @@ impl crate::App {
                                 div()
                                     .child("Crop the visible frame without changing the source.")
                                     .text_size(px(12.0))
-                                    .text_color(theme.text_soft),
+                                    .text_color(theme.text_soft)
+                                    .text_ellipsis(),
                             ),
                     )
                     .child(if crop_enabled {
@@ -1338,11 +1359,13 @@ impl crate::App {
                 div()
                     .child("Select a mask here, then position it on the video.")
                     .text_size(px(12.0))
-                    .text_color(theme.text_soft),
+                    .text_color(theme.text_soft)
+                    .text_ellipsis(),
             )
             .child(
                 div()
                     .w_full()
+                    .min_w(px(0.0))
                     .flex()
                     .flex_row()
                     .gap(px(8.0))
@@ -1359,7 +1382,9 @@ impl crate::App {
                             cx.notify();
                         },
                     )
-                    .flex_1())
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .px(px(8.0)))
                     .child(button(
                         "add-square",
                         "Add square",
@@ -1373,7 +1398,9 @@ impl crate::App {
                             cx.notify();
                         },
                     )
-                    .flex_1()),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .px(px(8.0))),
             );
 
         // Mask list.

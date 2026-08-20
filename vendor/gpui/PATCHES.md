@@ -1,6 +1,6 @@
-# gpui 0.2.2 fork — local macOS patches
+# gpui 0.2.2 fork — local platform patches
 
-This is a vendored copy of `gpui 0.2.2` with two small macOS patches.
+This is a vendored copy of `gpui 0.2.2` with three small platform patches.
 It is wired into the workspace via `[patch.crates-io]` in the root
 `Cargo.toml` so the changes survive `cargo clean` and work on any
 machine, not just the dev box.
@@ -24,6 +24,13 @@ headless-ish screenshot sweeps.
   flush title bar) is implemented as `performWindowDragWithEvent` with
   a synthesized `NSLeftMouseDown` + `NSCommandKeyMask` event, matching
   how frameless apps implement drag. Stock gpui 0.2.2 had a no-op.
+
+## 3. Dev surface capture (`src/platform/blade/blade_renderer.rs`)
+
+The Blade renderer accepts an optional output path and reads the rendered
+surface back to a PNG after GPU completion. The macOS window passes its pending
+capture request; Wayland and X11 pass `None` so the shared renderer API remains
+valid when Linux backends are enabled.
 
 To regenerate from a fresh registry download: apply the same edits to
 `~/.cargo/registry/src/*/gpui-0.2.2/` and copy the directory here, or
