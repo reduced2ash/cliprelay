@@ -962,15 +962,16 @@ impl crate::App {
             .id("context-toolbar")
             .w_full()
             .min_w(px(0.0))
-            .h(px(38.0))
-            .px(px(8.0))
+            .h(px(42.0))
+            .px(px(12.0))
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0));
+            .gap(px(8.0))
+            .overflow_hidden();
 
         let (page_icon, page_name) = match page {
             Page::Library => ("library", "LIBRARY"),
@@ -1025,7 +1026,8 @@ impl crate::App {
                     .h_full()
                     .flex()
                     .items_center()
-                    .gap(px(7.0));
+                    .gap(px(8.0))
+                    .overflow_hidden();
                 if roomy && has_root && self.show_folders {
                     context = context.child(
                         div()
@@ -1100,7 +1102,8 @@ impl crate::App {
                     .h_full()
                     .flex()
                     .items_center()
-                    .gap(px(2.0))
+                    .gap(px(8.0))
+                    .overflow_hidden()
                     .child(workbench_button(
                         "toggle-folders",
                         if self.show_folders { "Hide folders" } else { "Show folders" },
@@ -1211,67 +1214,84 @@ impl crate::App {
                 ));
 
                 if self.selected.is_some() && !self.prepare.studio_mode {
-                    actions = actions
-                        .child(div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(3.0)).bg(theme.border))
-                        .child(icon("pencil", 14.0, theme.accent_text))
-                        .when(roomy, |this| {
-                            this.child(
-                                div()
-                                    .child("Prepare")
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text)
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            )
-                        })
-                        .when(self.prepare.has_edits(), |this| {
-                            this.child(
-                                div()
-                                    .id("toolbar-edited")
-                                    .child(icon("square", 12.0, theme.accent_text))
-                                    .tooltip(move |_window, cx| {
-                                        crate::tooltip_view(cx, "Frame edits active".into())
-                                    }),
-                            )
-                        })
-                        .child(workbench_button(
-                            "toolbar-open-player",
-                            "",
-                            "external-link",
-                            ButtonKind::Ghost,
-                            true,
-                            true,
-                            "Open in default player",
-                            cx,
-                            |app, cx| app.open_selected_in_player(cx),
-                        ))
-                        .child(workbench_button(
-                            "toolbar-widen",
-                            "",
-                            "expand-horizontal",
-                            ButtonKind::Ghost,
-                            true,
-                            true,
-                            if self.prepare_expanded { "Narrow Prepare" } else { "Widen Prepare" },
-                            cx,
-                            |app, cx| {
-                                app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
-                            },
-                        ))
-                        .child(workbench_button(
-                            "toolbar-fullscreen",
-                            "",
-                            "maximize",
-                            ButtonKind::Ghost,
-                            true,
-                            true,
-                            "Open full-screen editor",
-                            cx,
-                            |app, cx| {
-                                app.prepare.studio_mode = true;
-                                cx.notify();
-                            },
-                        ))
-                        .child(workbench_button(
+                    if wide {
+                        actions = actions
+                            .child(div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(8.0)).bg(theme.border))
+                            .child(icon("pencil", 14.0, theme.accent_text))
+                            .when(roomy, |this| {
+                                this.child(
+                                    div()
+                                        .child("Prepare")
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text)
+                                        .font_weight(FontWeight::SEMIBOLD),
+                                )
+                            })
+                            .when(self.prepare.has_edits(), |this| {
+                                this.child(
+                                    div()
+                                        .id("toolbar-edited")
+                                        .child(icon("square", 12.0, theme.accent_text))
+                                        .tooltip(move |_window, cx| {
+                                            crate::tooltip_view(cx, "Frame edits active".into())
+                                        }),
+                                )
+                            })
+                            .child(workbench_button(
+                                "toolbar-open-player",
+                                "",
+                                "external-link",
+                                ButtonKind::Ghost,
+                                true,
+                                true,
+                                "Open in default player",
+                                cx,
+                                |app, cx| app.open_selected_in_player(cx),
+                            ))
+                            .child(workbench_button(
+                                "toolbar-widen",
+                                "",
+                                "expand-horizontal",
+                                ButtonKind::Ghost,
+                                true,
+                                true,
+                                if self.prepare_expanded { "Narrow Prepare" } else { "Widen Prepare" },
+                                cx,
+                                |app, cx| {
+                                    app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
+                                },
+                            ))
+                            .child(workbench_button(
+                                "toolbar-fullscreen",
+                                "",
+                                "maximize",
+                                ButtonKind::Ghost,
+                                true,
+                                true,
+                                "Open full-screen editor",
+                                cx,
+                                |app, cx| {
+                                    app.prepare.studio_mode = true;
+                                    cx.notify();
+                                },
+                            ))
+                            .child(workbench_button(
+                                "toolbar-close",
+                                "",
+                                "x",
+                                ButtonKind::Ghost,
+                                true,
+                                true,
+                                "Close selected video",
+                                cx,
+                                |app, cx| {
+                                    app.command(Command::ClearSelection);
+                                    cx.notify();
+                                },
+                            ));
+                    } else {
+                        // Narrow: only Close remains to avoid smash at 332/352/920
+                        actions = actions.child(workbench_button(
                             "toolbar-close",
                             "",
                             "x",
@@ -1285,6 +1305,7 @@ impl crate::App {
                                 cx.notify();
                             },
                         ));
+                    }
                 }
                 toolbar = toolbar.child(context).child(actions);
             }
