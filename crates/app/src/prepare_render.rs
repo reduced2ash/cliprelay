@@ -10,6 +10,7 @@ use crate::settings_import::*;
 use cliprelay_core::media::CropSpec;
 use cliprelay_core::utils::format_bytes;
 use gpui::*;
+use gpui_video_player::video as video_element;
 use std::path::PathBuf;
 use serde_json::json;
 
@@ -134,7 +135,14 @@ impl crate::App {
                     None
                 }
             });
-        if let Some(source) = image_source {
+        if let Some(video) = self.prepare.video.clone() {
+            frame = frame.child(
+                video_element(video)
+                    .id("prepare-video")
+                    .buffer_capacity(10)
+                    .size(px(track_width), px(frame_height)),
+            );
+        } else if let Some(source) = image_source {
             frame = frame.child(
                 img(source)
                     .w_full()

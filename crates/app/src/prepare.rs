@@ -3,8 +3,11 @@
 
 use crate::state::*;
 use cliprelay_core::media::CropSpec;
+use gpui_video_player::Video;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use url::Url;
 
 /// Test-only gate invoked inside frame-extraction workers (see
 /// `request_frame`). Tests hold workers in flight to assert the concurrency
@@ -71,6 +74,7 @@ pub struct Shape {
 pub struct PrepareState {
     pub media_id: i64,
     pub media_path: Option<PathBuf>,
+    pub video: Option<Video>,
     pub next_frame_at: f64,
     pub frame_failures: u32,
     pub duration: f64,
@@ -129,6 +133,7 @@ impl Default for PrepareState {
         Self {
             media_id: 0,
             media_path: None,
+            video: None,
             next_frame_at: 0.0,
             frame_failures: 0,
             duration: 0.0,
@@ -197,14 +202,37 @@ impl PrepareState {
             self.frame_pending.clear();
             self.last_frame_key.clear();
             self.timeline_ready = false;
+            self.video = None;
         } else if duration > 0.0 && self.trim_end <= 0.0 {
             self.trim_end = duration;
         }
     }
 
-    /// Set the source path used by the frame extractor threads.
+    /// Set the source path used by the frame extractor threads and (when
+    /// available) the GStreamer player. On failure to create a `Video` we
+    /// keep `video=None` and fall back to ffmpeg frame extraction.
     pub fn set_media_path(&mut self, path: PathBuf) {
-        self.media_path = Some(path);
+        self.media_path = Some(path.clone());
+        self.video = None;
+        if let Ok(url) = Url::from_file_path(&path) {
+            match Video::new(&url) {
+                Ok(video) => {
+                    video.set_muted(false);
+                    video.set_volume(0.65);
+                    video.set_looping(false);
+                    video.set_paused(!self.playing);
+                    self.video = Some(video);
+                    self.position = 0.0;
+                    self.next_frame_at = 0.0;
+                    log::info!("gpui-video-player ready for {:?}", path);
+                }
+                Err(e) => {
+                    log::warn!("gpui-video-player failed for {:?}: {:?}", path, e);
+                }
+            }
+        } else {
+            log::warn!("Url::from_file_path failed for {:?}", path);
+        }
     }
 
     pub fn on_publish_state(&mut self, publish: &PublishState) {
@@ -274,10 +302,24 @@ impl PrepareState {
         self.trim_start = 0.0;
         self.trim_end = self.duration;
         self.position = 0.0;
+        if let Some(video) = &self.video {
+            let _ = video.seek(Duration::from_secs_f64(0.0), true);
+        }
     }
 
     pub fn toggle_playback(&mut self) {
         self.playing = !self.playing;
+        if let Some(video) = &self.video {
+            if self.playing && self.position >= self.trim_end && self.trim_end > 0.0 {
+                self.position = self.trim_start;
+                let _ = video.seek(Duration::from_secs_f64(self.position), true);
+            }
+            video.set_paused(!self.playing);
+            if self.playing {
+                let _ = video.seek(Duration::from_secs_f64(self.position), true);
+            }
+            return;
+        }
         if self.playing && self.position >= self.trim_end {
             self.position = self.trim_start;
             self.next_frame_at = self.position;
@@ -290,8 +332,21 @@ impl PrepareState {
         if !self.playing || self.media_id <= 0 {
             return false;
         }
-        // Advance in real time (100ms tick). Frames are extracted at the
-        // play_fps cadence to avoid spawning an ffmpeg process every tick.
+        if let Some(video) = &self.video {
+            if video.paused() == self.playing {
+                video.set_paused(!self.playing);
+            }
+            let pos = video.position().as_secs_f64();
+            if pos > 0.0 || self.position == 0.0 {
+                self.position = pos;
+            }
+            if self.trim_end > 0.0 && self.position >= self.trim_end {
+                let _ = video.seek(Duration::from_secs_f64(self.trim_start), true);
+                self.position = self.trim_start;
+            }
+            return true;
+        }
+        // Fallback: ffmpeg frame flipbook
         self.position += 0.1;
         if self.trim_end > 0.0 && self.position >= self.trim_end {
             self.position = self.trim_start;
@@ -303,8 +358,6 @@ impl PrepareState {
                 self.request_frame(self.position);
             }
             self.last_frame_key = key;
-            // Prefetch the next two frames so playback stays smooth
-            // instead of stalling on each on-demand ffmpeg extract.
             for ahead in [0.2f64, 0.4f64] {
                 let ahead_s = (self.position + ahead).min(self.trim_end.max(0.0));
                 self.request_frame_at(ahead_s, true);
@@ -326,9 +379,12 @@ impl PrepareState {
     pub fn seek(&mut self, seconds: f64, duration: f64) {
         self.position = seconds.clamp(0.0, duration.max(0.0));
         self.frame_failures = 0;
-        // Resync the playback clock so the tick neither stalls (backward
-        // seek) nor bursts (forward seek).
         self.next_frame_at = self.position;
+        if let Some(video) = &self.video {
+            let _ = video.seek(Duration::from_secs_f64(self.position), true);
+            self.last_frame_key = frame_key(self.position);
+            return;
+        }
         self.request_frame_at(self.position, false);
         self.last_frame_key = frame_key(self.position);
     }

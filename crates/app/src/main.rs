@@ -23,13 +23,14 @@ use cliprelay_core::db::MediaRow;
 
 use cliprelay_core::telegram::DialogInfo;
 use gpui::*;
+use gpui_video_player::Video;
 use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
-
+use url::Url;
 /// Global channel for extracted playback frames (set at startup).
 pub static FRAME_TX: OnceLock<flume::Sender<(i64, String, PathBuf)>> = OnceLock::new();
 
@@ -86,6 +87,7 @@ pub struct App {
     pub active_folder: String,
     pub hovered_tiles: HashMap<i64, bool>,
     pub preview_frames: HashMap<i64, Vec<PathBuf>>,
+    pub preview_videos: HashMap<i64, Video>,
     pub active_preview_id: i64,
     pub reveal_request: Option<(String, i64, i64)>,
     pub pending_draft: Option<PrepareDraft>,
@@ -304,6 +306,7 @@ impl App {
             active_folder: String::new(),
             hovered_tiles: HashMap::new(),
             preview_frames: HashMap::new(),
+            preview_videos: HashMap::new(),
             active_preview_id: 0,
             reveal_request: None,
             pending_draft: None,
@@ -642,9 +645,26 @@ impl App {
             }
             Event::PreviewReady(id, path) => {
                 if let Some(path) = path {
-                    if self.active_preview_id == id && !self.preview_extracting.contains(&id) {
-                        self.preview_extracting.insert(id);
-                        self.start_preview_frames(id, path);
+                    if self.active_preview_id == id {
+                        let mut video_created = false;
+                        if let Ok(url) = Url::from_file_path(&path) {
+                            if let Ok(video) = Video::new(&url) {
+                                video.set_muted(true);
+                                video.set_volume(0.0);
+                                video.set_looping(true);
+                                video.set_paused(false);
+                                self.preview_videos.insert(id, video);
+                                self.preview_frames.remove(&id);
+                                self.preview_extracting.remove(&id);
+                                video_created = true;
+                                cx.notify();
+                            }
+                        }
+                        if !video_created && !self.preview_extracting.contains(&id) {
+                            self.preview_extracting.insert(id);
+                            self.start_preview_frames(id, path);
+                            cx.notify();
+                        }
                     }
                 }
             }
@@ -1767,6 +1787,7 @@ impl App {
             .flex_row()
             .min_h(px(0.0));
         body = body.child(self.render_sidebar(cx));
+        body = body.child(div().w(px(1.0)).h_full().bg(self.theme.border).flex_none());
         let page = self.page;
         body = body.child(match page {
             Page::Library => {
@@ -2139,7 +2160,51 @@ fn configure_linux_backend() {
 #[cfg(not(target_os = "linux"))]
 fn configure_linux_backend() {}
 
+fn init_bundled_gstreamer() {
+    use std::path::PathBuf;
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    let manifest_plugins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/gst-plugins");
+    let manifest_plugins_release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/gst-plugins");
+    let candidates = [
+        exe_dir.clone().map(|d| d.join("gst-plugins")),
+        exe_dir.clone().map(|d| d.join("lib/gstreamer-1.0")),
+        exe_dir.clone().map(|d| d.join("../lib/gstreamer-1.0")),
+        exe_dir.map(|d| d.join("../lib64/gstreamer-1.0")),
+        Some(manifest_plugins),
+        Some(manifest_plugins_release),
+        Some(PathBuf::from("/tmp/gst_extract/usr/lib/gstreamer-1.0")),
+    ];
+    for cand in candidates.into_iter().flatten() {
+        if cand.exists() {
+            let existing = std::env::var("GST_PLUGIN_PATH").unwrap_or_default();
+            let new_path = if existing.is_empty() {
+                cand.to_string_lossy().to_string()
+            } else {
+                format!("{}:{}", cand.display(), existing)
+            };
+            unsafe { std::env::set_var("GST_PLUGIN_PATH", &new_path) };
+            log::info!("Using bundled GStreamer plugins from {}", cand.display());
+            let scanner_candidates = [
+                cand.join("../../libexec/gstreamer-1.0/gst-plugin-scanner"),
+                PathBuf::from("/tmp/gst_extract/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
+                PathBuf::from("/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
+                PathBuf::from("/usr/libexec/gstreamer-1.0/gst-plugin-scanner"),
+            ];
+            for sc in scanner_candidates {
+                if sc.exists() {
+                    unsafe { std::env::set_var("GST_PLUGIN_SCANNER", sc) };
+                    break;
+                }
+            }
+            break;
+        }
+    }
+}
+
 fn main() {
+    init_bundled_gstreamer();
     env_logger::init();
     configure_linux_backend();
     let (mut window_width, mut window_height) = parse_cli_args();

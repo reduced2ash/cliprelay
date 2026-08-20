@@ -8,6 +8,7 @@ use crate::widgets::*;
 use cliprelay_core::db::MediaRow;
 use gpui::*;
 use gpui::prelude::*;
+use gpui_video_player::{Video, video as video_element};
 use std::path::PathBuf;
 
 /// Layout helpers shared by the pages.
@@ -42,8 +43,7 @@ impl Layout {
             SIDEBAR_EXPANDED_WIDTH
         };
         let page_width = (window_width - sidebar_width).max(1.0);
-        let explorer_visible = window_width >= 980.0
-            && app.page == Page::Library
+        let explorer_visible = app.page == Page::Library
             && !app.settings_value(LIBRARY_ROOT).is_empty()
             && app.explorer_visible();
         let explorer_width = if explorer_visible { EXPLORER_WIDTH } else { 0.0 };
@@ -123,7 +123,9 @@ impl crate::App {
         // Explorer column.
         if layout.explorer_visible {
             column = column.child(self.render_explorer(cx, &theme, &layout));
+            column = column.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
         }
+
 
         // Grid column.
         let mut grid = div()
@@ -165,6 +167,7 @@ impl crate::App {
         let density = self.density.clone();
         let hovered = self.hovered_tiles.clone();
         let preview_frames = self.preview_frames.clone();
+        let preview_videos = self.preview_videos.clone();
         let active_preview = self.active_preview_id;
         let thumbnail_states = self.thumbnail_states.clone();
 
@@ -239,6 +242,7 @@ impl crate::App {
                     if row.thumbnail_path.is_some() { "ready".into() } else { "idle".into() }
                 });
                 let frames = preview_frames.get(&media_id).cloned().unwrap_or_default();
+                let preview_video = preview_videos.get(&media_id).cloned();
                 window = window.child(
                     self.render_tile(
                         cx,
@@ -254,6 +258,7 @@ impl crate::App {
                         is_active_preview,
                         &state,
                         frames,
+                        preview_video,
                         &density,
                     ),
                 );
@@ -366,6 +371,7 @@ impl crate::App {
         is_active_preview: bool,
         thumbnail_state: &str,
         preview_frames: Vec<PathBuf>,
+        preview_video: Option<Video>,
         density: &str,
     ) -> impl Element {
         let media_id = row.id;
@@ -422,7 +428,12 @@ impl crate::App {
                         app.command(Command::EnsurePreview(media_id));
                         app.start_preview_timer(media_id, cx);
                     } else {
-                        app.active_preview_id = 0;
+                        if app.active_preview_id == media_id {
+                            app.active_preview_id = 0;
+                        }
+                        app.preview_videos.remove(&media_id);
+                        app.preview_frames.remove(&media_id);
+                        app.preview_extracting.remove(&media_id);
                         app.preview_timer_cancel();
                     }
                     cx.notify();
@@ -451,23 +462,50 @@ impl crate::App {
             .when(is_hovered && !is_selected, |this| {
                 this.border_color(theme.accent.opacity(0.55))
             });
-        // Preview frames cycle while hovered.
-        if is_active_preview && !preview_frames.is_empty() {
-            let frame_index = ((std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                / 120)
-                % preview_frames.len() as u128) as usize;
-            if let Some(frame) = preview_frames.get(frame_index) {
+        // Preview: GStreamer Video when available, else cycled JPEG frames, else thumbnail.
+        if is_active_preview {
+            if let Some(video) = preview_video {
                 poster = poster.child(
-                    img(frame.clone())
+                    video_element(video)
+                        .id(SharedString::from(format!("hover-video-{}", media_id)))
+                        .buffer_capacity(5)
+                        .size(px(tile_width), px(poster_height)),
+                );
+            } else if !preview_frames.is_empty() {
+                let frame_index = ((std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    / 120)
+                    % preview_frames.len() as u128) as usize;
+                if let Some(frame) = preview_frames.get(frame_index) {
+                    poster = poster.child(
+                        img(frame.clone())
+                            .w_full()
+                            .h_full()
+                            .object_fit(ObjectFit::Contain),
+                    );
+                } else {
+                    poster = poster.child(self.poster_fallback(theme));
+                }
+            } else if thumbnail_ok {
+                poster = poster.child(
+                    img(PathBuf::from(thumbnail))
                         .w_full()
                         .h_full()
                         .object_fit(ObjectFit::Contain),
                 );
             } else {
                 poster = poster.child(self.poster_fallback(theme));
+                if thumbnail_state == "failed" {
+                    poster = poster.child(
+                        div()
+                            .absolute()
+                            .top(px(8.0))
+                            .right(px(8.0))
+                            .child(icon("⚠", 22.0, theme.warning)),
+                    );
+                }
             }
         } else if thumbnail_ok {
             poster = poster.child(
@@ -709,8 +747,6 @@ impl crate::App {
             .w(px(EXPLORER_WIDTH))
             .flex_none()
             .bg(theme.surface_soft)
-            .border_r_1()
-            .border_color(theme.border)
             .flex()
             .flex_col();
         // Header band.
