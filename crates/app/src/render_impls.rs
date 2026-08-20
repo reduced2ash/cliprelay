@@ -955,53 +955,144 @@ impl crate::App {
     pub fn render_context_toolbar(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let page = self.page;
-        let wide = self.window_size.0 >= 1180.0;
-        let roomy = self.window_size.0 >= 1360.0;
-        let narrow = self.window_size.0 < 920.0;
-        let ultra_narrow = self.window_size.0 < 680.0;
+        let width = self.window_size.0;
+        let nav_collapsed = width < 1080.0 || self.sidebar_collapsed;
+        let activity_width = if nav_collapsed { 68.0 } else { 204.0 };
+        let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
+        let show_explorer = page == Page::Library && has_root && self.show_folders;
+        let explorer_width = 204.0;
+        let prepare_width = if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
+            self.prepare_dock_width()
+        } else {
+            0.0
+        };
+        let show_prepare = prepare_width > 1.0;
+        // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
+        let slot_reserved = activity_width + 1.0
+            + if show_explorer { explorer_width + 1.0 } else { 0.0 }
+            + if show_prepare { prepare_width + 1.0 } else { 0.0 };
+        let slot_width = (width - slot_reserved).max(0.0);
+        let compact_actions = slot_width < 680.0;
+        let narrow_actions = slot_width < 500.0;
+
         let mut toolbar = div()
             .id("context-toolbar")
             .w_full()
             .min_w(px(0.0))
-            .h(px(42.0))
-            .px(px(12.0))
+            .h(px(CONTEXT_TOOLBAR_HEIGHT))
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
             .overflow_hidden();
 
+        // Activity section (68 or 204)
         let (page_icon, page_name) = match page {
-            Page::Library => ("library", "LIBRARY"),
-            Page::History => ("history", "HISTORY"),
-            Page::Settings => ("settings", "SETTINGS"),
+            Page::Library => ("library", "Library"),
+            Page::History => ("history", "History"),
+            Page::Settings => ("settings", "Settings"),
         };
-        let mut page_band = div()
+        let mut activity = div()
             .flex_none()
-            .h(px(30.0))
+            .w(px(activity_width))
+            .h_full()
+            .bg(theme.surface)
             .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0));
+        if nav_collapsed {
+            activity = activity
+                .justify_center()
+                .child(icon(page_icon, 16.0, theme.accent_text));
+        } else {
+            activity = activity
+                .pl(px(12.0))
+                .pr(px(10.0))
+                .child(icon(page_icon, 16.0, theme.accent_text))
+                .child(
+                    div()
+                        .child(tracked(&page_name.to_uppercase()))
+                        .text_size(px(10.0))
+                        .text_color(theme.text_soft)
+                        .font_weight(FontWeight::SEMIBOLD),
+                );
+        }
+        toolbar = toolbar.child(activity);
+        toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
+
+        // Explorer header
+        if show_explorer {
+            let count = self.folders.len();
+            let explorer = div()
+                .flex_none()
+                .w(px(explorer_width))
+                .h_full()
+                .bg(theme.surface_soft)
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(px(10.0))
+                .pr(px(5.0))
+                .gap(px(7.0))
+                .child(icon("folders", 15.0, theme.muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(tracked("EXPLORER"))
+                        .text_size(px(10.0))
+                        .text_color(theme.text_soft)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+                .child(
+                    div()
+                        .child(format!("{}", count))
+                        .text_size(px(10.0))
+                        .text_color(theme.muted_soft)
+                        .font_weight(FontWeight::MEDIUM),
+                )
+                .child(
+                    workbench_button(
+                        "collapse-folders",
+                        "",
+                        "chevron-up",
+                        ButtonKind::Ghost,
+                        true,
+                        true,
+                        "Collapse all folders",
+                        cx,
+                        |app, cx| {
+                            for node in &app.folders {
+                                app.folders_expanded.insert(node.folder.clone(), false);
+                            }
+                            cx.notify();
+                        },
+                    )
+                    .w(px(28.0))
+                    .h(px(28.0)),
+                );
+            toolbar = toolbar.child(explorer);
+            toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
+        }
+
+        // Center slot (library context or page detail)
+        let mut center = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .flex()
+            .flex_row()
             .items_center()
             .gap(px(7.0))
-            .child(icon(page_icon, 15.0, theme.accent_text));
-        if !narrow {
-            page_band = page_band.child(
-                div()
-                    .child(tracked(page_name))
-                    .text_size(px(9.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::SEMIBOLD),
-            );
-        }
-        toolbar = toolbar
-            .child(page_band)
-            .child(div().flex_none().w(px(1.0)).h(px(18.0)).bg(theme.border));
+            .pl(px(12.0))
+            .pr(px(9.0))
+            .overflow_hidden();
 
         match page {
             Page::Library => {
-                let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
                 let location = if self.active_folder.is_empty() {
                     self.settings_value(LIBRARY_ROOT)
                         .rsplit('/')
@@ -1020,193 +1111,151 @@ impl crate::App {
                 } else {
                     location
                 };
-
-                let mut context = div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .overflow_hidden();
-                if roomy && has_root && self.show_folders {
-                    context = context.child(
-                        div()
-                            .flex_none()
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .rounded(px(4.0))
-                            .bg(theme.surface_soft)
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .child(icon("folders", 13.0, theme.muted))
-                            .child(
-                                div()
-                                    .child(format!("{} folders", self.folders.len()))
-                                    .text_size(px(10.0))
-                                    .text_color(theme.muted),
-                            )
-                            .child(workbench_button(
-                                "collapse-folders",
-                                "",
-                                "chevron-up",
-                                ButtonKind::Ghost,
-                                true,
-                                true,
-                                "Collapse all folders",
-                                cx,
-                                |app, cx| {
-                                    for node in &app.folders {
-                                        app.folders_expanded.insert(node.folder.clone(), false);
-                                    }
-                                    cx.notify();
-                                },
-                            )),
-                    );
-                }
-                context = context
+                center = center
                     .child(icon(
                         "folder",
-                        14.0,
+                        15.0,
                         if has_root { theme.accent_text } else { theme.muted },
-                    ))
-                    .when(!narrow, |this| {
-                        this.child(
+                    ));
+                if !narrow_actions {
+                    center = center
+                        .child(
                             div()
-                                .flex_none()
                                 .child("Video library")
                                 .text_size(px(12.0))
-                                .text_color(if has_root { theme.text } else { theme.muted })
+                                .text_color(theme.accent_text)
                                 .font_weight(FontWeight::SEMIBOLD),
                         )
                         .child(
                             div()
-                                .flex_none()
                                 .child("/")
                                 .text_size(px(12.0))
                                 .text_color(theme.muted_soft),
-                        )
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(location)
-                            .text_size(px(12.0))
-                            .text_color(theme.text_soft)
-                            .text_ellipsis(),
-                    );
-
-                let mut actions = div()
-                    .flex_none()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .overflow_hidden();
-                // Progressive disclosure: at ultra_narrow (<680) hide chrome toggles
-                // to keep right-side icons from smooshing at 332/352.
-                if !ultra_narrow {
-                    actions = actions
-                        .child(workbench_button(
-                            "toggle-folders",
-                            if self.show_folders { "Hide folders" } else { "Show folders" },
-                            "panel-left",
-                            ButtonKind::Ghost,
-                            has_root,
-                            !wide,
-                            "Toggle the hierarchical folder column",
-                            cx,
-                            |app, cx| {
-                                app.show_folders = !app.show_folders;
-                                cx.notify();
-                            },
-                        ))
-                        .child(workbench_button(
-                            "choose-root",
-                            "",
-                            "folder",
-                            ButtonKind::Ghost,
-                            true,
-                            true,
-                            "Choose library root",
-                            cx,
-                            |app, cx| app.choose_library_folder(cx),
-                        ));
+                        );
                 }
-
-                let sort_label = match self
-                    .settings
-                    .get(SORT_MODE)
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("newest")
-                {
-                    "newest" => "Newest",
-                    "oldest" => "Oldest",
-                    "name" => "Name",
-                    "duration" => "Duration",
-                    "size" => "Size",
-                    _ => "Newest",
-                };
-                actions = actions.child(
+                center = center.child(
                     div()
-                        .id("sort-trigger")
-                        .flex_none()
-                        .h(px(30.0))
-                        .when(narrow, |this| this.w(px(30.0)).px(px(0.0)))
-                        .when(!narrow, |this| this.px(px(8.0)))
-                        .rounded(px(4.0))
-                        .bg(if self.sort_menu_open { theme.active } else { theme.transparent() })
-                        .border_1()
-                        .border_color(if self.sort_menu_open { theme.accent } else { theme.transparent() })
-                        .hover(|style| style.bg(theme.hover))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(5.0))
-                        .when(!narrow, |this| {
-                            this.child(
-                                div()
-                                    .child(sort_label)
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text_soft),
-                            )
-                        })
-                        .child(icon(
-                            if self.sort_menu_open { "chevron-up" } else { "chevron-down" },
-                            13.0,
-                            theme.muted,
-                        ))
-                        .tooltip(move |_window, cx| crate::tooltip_view(cx, "Sort library".into()))
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            if app.sort_menu_open {
-                                app.sort_menu_open = false;
-                                app.mark_menu_closed();
-                            } else if app.menu_reopen_allowed() {
-                                app.sort_menu_open = true;
-                            }
-                            cx.notify();
-                        })),
+                        .flex_1()
+                        .min_w(px(42.0))
+                        .child(location)
+                        .text_size(px(12.0))
+                        .text_color(if has_root { theme.text_soft } else { theme.muted })
+                        .text_ellipsis(),
                 );
 
-                let scanning = self.scan.active;
-                let cancelling = self.scan.cancelling;
-                let scanning_label = if cancelling {
-                    "Stopping…"
-                } else if scanning {
-                    "Stop scan"
-                } else {
-                    "Rescan"
-                };
-                if !ultra_narrow {
-                    actions = actions.child(workbench_button(
+                if has_root {
+                    center = center.child(workbench_button(
+                        "toggle-folders",
+                        if self.show_folders { "Hide folders" } else { "Show folders" },
+                        "panel",
+                        ButtonKind::Ghost,
+                        true,
+                        compact_actions,
+                        "Toggle the hierarchical folder column",
+                        cx,
+                        |app, cx| {
+                            app.show_folders = !app.show_folders;
+                            cx.notify();
+                        },
+                    ));
+                    center = center.child(workbench_button(
+                        "choose-root",
+                        "Choose root",
+                        "folder",
+                        ButtonKind::Ghost,
+                        true,
+                        compact_actions,
+                        "Choose library root",
+                        cx,
+                        |app, cx| app.choose_library_folder(cx),
+                    ));
+                }
+
+                if !narrow_actions {
+                    center = center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
+                }
+
+                if has_root {
+                    let sort_label = match self
+                        .settings
+                        .get(SORT_MODE)
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("newest")
+                    {
+                        "newest" => "Newest",
+                        "oldest" => "Oldest",
+                        "name" => "Name",
+                        "duration" => "Duration",
+                        "size" => "Size",
+                        _ => "Newest",
+                    };
+                    let sort_width = if narrow_actions { 96.0 } else { 112.0 };
+                    center = center.child(
+                        div()
+                            .id("sort-trigger")
+                            .flex_none()
+                            .w(px(sort_width))
+                            .h(px(30.0))
+                            .px(px(9.0))
+                            .rounded(px(4.0))
+                            .bg(if self.sort_menu_open { theme.active } else { theme.raised })
+                            .border_1()
+                            .border_color(if self.sort_menu_open { theme.accent } else { theme.border })
+                            .hover(|style| style.bg(theme.hover))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .child(sort_label)
+                                    .text_size(px(12.0))
+                                    .text_color(theme.text)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_ellipsis(),
+                            )
+                            .child(icon(
+                                if self.sort_menu_open { "chevron-up" } else { "chevron-down" },
+                                13.0,
+                                if self.sort_menu_open { theme.accent_text } else { theme.muted },
+                            ))
+                            .tooltip(move |_window, cx| crate::tooltip_view(cx, "Sort library".into()))
+                            .on_click(cx.listener(|app, _event, _window, cx| {
+                                if app.sort_menu_open {
+                                    app.sort_menu_open = false;
+                                    app.mark_menu_closed();
+                                } else if app.menu_reopen_allowed() {
+                                    app.sort_menu_open = true;
+                                }
+                                cx.notify();
+                            })),
+                    );
+                }
+
+                if !narrow_actions && has_root {
+                    center = center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
+                }
+
+                if has_root {
+                    let scanning = self.scan.active;
+                    let cancelling = self.scan.cancelling;
+                    let scanning_label = if cancelling {
+                        "Stopping…"
+                    } else if scanning {
+                        "Stop scan"
+                    } else {
+                        "Rescan"
+                    };
+                    center = center.child(workbench_button(
                         "rescan",
                         scanning_label,
                         if cancelling || scanning { "square" } else { "refresh" },
                         ButtonKind::Ghost,
                         !(scanning && cancelling),
-                        !wide,
+                        compact_actions,
                         "Rescan library",
                         cx,
                         |app, cx| {
@@ -1219,126 +1268,174 @@ impl crate::App {
                         },
                     ));
                 }
-
-                if self.selected.is_some() && !self.prepare.studio_mode {
-                    if wide {
-                        actions = actions
-                            .child(div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(8.0)).bg(theme.border))
-                            .child(icon("pencil", 14.0, theme.accent_text))
-                            .when(roomy, |this| {
-                                this.child(
-                                    div()
-                                        .child("Prepare")
-                                        .text_size(px(12.0))
-                                        .text_color(theme.text)
-                                        .font_weight(FontWeight::SEMIBOLD),
-                                )
-                            })
-                            .when(self.prepare.has_edits(), |this| {
-                                this.child(
-                                    div()
-                                        .id("toolbar-edited")
-                                        .child(icon("square", 12.0, theme.accent_text))
-                                        .tooltip(move |_window, cx| {
-                                            crate::tooltip_view(cx, "Frame edits active".into())
-                                        }),
-                                )
-                            })
-                            .child(workbench_button(
-                                "toolbar-open-player",
-                                "",
-                                "external-link",
-                                ButtonKind::Ghost,
-                                true,
-                                true,
-                                "Open in default player",
-                                cx,
-                                |app, cx| app.open_selected_in_player(cx),
-                            ))
-                            .child(workbench_button(
-                                "toolbar-widen",
-                                "",
-                                "expand-horizontal",
-                                ButtonKind::Ghost,
-                                true,
-                                true,
-                                if self.prepare_expanded { "Narrow Prepare" } else { "Widen Prepare" },
-                                cx,
-                                |app, cx| {
-                                    app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
-                                },
-                            ))
-                            .child(workbench_button(
-                                "toolbar-fullscreen",
-                                "",
-                                "maximize",
-                                ButtonKind::Ghost,
-                                true,
-                                true,
-                                "Open full-screen editor",
-                                cx,
-                                |app, cx| {
-                                    app.prepare.studio_mode = true;
-                                    cx.notify();
-                                },
-                            ))
-                            .child(workbench_button(
-                                "toolbar-close",
-                                "",
-                                "x",
-                                ButtonKind::Ghost,
-                                true,
-                                true,
-                                "Close selected video",
-                                cx,
-                                |app, cx| {
-                                    app.command(Command::ClearSelection);
-                                    cx.notify();
-                                },
-                            ));
-                    } else {
-                        // Narrow: only Close remains to avoid smash at 332/352/920
-                        actions = actions.child(workbench_button(
-                            "toolbar-close",
-                            "",
-                            "x",
-                            ButtonKind::Ghost,
-                            true,
-                            true,
-                            "Close selected video",
-                            cx,
-                            |app, cx| {
-                                app.command(Command::ClearSelection);
-                                cx.notify();
-                            },
-                        ));
-                    }
-                }
-                toolbar = toolbar.child(context).child(actions);
+                toolbar = toolbar.child(center);
             }
             Page::History => {
-                toolbar = toolbar.child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child("Recorded relays and delivery outcomes")
-                        .text_size(px(12.0))
-                        .text_color(theme.muted)
-                        .text_ellipsis(),
-                );
+                center = center
+                    .child(icon("history", 15.0, theme.accent_text))
+                    .child(
+                        div()
+                            .child("History")
+                            .text_size(px(12.0))
+                            .text_color(theme.accent_text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("/")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted_soft),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child("Recorded relays and delivery outcomes")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    );
+                toolbar = toolbar.child(center);
             }
             Page::Settings => {
-                toolbar = toolbar.child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child("Application preferences and integrations")
-                        .text_size(px(12.0))
-                        .text_color(theme.muted)
-                        .text_ellipsis(),
-                );
+                center = center
+                    .child(icon("settings", 15.0, theme.accent_text))
+                    .child(
+                        div()
+                            .child("Settings")
+                            .text_size(px(12.0))
+                            .text_color(theme.accent_text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("/")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted_soft),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child("Application preferences and integrations")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    );
+                toolbar = toolbar.child(center);
             }
         }
+
+        // Prepare dock header (right side)
+        if show_prepare {
+            toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
+            let selected_name = self
+                .selected
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_default();
+            let expanded = self.prepare_expanded;
+            let has_edits = self.prepare.has_edits();
+            let mut prepare = div()
+                .flex_none()
+                .w(px(prepare_width))
+                .h_full()
+                .bg(theme.surface)
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(px(12.0))
+                .pr(px(7.0))
+                .gap(px(3.0))
+                .overflow_hidden()
+                .child(icon("edit", 15.0, theme.accent_text))
+                .child(
+                    div()
+                        .child("Prepare")
+                        .text_size(px(12.0))
+                        .text_color(theme.text)
+                        .font_weight(FontWeight::SEMIBOLD),
+                );
+            if prepare_width >= 470.0 {
+                prepare = prepare
+                    .child(
+                        div()
+                            .child("/")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted_soft),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(36.0))
+                            .child(selected_name)
+                            .text_size(px(12.0))
+                            .text_color(theme.text_soft)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_ellipsis(),
+                    );
+            } else {
+                prepare = prepare.child(div().flex_1().min_w(px(0.0)));
+            }
+            if has_edits {
+                prepare = prepare.child(icon("crop", 14.0, theme.accent_text));
+            }
+            prepare = prepare
+                .child(workbench_button(
+                    "toolbar-open-player",
+                    "",
+                    "external",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Open in default player",
+                    cx,
+                    |app, cx| app.open_selected_in_player(cx),
+                ))
+                .child(workbench_button(
+                    "toolbar-widen",
+                    "",
+                    if expanded { "contract" } else { "expand" },
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    if expanded { "Narrow Prepare" } else { "Widen Prepare" },
+                    cx,
+                    |app, cx| {
+                        app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
+                    },
+                ))
+                .child(workbench_button(
+                    "toolbar-fullscreen",
+                    "",
+                    "maximize",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Open full-screen editor",
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = true;
+                        cx.notify();
+                    },
+                ))
+                .child(workbench_button(
+                    "toolbar-close",
+                    "",
+                    "close",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Close selected video",
+                    cx,
+                    |app, cx| {
+                        app.command(Command::ClearSelection);
+                        cx.notify();
+                    },
+                ));
+            toolbar = toolbar.child(prepare);
+        }
+
         toolbar
     }
 
@@ -1904,25 +2001,25 @@ impl crate::App {
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
         let picking = self.random_picking;
         let width = self.window_size.0;
-        let compact = width < 1220.0;
-        let narrow = width < 960.0;
-        let tiny = width < 790.0;
-        let titlebar_leading = if cfg!(target_os = "macos") { 96.0 } else { 8.0 };
+        let compact = width < 1120.0;
+        let very_compact = width < 1000.0;
+        let titlebar_leading = if cfg!(target_os = "macos") { 116.0 } else { 8.0 };
+        let titlebar_trailing = if cfg!(target_os = "macos") { 8.0 } else { 8.0 };
         let mut header = div()
             .id("header")
             .w_full()
             .min_w(px(0.0))
-            .h(px(40.0))
+            .h(px(TITLE_BAR_HEIGHT))
             .pl(px(titlebar_leading))
-            .pr(px(8.0))
-            .bg(theme.surface)
+            .pr(px(titlebar_trailing))
+            .bg(theme.ink)
             .border_b_1()
             .border_color(theme.border)
             .relative()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(5.0))
             .overflow_hidden();
 
         header = header.child(
@@ -1969,8 +2066,11 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(28.0)),
+            .w(px(28.0))
+            .h(px(28.0)),
         );
+
+        header = header.child(div().w(px(2.0)).flex_none());
 
         let can_back = self
             .workspaces
@@ -1982,22 +2082,26 @@ impl crate::App {
             .get(self.active_workspace_index)
             .map(|workspace| workspace.has_forward)
             .unwrap_or(false);
-        header = header.child(workbench_button(
-            "nav-back",
-            "",
-            "chevron-left",
-            ButtonKind::Ghost,
-            can_back,
-            true,
-            "Go back  ·  ⌘[",
-            cx,
-            |app, cx| {
-                app.command(Command::NavigateBack);
-                cx.notify();
-            },
-        ));
-        if !tiny {
-            header = header.child(workbench_button(
+        header = header.child(
+            workbench_button(
+                "nav-back",
+                "",
+                "chevron-left",
+                ButtonKind::Ghost,
+                can_back,
+                true,
+                "Go back  ·  ⌘[",
+                cx,
+                |app, cx| {
+                    app.command(Command::NavigateBack);
+                    cx.notify();
+                },
+            )
+            .w(px(28.0))
+            .h(px(28.0)),
+        );
+        header = header.child(
+            workbench_button(
                 "nav-forward",
                 "",
                 "chevron-right",
@@ -2010,16 +2114,22 @@ impl crate::App {
                     app.command(Command::NavigateForward);
                     cx.notify();
                 },
-            ));
-        }
+            )
+            .w(px(28.0))
+            .h(px(28.0)),
+        );
+
+        header = header.child(div().w(px(if compact { 2.0 } else { 8.0 })).flex_none());
 
         let empty_field = FieldState::default();
+        let search_hint = if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl K" };
+        let show_hint = !very_compact;
         header = header.child(
             crate::widgets::field_with_icon_hint(
                 "command-center",
                 if self.effective_command_scope() == "commands" {
                     "Run a command"
-                } else if tiny {
+                } else if very_compact {
                     "Search ClipRelay"
                 } else {
                     "Search videos, folders, and commands"
@@ -2029,16 +2139,16 @@ impl crate::App {
                 true,
                 false,
                 Some("search"),
-                if narrow { None } else { Some("⌘K") },
+                if show_hint { Some(search_hint) } else { None },
                 cx,
             )
             .flex_1()
-            .min_w(px(if tiny { 120.0 } else if narrow { 180.0 } else { 240.0 }))
-            .max_w(px(720.0))
+            .min_w(px(if very_compact { 230.0 } else if compact { 280.0 } else { 280.0 }))
+            .max_w(px(860.0))
             .h(px(30.0))
             .px(px(10.0))
             .rounded(px(5.0))
-            .bg(theme.ink),
+            .bg(theme.raised),
         );
 
         let has_query = !self
@@ -2046,31 +2156,37 @@ impl crate::App {
             .get("command-center")
             .map(|field| field.text.trim().is_empty())
             .unwrap_or(true);
-        if has_query && !narrow {
-            header = header.child(workbench_button(
-                "clear-search",
-                "",
-                "x",
-                ButtonKind::Ghost,
-                true,
-                true,
-                "Clear search",
-                cx,
-                |app, cx| {
-                    let state = app.field_state_mut("command-center");
-                    state.text.clear();
-                    state.caret = 0;
-                    app.command_query.clear();
-                    app.search_text.clear();
-                    app.command(Command::SetSearch(String::new()));
-                    app.command(Command::SearchSuggestions {
-                        query: String::new(),
-                        scope: app.command_scope.clone(),
-                    });
-                    cx.notify();
-                },
-            ));
+        if has_query && !very_compact {
+            header = header.child(
+                workbench_button(
+                    "clear-search",
+                    "",
+                    "x",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Clear search",
+                    cx,
+                    |app, cx| {
+                        let state = app.field_state_mut("command-center");
+                        state.text.clear();
+                        state.caret = 0;
+                        app.command_query.clear();
+                        app.search_text.clear();
+                        app.command(Command::SetSearch(String::new()));
+                        app.command(Command::SearchSuggestions {
+                            query: String::new(),
+                            scope: app.command_scope.clone(),
+                        });
+                        cx.notify();
+                    },
+                )
+                .w(px(28.0))
+                .h(px(28.0)),
+            );
         }
+
+        header = header.child(div().w(px(if compact { 2.0 } else { 7.0 })).flex_none());
 
         let activity_active =
             self.scan.active || self.checking || self.timeline_loading || self.publish.active;
@@ -2078,8 +2194,8 @@ impl crate::App {
             div()
                 .id("activity-button")
                 .flex_none()
-                .h(px(WORKBENCH_CONTROL_HEIGHT))
-                .w(px(WORKBENCH_CONTROL_HEIGHT))
+                .h(px(28.0))
+                .w(px(28.0))
                 .rounded(px(4.0))
                 .relative()
                 .cursor_pointer()
@@ -2125,27 +2241,21 @@ impl crate::App {
         );
 
         let summary = self.random_summary.clone();
-        if narrow {
+        {
             let tooltip: SharedString = format!("Random sources: {summary}").into();
-            header = header.child(workbench_button(
-                "random-sources",
-                "",
-                "folders",
-                if self.random_popup_open { ButtonKind::Secondary } else { ButtonKind::Ghost },
-                has_root,
-                true,
-                tooltip,
-                cx,
-                |app, cx| app.toggle_random_popup(cx),
-            ));
-        } else {
-            let tooltip: SharedString = format!("Random sources: {summary}").into();
+            let width_px = if very_compact {
+                116.0
+            } else if compact {
+                132.0
+            } else {
+                150.0
+            };
             let mut sources = div()
                 .id("random-sources")
                 .flex_none()
-                .h(px(WORKBENCH_CONTROL_HEIGHT))
+                .h(px(30.0))
                 .px(px(9.0))
-                .w(px(if compact { 128.0 } else { 150.0 }))
+                .w(px(width_px))
                 .rounded(px(4.0))
                 .flex()
                 .items_center()
@@ -2185,29 +2295,39 @@ impl crate::App {
         }
 
         if !compact {
-            header = header.child(workbench_button(
-                "reset-shuffle",
-                "",
-                "refresh",
-                ButtonKind::Ghost,
-                has_root,
-                true,
-                "Reset shuffle history",
-                cx,
-                |app, cx| {
-                    app.command(Command::ResetShuffle);
-                    cx.notify();
-                },
-            ));
+            header = header.child(
+                workbench_button(
+                    "reset-shuffle",
+                    "",
+                    "refresh",
+                    ButtonKind::Ghost,
+                    has_root,
+                    true,
+                    "Reset shuffle history",
+                    cx,
+                    |app, cx| {
+                        app.command(Command::ResetShuffle);
+                        cx.notify();
+                    },
+                )
+                .w(px(28.0))
+                .h(px(28.0)),
+            );
         }
 
-        let pick_icon_only = tiny;
         let pick_label = if picking {
             "Picking…"
-        } else if narrow {
+        } else if very_compact {
             "Random"
         } else {
             "Pick random"
+        };
+        let pick_width = if very_compact {
+            96.0
+        } else if compact {
+            112.0
+        } else {
+            128.0
         };
         header = header.child(
             workbench_button(
@@ -2216,7 +2336,7 @@ impl crate::App {
                 "shuffle",
                 ButtonKind::Primary,
                 has_root,
-                pick_icon_only,
+                false,
                 "Pick random video  ·  R",
                 cx,
                 |app, cx| {
@@ -2224,15 +2344,8 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(if tiny {
-                30.0
-            } else if narrow {
-                88.0
-            } else if compact {
-                112.0
-            } else {
-                128.0
-            })),
+            .w(px(pick_width))
+            .h(px(30.0)),
         );
 
         header
