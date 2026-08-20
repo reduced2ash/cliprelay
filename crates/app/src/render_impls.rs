@@ -958,6 +958,7 @@ impl crate::App {
         let wide = self.window_size.0 >= 1180.0;
         let roomy = self.window_size.0 >= 1360.0;
         let narrow = self.window_size.0 < 920.0;
+        let ultra_narrow = self.window_size.0 < 680.0;
         let mut toolbar = div()
             .id("context-toolbar")
             .w_full()
@@ -1103,32 +1104,37 @@ impl crate::App {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .overflow_hidden()
-                    .child(workbench_button(
-                        "toggle-folders",
-                        if self.show_folders { "Hide folders" } else { "Show folders" },
-                        "panel-left",
-                        ButtonKind::Ghost,
-                        has_root,
-                        !wide,
-                        "Toggle the hierarchical folder column",
-                        cx,
-                        |app, cx| {
-                            app.show_folders = !app.show_folders;
-                            cx.notify();
-                        },
-                    ))
-                    .child(workbench_button(
-                        "choose-root",
-                        "",
-                        "folder",
-                        ButtonKind::Ghost,
-                        true,
-                        true,
-                        "Choose library root",
-                        cx,
-                        |app, cx| app.choose_library_folder(cx),
-                    ));
+                    .overflow_hidden();
+                // Progressive disclosure: at ultra_narrow (<680) hide chrome toggles
+                // to keep right-side icons from smooshing at 332/352.
+                if !ultra_narrow {
+                    actions = actions
+                        .child(workbench_button(
+                            "toggle-folders",
+                            if self.show_folders { "Hide folders" } else { "Show folders" },
+                            "panel-left",
+                            ButtonKind::Ghost,
+                            has_root,
+                            !wide,
+                            "Toggle the hierarchical folder column",
+                            cx,
+                            |app, cx| {
+                                app.show_folders = !app.show_folders;
+                                cx.notify();
+                            },
+                        ))
+                        .child(workbench_button(
+                            "choose-root",
+                            "",
+                            "folder",
+                            ButtonKind::Ghost,
+                            true,
+                            true,
+                            "Choose library root",
+                            cx,
+                            |app, cx| app.choose_library_folder(cx),
+                        ));
+                }
 
                 let sort_label = match self
                     .settings
@@ -1148,10 +1154,9 @@ impl crate::App {
                         .id("sort-trigger")
                         .flex_none()
                         .h(px(30.0))
-                        .px(if narrow { px(0.0) } else { px(8.0) })
-                        .w(if narrow { px(30.0) } else { px(0.0) })
+                        .when(narrow, |this| this.w(px(30.0)).px(px(0.0)))
+                        .when(!narrow, |this| this.px(px(8.0)))
                         .rounded(px(4.0))
-                        .cursor_pointer()
                         .bg(if self.sort_menu_open { theme.active } else { theme.transparent() })
                         .border_1()
                         .border_color(if self.sort_menu_open { theme.accent } else { theme.transparent() })
@@ -1194,24 +1199,26 @@ impl crate::App {
                 } else {
                     "Rescan"
                 };
-                actions = actions.child(workbench_button(
-                    "rescan",
-                    scanning_label,
-                    if cancelling || scanning { "square" } else { "refresh" },
-                    ButtonKind::Ghost,
-                    !(scanning && cancelling),
-                    !wide,
-                    "Rescan library",
-                    cx,
-                    |app, cx| {
-                        if app.scan.active && !app.scan.cancelling {
-                            app.command(Command::CancelScan);
-                        } else {
-                            app.command(Command::ScanLibrary);
-                        }
-                        cx.notify();
-                    },
-                ));
+                if !ultra_narrow {
+                    actions = actions.child(workbench_button(
+                        "rescan",
+                        scanning_label,
+                        if cancelling || scanning { "square" } else { "refresh" },
+                        ButtonKind::Ghost,
+                        !(scanning && cancelling),
+                        !wide,
+                        "Rescan library",
+                        cx,
+                        |app, cx| {
+                            if app.scan.active && !app.scan.cancelling {
+                                app.command(Command::CancelScan);
+                            } else {
+                                app.command(Command::ScanLibrary);
+                            }
+                            cx.notify();
+                        },
+                    ));
+                }
 
                 if self.selected.is_some() && !self.prepare.studio_mode {
                     if wide {
@@ -1915,7 +1922,8 @@ impl crate::App {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0));
+            .gap(px(8.0))
+            .overflow_hidden();
 
         header = header.child(
             div()
