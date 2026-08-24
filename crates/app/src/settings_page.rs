@@ -17,16 +17,11 @@ pub struct SettingsUiState {
     pub personal_phone: String,
     pub login_code: String,
     pub login_password: String,
-    pub diagnostics_requested: bool,
 }
 
 impl crate::App {
     pub fn render_settings(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
-        // Request diagnostics when the page first opens.
-        if self.diagnostics.ffmpeg.is_empty() {
-            self.command(Command::Diagnostics);
-        }
         let mut page = div()
             .id("settings")
             .flex_1()
@@ -74,15 +69,7 @@ impl crate::App {
             .flex_1()
             .min_w(px(0.0))
             .overflow_scroll()
-            .scrollbar_width(px(10.0))
-            .child(
-                div()
-                    .w(px(content_width))
-                    .mx(px(24.0))
-                    .pb(px(40.0))
-                    .flex()
-                    .flex_col(),
-            );
+            .scrollbar_width(px(10.0));
 
         // The inner column is built piece by piece.
         let mut inner = div()
@@ -143,7 +130,7 @@ impl crate::App {
         inner = inner
             .child(section_label(&theme, "PERFORMANCE"))
             .child(group_title(&theme, "Rendering and media"))
-            .child(help_text(&theme, "VSync stays enabled. Maximum mode keeps graphics resources resident, preloads adjacent media, raises safe thumbnail concurrency, and prefers hardware export."))
+            .child(help_text(&theme, "VSync stays enabled. Maximum mode preloads adjacent media, allows a second preview encode, and prefers hardware export."))
             .child(setting_row(
                 cx,
                 &theme,
@@ -156,7 +143,7 @@ impl crate::App {
                     app.set_setting(PERFORMANCE_MODE, json!(if index == 1 { "maximum" } else { "automatic" }), cx);
                 },
             ))
-            .child(help_text(&theme, "Maximum takes full effect after restarting ClipRelay."))
+            .child(help_text(&theme, "Changes apply to new preview and export jobs immediately."))
             .child(setting_row(
                 cx,
                 &theme,
@@ -198,14 +185,22 @@ impl crate::App {
                     .child(diagnostic_row(&theme, "Renderer", "GPUI"))
                     .child(diagnostic_row(&theme, "GPU", "—"))
                     .child(diagnostic_row(&theme, "Display", "—"))
-                    .child(diagnostic_row(&theme, "Video decoder", "FFmpeg"))
+                    .child(diagnostic_row(
+                        &theme,
+                        "Video playback",
+                        if self.diagnostics.gstreamer.is_empty() {
+                            "GStreamer"
+                        } else {
+                            &self.diagnostics.gstreamer
+                        },
+                    ))
                     .child(diagnostic_row(
                         &theme,
                         "Export",
-                        &if cliprelay_core::media::hardware_encoder_info().0 {
-                            cliprelay_core::media::hardware_encoder_info().1
+                        if self.diagnostics.export_encoder.is_empty() {
+                            "Not sampled"
                         } else {
-                            "libx264".to_string()
+                            &self.diagnostics.export_encoder
                         },
                     ))
                     .child(diagnostic_row(&theme, "Frame pacing", "—"))
@@ -627,13 +622,15 @@ impl crate::App {
         // DIAGNOSTICS (the accent-colored bottom header, distinct from the
         // muted "LIVE DIAGNOSTICS" inside PERFORMANCE).
         inner = inner
-            .child(div()
-                .mt(px(SPACING_XXL))
-                .mb(px(SPACING_SM))
-                .child(tracked("DIAGNOSTICS"))
-                .text_size(px(12.0))
-                .text_color(theme.accent_text)
-                .font_weight(FontWeight::SEMIBOLD))
+            .child(
+                div()
+                    .mt(px(SPACING_XXL))
+                    .mb(px(SPACING_SM))
+                    .child(tracked("DIAGNOSTICS"))
+                    .text_size(px(12.0))
+                    .text_color(theme.accent_text)
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
             .child(
                 div()
                     .w_full()
@@ -669,9 +666,21 @@ impl crate::App {
                     .flex_row()
                     .gap(px(16.0))
                     .child(diagnostic_cell(&theme, "FFmpeg", &self.diagnostics.ffmpeg))
-                    .child(diagnostic_cell(&theme, "FFprobe", &self.diagnostics.ffprobe))
-                    .child(diagnostic_cell(&theme, "Database", &self.diagnostics.database))
-                    .child(diagnostic_cell(&theme, "Secrets", &self.diagnostics.secret_backend)),
+                    .child(diagnostic_cell(
+                        &theme,
+                        "FFprobe",
+                        &self.diagnostics.ffprobe,
+                    ))
+                    .child(diagnostic_cell(
+                        &theme,
+                        "Database",
+                        &self.diagnostics.database,
+                    ))
+                    .child(diagnostic_cell(
+                        &theme,
+                        "Secrets",
+                        &self.diagnostics.secret_backend,
+                    )),
             );
 
         content = content.child(inner);
@@ -740,7 +749,12 @@ fn sub_label(theme: &crate::theme::Theme, label: &str) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
 }
 
-fn static_field(id: &'static str, theme: &crate::theme::Theme, placeholder: &str, value: String) -> Stateful<Div> {
+fn static_field(
+    id: &'static str,
+    theme: &crate::theme::Theme,
+    placeholder: &str,
+    value: String,
+) -> Stateful<Div> {
     let empty = value.is_empty();
     div()
         .id(id)
@@ -753,7 +767,11 @@ fn static_field(id: &'static str, theme: &crate::theme::Theme, placeholder: &str
         .border_color(theme.border)
         .flex()
         .items_center()
-        .child(if empty { placeholder.to_string() } else { value })
+        .child(if empty {
+            placeholder.to_string()
+        } else {
+            value
+        })
         .text_size(px(13.0))
         .text_color(if empty { theme.muted } else { theme.text })
         .text_ellipsis()
@@ -781,7 +799,11 @@ fn theme_choices(
             .rounded(px(10.0))
             .border_1()
             .border_color(if selected { theme.accent } else { theme.border })
-            .bg(if selected { theme.accent_soft } else { theme.surface })
+            .bg(if selected {
+                theme.accent_soft
+            } else {
+                theme.surface
+            })
             .cursor_pointer()
             .p(px(10.0))
             .flex()
@@ -803,9 +825,27 @@ fn theme_choices(
                 .flex_col()
                 .gap(px(4.0))
                 .p(px(6.0))
-                .child(div().w_full().h(px(8.0)).rounded(px(2.0)).bg(palette.raised))
-                .child(div().w(px(30.0)).h(px(6.0)).rounded(px(2.0)).bg(palette.accent))
-                .child(div().w_full().h(px(4.0)).rounded(px(2.0)).bg(palette.border)),
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(8.0))
+                        .rounded(px(2.0))
+                        .bg(palette.raised),
+                )
+                .child(
+                    div()
+                        .w(px(30.0))
+                        .h(px(6.0))
+                        .rounded(px(2.0))
+                        .bg(palette.accent),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(4.0))
+                        .rounded(px(2.0))
+                        .bg(palette.border),
+                ),
         );
         card = card.child(
             div()
@@ -936,7 +976,11 @@ fn combo(
                 .items_center()
                 .gap(px(8.0))
                 .cursor_pointer()
-                .bg(if index == selected { theme.active } else { theme.transparent() })
+                .bg(if index == selected {
+                    theme.active
+                } else {
+                    theme.transparent()
+                })
                 .child(
                     div()
                         .w(px(13.0))
@@ -948,8 +992,16 @@ fn combo(
                     div()
                         .child(option)
                         .text_size(px(13.0))
-                        .text_color(if index == selected { theme.text } else { theme.text_soft })
-                        .font_weight(if index == selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
+                        .text_color(if index == selected {
+                            theme.text
+                        } else {
+                            theme.text_soft
+                        })
+                        .font_weight(if index == selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        }),
                 )
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.close_combo(id, cx);

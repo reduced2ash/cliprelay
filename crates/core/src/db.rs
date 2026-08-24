@@ -2,10 +2,10 @@
 
 use crate::utils::utc_now;
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
 use rusqlite::{Connection, Row};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use parking_lot::Mutex;
 
 /// Prefix marking an *exact* folder scope in `random_media` folder lists
 /// (`\x1e` — unit separator, matching the Python port).
@@ -396,7 +396,13 @@ fn command_scope(value: &str) -> &'static str {
     let scope = value.trim().to_ascii_lowercase();
     match scope.as_str() {
         "all" | "videos" | "folders" => {
-            if scope == "videos" { "videos" } else if scope == "folders" { "folders" } else { "all" }
+            if scope == "videos" {
+                "videos"
+            } else if scope == "folders" {
+                "folders"
+            } else {
+                "all"
+            }
         }
         _ => "all",
     }
@@ -490,7 +496,9 @@ impl Database {
             rows.collect::<Result<_, _>>()?
         };
         if !columns.iter().any(|c| c == "active") {
-            conn.execute_batch("ALTER TABLE media_files ADD COLUMN active INTEGER NOT NULL DEFAULT 1")?;
+            conn.execute_batch(
+                "ALTER TABLE media_files ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+            )?;
         }
         if !columns.iter().any(|c| c == "timeline_path") {
             conn.execute_batch("ALTER TABLE media_files ADD COLUMN timeline_path TEXT")?;
@@ -501,7 +509,9 @@ impl Database {
             rows.collect::<Result<_, _>>()?
         };
         if !export_columns.iter().any(|c| c == "edit_spec") {
-            conn.execute_batch("ALTER TABLE exports ADD COLUMN edit_spec TEXT NOT NULL DEFAULT '{}'")?;
+            conn.execute_batch(
+                "ALTER TABLE exports ADD COLUMN edit_spec TEXT NOT NULL DEFAULT '{}'",
+            )?;
         }
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_media_active_valid_seen \
@@ -528,7 +538,9 @@ impl Database {
     pub fn get_settings(&self) -> Result<HashMap<String, String>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -655,11 +667,15 @@ impl Database {
 
     /// Mark rows whose path is not in `existing_paths` as invalid.
     pub fn invalidate_absent(&self, root_path: &str, existing_paths: &[String]) -> Result<usize> {
-        let present: std::collections::HashSet<&str> = existing_paths.iter().map(String::as_str).collect();
+        let present: std::collections::HashSet<&str> =
+            existing_paths.iter().map(String::as_str).collect();
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, path FROM media_files WHERE root_path=?1 AND valid=1")?;
+        let mut stmt =
+            conn.prepare("SELECT id, path FROM media_files WHERE root_path=?1 AND valid=1")?;
         let rows = stmt
-            .query_map([root_path], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+            .query_map([root_path], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         let missing: Vec<i64> = rows
             .into_iter()
@@ -677,9 +693,8 @@ impl Database {
 
     pub fn manifest_paths(&self, root_path: &str) -> Result<Vec<PathBuf>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT path FROM media_files WHERE root_path=?1 AND valid=1 ORDER BY path",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT path FROM media_files WHERE root_path=?1 AND valid=1 ORDER BY path")?;
         let rows = stmt.query_map([root_path], |row| row.get::<_, String>(0))?;
         Ok(rows
             .collect::<Result<Vec<_>, _>>()?
@@ -750,14 +765,19 @@ impl Database {
             [root_path],
         )?;
         for chunk in existing_paths.chunks(500) {
-            let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{i}")).collect();
+            let placeholders: Vec<String> =
+                (2..=chunk.len() + 1).map(|i| format!("?{i}")).collect();
             let sql = format!(
                 "UPDATE media_files SET valid=1 WHERE root_path=?1 AND path IN ({})",
                 placeholders.join(",")
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
                 vec![Box::new(root_path.to_string())];
-            params.extend(chunk.iter().map(|p| Box::new(p.clone()) as Box<dyn rusqlite::types::ToSql>));
+            params.extend(
+                chunk
+                    .iter()
+                    .map(|p| Box::new(p.clone()) as Box<dyn rusqlite::types::ToSql>),
+            );
             let mut stmt = conn.prepare(&sql)?;
             stmt.execute(rusqlite::params_from_iter(params.iter()))?;
         }
@@ -884,9 +904,57 @@ impl Database {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Zero-based position of a media row under the active filter and sort.
+    /// SQLite computes the rank without materializing every `MediaRow` in
+    /// Rust, which keeps reveal operations bounded for very large libraries.
+    pub fn media_index(
+        &self,
+        media_id: i64,
+        search: &str,
+        folder: &str,
+        sort_mode: &str,
+    ) -> Result<Option<usize>> {
+        let order = media_order(sort_mode);
+        let (clauses, mut values) = media_filter(search, folder);
+        let sql = format!(
+            "SELECT position FROM (\
+             SELECT id, ROW_NUMBER() OVER (ORDER BY {order}) - 1 AS position \
+             FROM media_files WHERE {}\
+             ) ranked WHERE id = ?",
+            clauses.join(" AND ")
+        );
+        values.push(Box::new(media_id));
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(values.iter()))?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get::<_, i64>(0)?.max(0) as usize)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn media_count(&self, search: &str, folder: &str) -> Result<usize> {
+        let (clauses, values) = media_filter(search, folder);
+        let sql = format!(
+            "SELECT COUNT(*) FROM media_files WHERE {}",
+            clauses.join(" AND ")
+        );
+        let conn = self.conn.lock();
+        let count: i64 =
+            conn.query_row(&sql, rusqlite::params_from_iter(values.iter()), |row| {
+                row.get(0)
+            })?;
+        Ok(count.max(0) as usize)
+    }
+
     // ---- command center ----------------------------------------------
 
-    pub fn search_suggestions(&self, query: &str, limit: usize, scope: &str) -> Result<Vec<CommandResult>> {
+    pub fn search_suggestions(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &str,
+    ) -> Result<Vec<CommandResult>> {
         let value = query.trim().to_string();
         let capped = limit.clamp(1, 12);
         let normalized = command_scope(scope);
@@ -908,14 +976,10 @@ impl Database {
                  ORDER BY CASE WHEN name LIKE ?3 ESCAPE '\\' THEN 0 ELSE 1 END, \
                  name COLLATE NOCASE, id LIMIT ?4",
             )?;
-            let mut rows = stmt.query(rusqlite::params![contains, contains, prefix, capped as i64])?;
+            let mut rows =
+                stmt.query(rusqlite::params![contains, contains, prefix, capped as i64])?;
             while let Some(row) = rows.next()? {
-                media_rows.push((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                ));
+                media_rows.push((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?));
             }
         }
         let mut folder_rows: Vec<(String, i64)> = Vec::new();
@@ -931,7 +995,12 @@ impl Database {
                  ELSE 2 END, folder COLLATE NOCASE LIMIT ?6",
             )?;
             let mut rows = stmt.query(rusqlite::params![
-                contains, value, leaf_exact, prefix, leaf_prefix, capped as i64
+                contains,
+                value,
+                leaf_exact,
+                prefix,
+                leaf_prefix,
+                capped as i64
             ])?;
             while let Some(row) = rows.next()? {
                 folder_rows.push((row.get(0)?, row.get(1)?));
@@ -962,7 +1031,12 @@ impl Database {
                 count,
             })
             .collect();
-        Ok(merge_command_results(media_results, folder_results, capped, normalized))
+        Ok(merge_command_results(
+            media_results,
+            folder_results,
+            capped,
+            normalized,
+        ))
     }
 
     pub fn command_center_overview(&self, limit: usize, scope: &str) -> Result<Vec<CommandResult>> {
@@ -1031,7 +1105,12 @@ impl Database {
                 count,
             })
             .collect();
-        Ok(merge_command_results(media_results, folder_results, capped, normalized))
+        Ok(merge_command_results(
+            media_results,
+            folder_results,
+            capped,
+            normalized,
+        ))
     }
 
     pub fn navigation_neighbors(
@@ -1055,7 +1134,11 @@ impl Database {
         values.push(Box::new(media_id));
         let mut rows = stmt.query(rusqlite::params_from_iter(values.iter()))?;
         match rows.next()? {
-            Some(row) => Ok((true, row.get::<_, Option<i64>>(0)?.unwrap_or(0), row.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+            Some(row) => Ok((
+                true,
+                row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            )),
             None => Ok((false, 0, 0)),
         }
     }
@@ -1176,7 +1259,11 @@ impl Database {
         require_checked: bool,
         folders: &[String],
     ) -> Result<Option<MediaRow>> {
-        let checked = if require_checked { " AND duration>0" } else { "" };
+        let checked = if require_checked {
+            " AND duration>0"
+        } else {
+            ""
+        };
         let (folder_scope, folder_values) = folder_scope(folders);
         let conn = self.conn.lock();
         let mut where_clause = if avoid_seen {
@@ -1206,11 +1293,16 @@ impl Database {
         }
         use rand::Rng;
         let offset: i64 = rand::thread_rng().gen_range(0..count);
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            folder_values.iter().map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>).collect();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = folder_values
+            .iter()
+            .map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
         params.push(Box::new(offset));
         let media_id: i64 = conn.query_row(
-            &format!("SELECT id FROM media_files WHERE {where_clause} ORDER BY id LIMIT 1 OFFSET ?{}", params.len()),
+            &format!(
+                "SELECT id FROM media_files WHERE {where_clause} ORDER BY id LIMIT 1 OFFSET ?{}",
+                params.len()
+            ),
             rusqlite::params_from_iter(params.iter()),
             |row| row.get(0),
         )?;
@@ -1225,9 +1317,8 @@ impl Database {
 
     pub fn seen_paths(&self, root_path: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT path FROM media_files WHERE root_path=?1 AND valid=1 AND seen=1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT path FROM media_files WHERE root_path=?1 AND valid=1 AND seen=1")?;
         let rows = stmt.query_map([root_path], |row| row.get::<_, String>(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -1242,9 +1333,14 @@ impl Database {
         let (folder_scope, folder_values) = folder_scope(folders);
         let conn = self.conn.lock();
         if let Some(root) = root_path {
-            let sql = format!("UPDATE media_files SET seen=0 WHERE root_path=?{}{folder_scope}", folder_values.len() + 1);
-            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                folder_values.iter().map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>).collect();
+            let sql = format!(
+                "UPDATE media_files SET seen=0 WHERE root_path=?{}{folder_scope}",
+                folder_values.len() + 1
+            );
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = folder_values
+                .iter()
+                .map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
             params.push(Box::new(root.to_string()));
             conn.execute(&sql, rusqlite::params_from_iter(params.iter()))?;
         } else {
@@ -1317,8 +1413,16 @@ impl Database {
 
     pub fn create_post(&self, values: &PostValues) -> Result<i64> {
         let now = utc_now();
-        let telegram_status = if values.telegram_enabled { "queued" } else { "not_requested" };
-        let x_status = if values.x_enabled { "queued" } else { "not_requested" };
+        let telegram_status = if values.telegram_enabled {
+            "queued"
+        } else {
+            "not_requested"
+        };
+        let x_status = if values.x_enabled {
+            "queued"
+        } else {
+            "not_requested"
+        };
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO posts(media_id,export_id,created_at,updated_at,telegram_enabled,x_enabled,\
@@ -1565,7 +1669,11 @@ mod tests {
 
         // Video scope: matches the name and prefers the prefix match.
         let videos = db.search_suggestions("clip", 12, "videos").unwrap();
-        let names: Vec<String> = videos.iter().filter(|r| r.kind == "media").map(|r| r.title.clone()).collect();
+        let names: Vec<String> = videos
+            .iter()
+            .filter(|r| r.kind == "media")
+            .map(|r| r.title.clone())
+            .collect();
         assert!(names.iter().any(|n| n == "clip one.mp4"), "got {names:?}");
         assert!(names.iter().any(|n| n == "deep clip.mp4"), "got {names:?}");
         let first = videos.iter().find(|r| r.kind == "media").unwrap();
@@ -1573,7 +1681,12 @@ mod tests {
 
         // Folder scope: the nested folder is found by leaf match.
         let folders = db.search_suggestions("sub", 12, "folders").unwrap();
-        assert!(folders.iter().any(|r| r.kind == "folder" && r.title == "sub"), "got {folders:?}");
+        assert!(
+            folders
+                .iter()
+                .any(|r| r.kind == "folder" && r.title == "sub"),
+            "got {folders:?}"
+        );
 
         // Empty query yields no results.
         assert!(db.search_suggestions("", 12, "all").unwrap().is_empty());
@@ -1624,7 +1737,10 @@ mod tests {
     fn settings_roundtrip() {
         let db = open_tmp();
         db.set_setting("theme_mode", "\"relay\"").unwrap();
-        assert_eq!(db.get_setting_raw("theme_mode").unwrap().unwrap(), "\"relay\"");
+        assert_eq!(
+            db.get_setting_raw("theme_mode").unwrap().unwrap(),
+            "\"relay\""
+        );
         assert_eq!(db.get_setting_raw("missing").unwrap(), None);
         let all = db.get_settings().unwrap();
         assert_eq!(all.get("theme_mode").unwrap(), "\"relay\"");
@@ -1702,7 +1818,10 @@ mod tests {
         db.upsert_manifest_batch(&entries).unwrap();
         // Scope "A" matches A and A/sub (3? no: a.mp4 + c.mp4).
         for _ in 0..10 {
-            let row = db.random_media(true, false, &["A".to_string()]).unwrap().unwrap();
+            let row = db
+                .random_media(true, false, &["A".to_string()])
+                .unwrap()
+                .unwrap();
             assert!(row.folder == "A" || row.folder == "A/sub");
         }
         // Exact scope.
@@ -1714,7 +1833,10 @@ mod tests {
             assert_eq!(row.folder, "A");
         }
         // Folder "B" only.
-        let row = db.random_media(true, false, &["B".to_string()]).unwrap().unwrap();
+        let row = db
+            .random_media(true, false, &["B".to_string()])
+            .unwrap()
+            .unwrap();
         assert_eq!(row.folder, "B");
     }
 
@@ -1722,7 +1844,8 @@ mod tests {
     fn history_search_escapes_wildcards() {
         let db = open_tmp();
         let root = "/tmp/root";
-        db.upsert_manifest_batch(&[entry(root, "/tmp/root/clip.mp4", "")]).unwrap();
+        db.upsert_manifest_batch(&[entry(root, "/tmp/root/clip.mp4", "")])
+            .unwrap();
         db.activate_root(Some(root)).unwrap();
         let media_id = db.list_media("", "", "newest", 1, 0).unwrap()[0].id;
         // Two posts: one whose caption contains a literal percent.
@@ -1736,7 +1859,8 @@ mod tests {
             telegram_mode: "bot".into(),
             telegram_destination: "@c".into(),
             cleanup_policy: "keep".into(),
-        }).unwrap();
+        })
+        .unwrap();
         db.create_post(&PostValues {
             media_id,
             export_id: None,
@@ -1747,7 +1871,8 @@ mod tests {
             telegram_mode: "bot".into(),
             telegram_destination: "@c".into(),
             cleanup_policy: "keep".into(),
-        }).unwrap();
+        })
+        .unwrap();
         // Literal % matches only the caption containing it.
         let hits = db.list_history("50%", 10, 0).unwrap();
         assert_eq!(hits.len(), 1);
@@ -1819,7 +1944,7 @@ mod tests {
         assert_eq!(posts_count, 1);
         assert_eq!(unseen, 1);
         // posted_count increments
-        db.increment_posted(media.id);
+        db.increment_posted(media.id).unwrap();
         let media = db.get_media(media.id).unwrap().unwrap();
         assert_eq!(media.posted_count, 1);
     }
@@ -1898,6 +2023,16 @@ mod tests {
         let by_name = db.list_media("", "", "name", 100, 0).unwrap();
         assert_eq!(by_name[0].name, "a.mp4");
         assert_eq!(by_name[1].name, "b.mp4");
+        assert_eq!(db.media_count("", "").unwrap(), 2);
+        assert_eq!(
+            db.media_index(by_name[0].id, "", "", "name").unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            db.media_index(by_name[1].id, "", "", "name").unwrap(),
+            Some(1)
+        );
+        assert_eq!(db.media_index(9999, "", "", "name").unwrap(), None);
         let filtered = db.list_media("a.mp4", "", "name", 100, 0).unwrap();
         assert_eq!(filtered.len(), 1);
         let folder = db.list_media("", "x", "name", 100, 0).unwrap();
@@ -1940,9 +2075,7 @@ mod tests {
         let mut seen: Vec<i64> = Vec::new();
         let mut offset = 0usize;
         loop {
-            let rows = db
-                .list_media("", "", "name", 7, offset as i64)
-                .unwrap();
+            let rows = db.list_media("", "", "name", 7, offset as i64).unwrap();
             if rows.is_empty() {
                 break;
             }

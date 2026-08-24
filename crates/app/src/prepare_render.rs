@@ -1,18 +1,18 @@
 //! Prepare workspace renderers: stage (frame + transport + timeline +
 //! source strip), inspector tabs, edit/publish inspectors, action dock.
 
-use crate::prepare::{COMPRESSION_OPTIONS, CLEANUP_OPTIONS};
 use crate::prepare::{DragHandle, ShapeKind};
+use crate::prepare::{CLEANUP_OPTIONS, COMPRESSION_OPTIONS};
+use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
-use crate::settings_import::*;
 use cliprelay_core::media::CropSpec;
 use cliprelay_core::utils::format_bytes;
 use gpui::*;
 use gpui_video_player::video as video_element;
-use std::path::PathBuf;
 use serde_json::json;
+use std::path::PathBuf;
 
 fn color_from_hex(hex: &str) -> Hsla {
     let hex = hex.trim_start_matches('#');
@@ -37,7 +37,6 @@ impl crate::App {
         let trim_end = self.prepare.trim_end;
         let playing = self.prepare.playing;
         let cut_active = self.prepare.cut_active();
-        let frame_path = self.prepare.current_frame_path();
         let thumbnail = self
             .selected
             .as_ref()
@@ -71,24 +70,17 @@ impl crate::App {
             .px(px(12.0))
             .pt(px(8.0))
             .gap(px(8.0));
-        stage
-            .interactivity()
-            .on_mouse_move(cx.listener(move |app, event: &MouseMoveEvent, _window, cx| {
+        stage.interactivity().on_mouse_move(cx.listener(
+            move |app, event: &MouseMoveEvent, _window, cx| {
                 let x: f32 = event.position.x.into();
                 let y: f32 = event.position.y.into();
                 app.prepare_drag_move(x, y, track_left, track_width, duration, cx);
-            }));
+            },
+        ));
         stage.interactivity().on_mouse_up(
             MouseButton::Left,
             cx.listener(|app, _event: &MouseUpEvent, _window, cx| {
-                let was_seek = matches!(app.prepare.drag, DragHandle::Seek | DragHandle::TrimIn);
                 app.prepare.drag = DragHandle::None;
-                if was_seek && app.prepare.duration > 0.0 {
-                    // Ensure the frame at the final drag position is
-                    // extracted even when the throttle dropped the last move.
-                    app.prepare
-                        .request_frame_at(app.prepare.position, true);
-                }
                 app.save_draft();
                 cx.notify();
             }),
@@ -113,8 +105,15 @@ impl crate::App {
         // header (38) or the dock's checking strip (34) and the stage's
         // 8px top padding.
         let frame_x = track_left;
-        let frame_top = 40.0 + 42.0
-            + if is_studio { 38.0 } else if self.checking { 34.0 } else { 0.0 }
+        let frame_top = 40.0
+            + 42.0
+            + if is_studio {
+                38.0
+            } else if self.checking {
+                34.0
+            } else {
+                0.0
+            }
             + 8.0;
         self.prepare.frame_rect = (frame_x, frame_top, track_width, frame_height);
         let has_edits = self.prepare.has_edits();
@@ -125,30 +124,22 @@ impl crate::App {
             .rounded(px(4.0))
             .bg(color_from_hex("#05070B"))
             .border_1()
-            .border_color(if has_edits { theme.accent } else { theme.border_strong })
+            .border_color(if has_edits {
+                theme.accent
+            } else {
+                theme.border_strong
+            })
             .overflow_hidden()
             .relative();
-        let image_source = frame_path.or_else(|| {
-                if !thumbnail.is_empty() {
-                    Some(PathBuf::from(thumbnail))
-                } else {
-                    None
-                }
-            });
+        let image_source = (!thumbnail.is_empty()).then(|| PathBuf::from(thumbnail));
         if let Some(video) = self.prepare.video.clone() {
             frame = frame.child(
                 video_element(video)
                     .id("prepare-video")
-                    .buffer_capacity(10)
                     .size(px(track_width), px(frame_height)),
             );
         } else if let Some(source) = image_source {
-            frame = frame.child(
-                img(source)
-                    .w_full()
-                    .h_full()
-                    .object_fit(ObjectFit::Contain),
-            );
+            frame = frame.child(img(source).w_full().h_full().object_fit(ObjectFit::Contain));
         } else {
             frame = frame.child(
                 div()
@@ -158,6 +149,26 @@ impl crate::App {
                     .items_center()
                     .justify_center()
                     .child(icon("▷", 40.0, theme.border_strong)),
+            );
+        }
+        if self.prepare_video_loading || self.prepare_video_error.is_some() {
+            let message = self
+                .prepare_video_error
+                .as_deref()
+                .unwrap_or("Loading video…")
+                .to_string();
+            frame = frame.child(
+                div()
+                    .absolute()
+                    .bottom(px(10.0))
+                    .left(px(10.0))
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .bg(theme.media_overlay)
+                    .text_size(px(11.0))
+                    .text_color(theme.text)
+                    .child(message),
             );
         }
         // Edit overlays (crop + masks).
@@ -175,15 +186,13 @@ impl crate::App {
                 .flex_row()
                 .items_center()
                 .gap(px(8.0))
-                .child(
-                    tabular(
-                        div()
-                            .w(px(70.0))
-                            .child(time_label)
-                            .text_size(px(12.0))
-                            .text_color(theme.text_soft),
-                    ),
-                )
+                .child(tabular(
+                    div()
+                        .w(px(70.0))
+                        .child(time_label)
+                        .text_size(px(12.0))
+                        .text_color(theme.text_soft),
+                ))
                 .child(div().flex_1())
                 .child(workbench_button(
                     "back-5",
@@ -195,27 +204,30 @@ impl crate::App {
                     "Back 5 seconds",
                     cx,
                     |app, cx| {
-                        app.prepare.seek(app.prepare.position - 5.0, app.prepare.duration);
+                        app.prepare
+                            .seek(app.prepare.position - 5.0, app.prepare.duration);
                         cx.notify();
                     },
                 ))
-                .child(
-                    workbench_button(
-                        "play-pause",
-                        "",
-                        if playing { "⏸" } else { "▶" },
-                        ButtonKind::Ghost,
-                        !disabled && duration > 0.0,
-                        true,
-                        if playing { "Pause  ·  Space" } else { "Play  ·  Space" },
-                        cx,
-                        |app, cx| {
-                            app.prepare.toggle_playback();
-                            app.save_draft();
-                            cx.notify();
-                        },
-                    ),
-                )
+                .child(workbench_button(
+                    "play-pause",
+                    "",
+                    if playing { "⏸" } else { "▶" },
+                    ButtonKind::Ghost,
+                    !disabled && duration > 0.0,
+                    true,
+                    if playing {
+                        "Pause  ·  Space"
+                    } else {
+                        "Play  ·  Space"
+                    },
+                    cx,
+                    |app, cx| {
+                        app.prepare.toggle_playback();
+                        app.save_draft();
+                        cx.notify();
+                    },
+                ))
                 .child(workbench_button(
                     "forward-5",
                     "",
@@ -226,7 +238,8 @@ impl crate::App {
                     "Forward 5 seconds",
                     cx,
                     |app, cx| {
-                        app.prepare.seek(app.prepare.position + 5.0, app.prepare.duration);
+                        app.prepare
+                            .seek(app.prepare.position + 5.0, app.prepare.duration);
                         cx.notify();
                     },
                 ))
@@ -271,7 +284,6 @@ impl crate::App {
                         .child(duration_label)
                         .text_size(px(12.0))
                         .text_color(theme.muted)
-                        
                         .text_right(),
                 ),
         );
@@ -299,7 +311,11 @@ impl crate::App {
             .rounded(px(6.0))
             .bg(color_from_hex("#05070B"))
             .border_1()
-            .border_color(if cut_active { theme.accent } else { theme.border_strong })
+            .border_color(if cut_active {
+                theme.accent
+            } else {
+                theme.border_strong
+            })
             .overflow_hidden()
             .relative()
             .opacity(if disabled { 0.55 } else { 1.0 });
@@ -308,8 +324,8 @@ impl crate::App {
             cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
                 if !app.checking {
                     let x: f32 = event.position.x.into();
-                    let seconds =
-                        ((x - track_left) / track_width * duration as f32).clamp(0.0, duration as f32);
+                    let seconds = ((x - track_left) / track_width * duration as f32)
+                        .clamp(0.0, duration as f32);
                     app.prepare.drag = DragHandle::Seek;
                     app.prepare.drag_start_x = x as f64;
                     app.prepare.drag_start_value = seconds as f64;
@@ -336,7 +352,12 @@ impl crate::App {
                     .left_0()
                     .h_full()
                     .w(px((start_fraction as f32) * track_width))
-                    .bg(Hsla { h: 0.0, s: 0.0, l: 0.02, a: 0.7 }),
+                    .bg(Hsla {
+                        h: 0.0,
+                        s: 0.0,
+                        l: 0.02,
+                        a: 0.7,
+                    }),
             )
             .child(
                 div()
@@ -345,7 +366,12 @@ impl crate::App {
                     .right_0()
                     .h_full()
                     .w(px(((1.0 - end_fraction) as f32) * track_width))
-                    .bg(Hsla { h: 0.0, s: 0.0, l: 0.02, a: 0.7 }),
+                    .bg(Hsla {
+                        h: 0.0,
+                        s: 0.0,
+                        l: 0.02,
+                        a: 0.7,
+                    }),
             );
         if cut_active {
             track = track.child(
@@ -360,26 +386,39 @@ impl crate::App {
             );
         }
         // Playhead.
-        track = track
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .h_full()
-                    .w(px(2.0))
-                    .left(px(((play_fraction as f32) * track_width - 1.0).clamp(0.0, track_width - 2.0)))
-                    .bg(Hsla { h: 0.55, s: 0.0, l: 0.97, a: 1.0 }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left(px(((play_fraction as f32) * track_width - 3.5).clamp(0.0, track_width - 7.0)))
-                    .w(px(7.0))
-                    .h(px(7.0))
-                    .rounded(px(4.0))
-                    .bg(Hsla { h: 0.55, s: 0.0, l: 0.97, a: 1.0 }),
-            );
+        track =
+            track
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .h_full()
+                        .w(px(2.0))
+                        .left(px(((play_fraction as f32) * track_width - 1.0)
+                            .clamp(0.0, track_width - 2.0)))
+                        .bg(Hsla {
+                            h: 0.55,
+                            s: 0.0,
+                            l: 0.97,
+                            a: 1.0,
+                        }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(((play_fraction as f32) * track_width - 3.5)
+                            .clamp(0.0, track_width - 7.0)))
+                        .w(px(7.0))
+                        .h(px(7.0))
+                        .rounded(px(4.0))
+                        .bg(Hsla {
+                            h: 0.55,
+                            s: 0.0,
+                            l: 0.97,
+                            a: 1.0,
+                        }),
+                );
         // Trim handles.
         track = track
             .child(self.trim_handle(
@@ -409,27 +448,23 @@ impl crate::App {
         // Tick labels (0/25/50/75/100%) under the track, hidden in compact
         // mode like the original.
         if panel_width > 460.0 {
-            let mut ticks = div()
-                .w(px(track_width))
-                .h(px(14.0))
-                .relative()
-                .flex_none();
+            let mut ticks = div().w(px(track_width)).h(px(14.0)).relative().flex_none();
             for index in 0..5 {
                 let fraction = index as f32 / 4.0;
                 let seconds = duration * fraction as f64;
                 let label = self.prepare.format_time(seconds);
-                ticks = ticks.child(
-                    tabular(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left(px((fraction * track_width - 16.0).clamp(0.0, track_width - 32.0)))
-                            .w(px(32.0))
-                            .child(label)
-                            .text_size(px(10.0))
-                            .text_color(theme.muted_soft),
-                    ),
-                );
+                ticks = ticks.child(tabular(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(
+                            (fraction * track_width - 16.0).clamp(0.0, track_width - 32.0)
+                        ))
+                        .w(px(32.0))
+                        .child(label)
+                        .text_size(px(10.0))
+                        .text_color(theme.muted_soft),
+                ));
             }
             stage = stage.child(ticks);
         }
@@ -466,15 +501,14 @@ impl crate::App {
                 field(
                     "prepare-in",
                     "00:00.00",
-                    &self
-                        .fields
-                        .get("prepare-in")
-                        .cloned()
-                        .unwrap_or_else(|| crate::widgets::FieldState {
+                    &self.fields.get("prepare-in").cloned().unwrap_or_else(|| {
+                        crate::widgets::FieldState {
                             text: in_text.clone(),
                             caret: in_text.chars().count(),
                             committed: false,
-                        }),
+                            marked_range: None,
+                        }
+                    }),
                     self.focused_field.as_deref() == Some("prepare-in"),
                     !disabled,
                     false,
@@ -495,15 +529,14 @@ impl crate::App {
                 field(
                     "prepare-out",
                     "00:00.00",
-                    &self
-                        .fields
-                        .get("prepare-out")
-                        .cloned()
-                        .unwrap_or_else(|| crate::widgets::FieldState {
+                    &self.fields.get("prepare-out").cloned().unwrap_or_else(|| {
+                        crate::widgets::FieldState {
                             text: out_text.clone(),
                             caret: out_text.chars().count(),
                             committed: false,
-                        }),
+                            marked_range: None,
+                        }
+                    }),
                     self.focused_field.as_deref() == Some("prepare-out"),
                     !disabled,
                     false,
@@ -512,33 +545,37 @@ impl crate::App {
                 .flex_none()
                 .w(px(input_width)),
             );
-        let mut trailing = div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .child(if cut_active {
-                tabular(
-                    div()
-                        .child(format!(
-                            "CUT  {}",
-                            self.prepare.format_time_precise(trim_end - trim_start)
-                        ))
-                        .text_size(px(12.0))
-                        .text_color(theme.accent_text)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .into_any()
-            } else {
-                tabular(
-                    div()
-                        .child(format!("FULL  {}", self.prepare.format_time_precise(duration)))
-                        .text_size(px(12.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .into_any()
-            });
+        let mut trailing =
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(if cut_active {
+                    tabular(
+                        div()
+                            .child(format!(
+                                "CUT  {}",
+                                self.prepare.format_time_precise(trim_end - trim_start)
+                            ))
+                            .text_size(px(12.0))
+                            .text_color(theme.accent_text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .into_any()
+                } else {
+                    tabular(
+                        div()
+                            .child(format!(
+                                "FULL  {}",
+                                self.prepare.format_time_precise(duration)
+                            ))
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .into_any()
+                });
         if cut_active {
             trailing = trailing.child(workbench_button(
                 "reset-cut",
@@ -633,13 +670,15 @@ impl crate::App {
                         .id("source-path")
                         .flex_1()
                         .min_w(px(40.0))
-                        .child(if path.is_empty() { "—".to_string() } else { path.clone() })
+                        .child(if path.is_empty() {
+                            "—".to_string()
+                        } else {
+                            path.clone()
+                        })
                         .text_size(px(11.0))
                         .text_color(theme.muted)
                         .text_ellipsis()
-                        .tooltip(move |_window, cx| {
-                            crate::tooltip_view(cx, path.clone().into())
-                        }),
+                        .tooltip(move |_window, cx| crate::tooltip_view(cx, path.clone().into())),
                 )
                 .child(workbench_button(
                     "reveal-in-library",
@@ -675,9 +714,17 @@ impl crate::App {
     ) -> impl Element {
         let theme = self.theme.clone();
         let label: SharedString = if is_in {
-            format!("IN  {}", self.prepare.format_time_precise(self.prepare.trim_start)).into()
+            format!(
+                "IN  {}",
+                self.prepare.format_time_precise(self.prepare.trim_start)
+            )
+            .into()
         } else {
-            format!("OUT  {}", self.prepare.format_time_precise(self.prepare.trim_end)).into()
+            format!(
+                "OUT  {}",
+                self.prepare.format_time_precise(self.prepare.trim_end)
+            )
+            .into()
         };
         let _ = duration;
         let mut element = div()
@@ -742,9 +789,9 @@ impl crate::App {
         match self.prepare.drag {
             DragHandle::Seek | DragHandle::TrimIn | DragHandle::TrimOut => {
                 let delta = pointer_x - self.prepare.drag_start_x as f32;
-                let seconds =
-                    (self.prepare.drag_start_value + delta as f64 / track_width as f64 * duration)
-                        .clamp(0.0, duration);
+                let seconds = (self.prepare.drag_start_value
+                    + delta as f64 / track_width as f64 * duration)
+                    .clamp(0.0, duration);
                 match self.prepare.drag {
                     DragHandle::Seek => {
                         self.prepare.seek(seconds, duration);
@@ -781,12 +828,7 @@ impl crate::App {
     }
 
     /// Start a crop or mask drag; records the pointer + starting geometry.
-    fn start_edit_drag(
-        &mut self,
-        handle: DragHandle,
-        pointer_x: f32,
-        pointer_y: f32,
-    ) {
+    fn start_edit_drag(&mut self, handle: DragHandle, pointer_x: f32, pointer_y: f32) {
         self.prepare.drag = handle;
         self.prepare.drag_start_x = pointer_x as f64;
         self.prepare.drag_start_y = pointer_y as f64;
@@ -905,7 +947,12 @@ impl crate::App {
         frame_width: f32,
         frame_height: f32,
     ) -> impl Element {
-        let mut overlays = div().id("edit-overlays").absolute().top_0().left_0().size_full();
+        let mut overlays = div()
+            .id("edit-overlays")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
         let crop = self.prepare.crop;
         let crop_enabled = self.prepare.crop_enabled;
         let shapes = self.prepare.shapes.clone();
@@ -926,7 +973,12 @@ impl crate::App {
                             .left_0()
                             .w_full()
                             .h(px(height))
-                            .bg(Hsla { h: 0.0, s: 0.0, l: 0.02, a: 0.6 }),
+                            .bg(Hsla {
+                                h: 0.0,
+                                s: 0.0,
+                                l: 0.02,
+                                a: 0.6,
+                            }),
                     );
                 }
             }
@@ -939,7 +991,12 @@ impl crate::App {
                             .left(px(left))
                             .w(px(width))
                             .h(px(h))
-                            .bg(Hsla { h: 0.0, s: 0.0, l: 0.02, a: 0.6 }),
+                            .bg(Hsla {
+                                h: 0.0,
+                                s: 0.0,
+                                l: 0.02,
+                                a: 0.6,
+                            }),
                     );
                 }
             }
@@ -1012,9 +1069,18 @@ impl crate::App {
                 .left(px(x))
                 .w(px(w))
                 .h(px(h))
-                .bg(Hsla { h: 0.0, s: 0.0, l: 0.01, a: 0.85 })
+                .bg(Hsla {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 0.01,
+                    a: 0.85,
+                })
                 .border_2()
-                .border_color(if selected { theme.accent } else { theme.border_strong })
+                .border_color(if selected {
+                    theme.accent
+                } else {
+                    theme.border_strong
+                })
                 .cursor_move();
             mask.interactivity().on_mouse_down(
                 MouseButton::Left,
@@ -1072,8 +1138,16 @@ impl crate::App {
             (
                 format!(
                     "{} change{}",
-                    if self.prepare.shapes.is_empty() { 1 } else { self.prepare.shapes.len() },
-                    if self.prepare.shapes.len() == 1 { "" } else { "s" }
+                    if self.prepare.shapes.is_empty() {
+                        1
+                    } else {
+                        self.prepare.shapes.len()
+                    },
+                    if self.prepare.shapes.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
                 ),
                 "Ready".to_string(),
             )
@@ -1109,20 +1183,40 @@ impl crate::App {
             .items_center()
             .justify_center()
             .gap(px(6.0))
-            .bg(if active_tab == 0 { theme.active } else { theme.transparent() })
-            .child(icon("▣", 14.0, if edits { theme.accent_text } else { theme.muted }))
+            .bg(if active_tab == 0 {
+                theme.active
+            } else {
+                theme.transparent()
+            })
+            .child(icon(
+                "▣",
+                14.0,
+                if edits {
+                    theme.accent_text
+                } else {
+                    theme.muted
+                },
+            ))
             .child(
                 div()
                     .child("Edit")
                     .text_size(px(13.0))
-                    .text_color(if active_tab == 0 { theme.text } else { theme.text_soft })
+                    .text_color(if active_tab == 0 {
+                        theme.text
+                    } else {
+                        theme.text_soft
+                    })
                     .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
                 div()
                     .child(edit_state)
                     .text_size(px(12.0))
-                    .text_color(if edits { theme.accent_text } else { theme.muted }),
+                    .text_color(if edits {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    }),
             )
             .on_click(cx.listener(|app, _event, _window, cx| {
                 app.prepare.inspector_tab = 0;
@@ -1131,7 +1225,13 @@ impl crate::App {
             }));
         if active_tab == 0 {
             edit_tab = edit_tab.child(
-                div().absolute().top_0().left_0().w_full().h(px(2.0)).bg(theme.accent),
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(2.0))
+                    .bg(theme.accent),
             );
         }
         let mut publish_tab = div()
@@ -1147,13 +1247,21 @@ impl crate::App {
             .items_center()
             .justify_center()
             .gap(px(6.0))
-            .bg(if active_tab == 1 { theme.active } else { theme.transparent() })
+            .bg(if active_tab == 1 {
+                theme.active
+            } else {
+                theme.transparent()
+            })
             .child(icon("➤", 14.0, theme.muted))
             .child(
                 div()
                     .child("Publish")
                     .text_size(px(13.0))
-                    .text_color(if active_tab == 1 { theme.text } else { theme.text_soft })
+                    .text_color(if active_tab == 1 {
+                        theme.text
+                    } else {
+                        theme.text_soft
+                    })
                     .font_weight(FontWeight::SEMIBOLD),
             )
             .child(
@@ -1173,7 +1281,13 @@ impl crate::App {
             }));
         if active_tab == 1 {
             publish_tab = publish_tab.child(
-                div().absolute().top_0().left_0().w_full().h(px(2.0)).bg(theme.accent),
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(2.0))
+                    .bg(theme.accent),
             );
         }
         bar = bar.child(edit_tab).child(publish_tab);
@@ -1195,9 +1309,11 @@ impl crate::App {
             .flex_col()
             .overflow_hidden();
         let content = if self.prepare.inspector_tab == 0 {
-            self.render_edit_inspector(cx, theme, panel_width).into_any()
+            self.render_edit_inspector(cx, theme, panel_width)
+                .into_any()
         } else {
-            self.render_publish_inspector(cx, theme, panel_width).into_any()
+            self.render_publish_inspector(cx, theme, panel_width)
+                .into_any()
         };
         let mut scroll = div()
             .id("inspector-scroll")
@@ -1205,7 +1321,16 @@ impl crate::App {
             .min_h(px(0.0))
             .overflow_scroll()
             .scrollbar_width(px(10.0))
-            .child(div().w_full().flex().flex_col().px(px(14.0)).pt(px(14.0)).pb(px(16.0)).child(content));
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .px(px(14.0))
+                    .pt(px(14.0))
+                    .pb(px(16.0))
+                    .child(content),
+            );
         if self.checking {
             scroll = scroll.opacity(0.5);
         }
@@ -1357,8 +1482,12 @@ impl crate::App {
                             .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(if shape_count > 0 {
-                        status_pill("pill-masks", &format!("{shape_count} masks"), PillState::Neutral)
-                            .into_any()
+                        status_pill(
+                            "pill-masks",
+                            &format!("{shape_count} masks"),
+                            PillState::Neutral,
+                        )
+                        .into_any()
                     } else {
                         div().into_any()
                     }),
@@ -1377,38 +1506,42 @@ impl crate::App {
                     .flex()
                     .flex_row()
                     .gap(px(8.0))
-                    .child(button(
-                        "add-rectangle",
-                        "Add rectangle",
-                        ButtonKind::Secondary,
-                        Some("▭"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            app.prepare.add_shape(false);
-                            app.save_draft();
-                            cx.notify();
-                        },
+                    .child(
+                        button(
+                            "add-rectangle",
+                            "Add rectangle",
+                            ButtonKind::Secondary,
+                            Some("▭"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.prepare.add_shape(false);
+                                app.save_draft();
+                                cx.notify();
+                            },
+                        )
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .px(px(8.0)),
                     )
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .px(px(8.0)))
-                    .child(button(
-                        "add-square",
-                        "Add square",
-                        ButtonKind::Secondary,
-                        Some("□"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            app.prepare.add_shape(true);
-                            app.save_draft();
-                            cx.notify();
-                        },
-                    )
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .px(px(8.0))),
+                    .child(
+                        button(
+                            "add-square",
+                            "Add square",
+                            ButtonKind::Secondary,
+                            Some("□"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.prepare.add_shape(true);
+                                app.save_draft();
+                                cx.notify();
+                            },
+                        )
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .px(px(8.0)),
+                    ),
             );
 
         // Mask list.
@@ -1452,15 +1585,39 @@ impl crate::App {
                         .flex_row()
                         .items_center()
                         .gap(px(8.0))
-                        .bg(if is_selected { theme.active } else { theme.transparent() })
-                        .child(icon(if shape.kind == ShapeKind::Rectangle { "▭" } else { "□" }, 14.0, if is_selected { theme.accent_text } else { theme.muted }))
+                        .bg(if is_selected {
+                            theme.active
+                        } else {
+                            theme.transparent()
+                        })
+                        .child(icon(
+                            if shape.kind == ShapeKind::Rectangle {
+                                "▭"
+                            } else {
+                                "□"
+                            },
+                            14.0,
+                            if is_selected {
+                                theme.accent_text
+                            } else {
+                                theme.muted
+                            },
+                        ))
                         .child(
                             div()
                                 .flex_1()
                                 .child(label)
                                 .text_size(px(12.0))
-                                .text_color(if is_selected { theme.text } else { theme.text_soft })
-                                .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
+                                .text_color(if is_selected {
+                                    theme.text
+                                } else {
+                                    theme.text_soft
+                                })
+                                .font_weight(if is_selected {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::MEDIUM
+                                }),
                         )
                         .child(if is_selected {
                             workbench_button(
@@ -1520,7 +1677,11 @@ impl crate::App {
         let mode_index = self.prepare.telegram_mode_index as usize;
         let bot_ready = self.bot_connected();
         let personal_ready = self.personal_configured();
-        let connected = if mode_index == 1 { personal_ready } else { bot_ready };
+        let connected = if mode_index == 1 {
+            personal_ready
+        } else {
+            bot_ready
+        };
         let destination = self.prepare.destination.clone();
         let destination_ready = !destination.trim().is_empty();
         let telegram_ready = connected && destination_ready;
@@ -1530,8 +1691,7 @@ impl crate::App {
                 .get(X_DURATION_SECONDS)
                 .and_then(|v| v.as_i64())
                 .unwrap_or(140) as f64;
-            self.prepare.duration > 0.0
-                && (self.prepare.trim_end - self.prepare.trim_start) > limit
+            self.prepare.duration > 0.0 && (self.prepare.trim_end - self.prepare.trim_start) > limit
         };
 
         let mut column = div().w_full().flex().flex_col().gap(px(12.0));
@@ -1624,7 +1784,15 @@ impl crate::App {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
-                    .child(icon("➤", 16.0, if telegram_ready { theme.success } else { theme.muted }))
+                    .child(icon(
+                        "➤",
+                        16.0,
+                        if telegram_ready {
+                            theme.success
+                        } else {
+                            theme.muted
+                        },
+                    ))
                     .child(
                         div()
                             .child("Telegram")
@@ -1635,22 +1803,36 @@ impl crate::App {
                     .child(div().flex_1())
                     .child(status_pill(
                         "pill-tg",
-                        if telegram_ready { "Ready" } else { "Needs setup" },
-                        if telegram_ready { PillState::Success } else { PillState::Warning },
+                        if telegram_ready {
+                            "Ready"
+                        } else {
+                            "Needs setup"
+                        },
+                        if telegram_ready {
+                            PillState::Success
+                        } else {
+                            PillState::Warning
+                        },
                     )),
             )
             .child(mode_combo(self, cx, theme))
-            .child(
-                field(
-                    "tg-destination-field",
-                    if mode_index == 1 { "Username or chat ID" } else { "@channel or chat ID" },
-                    &self.fields.get("tg-destination-field").cloned().unwrap_or_default(),
-                    self.focused_field.as_deref() == Some("tg-destination-field"),
-                    true,
-                    false,
-                    cx,
-                ),
-            )
+            .child(field(
+                "tg-destination-field",
+                if mode_index == 1 {
+                    "Username or chat ID"
+                } else {
+                    "@channel or chat ID"
+                },
+                &self
+                    .fields
+                    .get("tg-destination-field")
+                    .cloned()
+                    .unwrap_or_default(),
+                self.focused_field.as_deref() == Some("tg-destination-field"),
+                true,
+                false,
+                cx,
+            ))
             .child(
                 div()
                     .child(if !connected {
@@ -1667,7 +1849,11 @@ impl crate::App {
                         "Bot connected to the selected destination."
                     })
                     .text_size(px(12.0))
-                    .text_color(if telegram_ready { theme.success } else { theme.warning }),
+                    .text_color(if telegram_ready {
+                        theme.success
+                    } else {
+                        theme.warning
+                    }),
             )
             .child(
                 div()
@@ -1676,7 +1862,15 @@ impl crate::App {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
-                    .child(icon("𝕏", 16.0, if x_duration_warning { theme.warning } else { theme.text_soft }))
+                    .child(icon(
+                        "𝕏",
+                        16.0,
+                        if x_duration_warning {
+                            theme.warning
+                        } else {
+                            theme.text_soft
+                        },
+                    ))
                     .child(
                         div()
                             .child("X")
@@ -1687,8 +1881,16 @@ impl crate::App {
                     .child(div().flex_1())
                     .child(status_pill(
                         "pill-x",
-                        if x_duration_warning { "Check cut" } else { "Manual" },
-                        if x_duration_warning { PillState::Warning } else { PillState::Neutral },
+                        if x_duration_warning {
+                            "Check cut"
+                        } else {
+                            "Manual"
+                        },
+                        if x_duration_warning {
+                            PillState::Warning
+                        } else {
+                            PillState::Neutral
+                        },
                     )),
             )
             .child(if x_duration_warning {
@@ -1737,7 +1939,13 @@ impl crate::App {
                         .text_color(theme.text_soft)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(caption_area(self, cx, "caption-shared", "Caption for Telegram and X", &caption))
+                .child(caption_area(
+                    self,
+                    cx,
+                    "caption-shared",
+                    "Caption for Telegram and X",
+                    &caption,
+                ))
                 .child(
                     div()
                         .w_full()
@@ -1753,8 +1961,7 @@ impl crate::App {
                             theme.warning
                         } else {
                             theme.muted
-                        })
-                        ,
+                        }),
                 );
         } else {
             let caption = self.prepare.caption.clone();
@@ -1769,7 +1976,13 @@ impl crate::App {
                         .text_color(theme.text_soft)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(caption_area(self, cx, "caption-tg", "Telegram message", &caption))
+                .child(caption_area(
+                    self,
+                    cx,
+                    "caption-tg",
+                    "Telegram message",
+                    &caption,
+                ))
                 .child(
                     div()
                         .w_full()
@@ -1780,8 +1993,11 @@ impl crate::App {
                             group_digits(caption_limit)
                         ))
                         .text_size(px(12.0))
-                        .text_color(if caption_len > caption_limit { theme.warning } else { theme.muted })
-                        ,
+                        .text_color(if caption_len > caption_limit {
+                            theme.warning
+                        } else {
+                            theme.muted
+                        }),
                 )
                 .child(
                     div()
@@ -1790,15 +2006,24 @@ impl crate::App {
                         .text_color(theme.text_soft)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(caption_area(self, cx, "caption-x", "X post text", &x_caption))
+                .child(caption_area(
+                    self,
+                    cx,
+                    "caption-x",
+                    "X post text",
+                    &x_caption,
+                ))
                 .child(
                     div()
                         .w_full()
                         .text_right()
                         .child(format!("X {} / 280", group_digits(x_len)))
                         .text_size(px(12.0))
-                        .text_color(if x_len > 280 { theme.warning } else { theme.muted })
-                        ,
+                        .text_color(if x_len > 280 {
+                            theme.warning
+                        } else {
+                            theme.muted
+                        }),
                 );
         }
         column = column.child(divider());
@@ -1822,7 +2047,11 @@ impl crate::App {
         column
     }
 
-    fn render_action_dock(&mut self, cx: &mut Context<Self>, theme: &crate::theme::Theme) -> impl Element {
+    fn render_action_dock(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+    ) -> impl Element {
         let publish = self.publish.clone();
         let telegram_ready = self.telegram_ready();
         let checking = self.checking;
@@ -1886,8 +2115,7 @@ impl crate::App {
                             div()
                                 .child(format!("{}%", (publish.progress * 100.0).round() as i64))
                                 .text_size(px(12.0))
-                                .text_color(theme.text)
-                                ,
+                                .text_color(theme.text),
                         )
                         .child(workbench_button(
                             "cancel-publish",
@@ -1965,8 +2193,15 @@ impl crate::App {
                             true,
                             cx,
                             move |app, cx| {
-                                if cliprelay_core::x::XAssistant::copy_file(std::path::Path::new(&output_path_copy)).is_ok() {
-                                    app.toast(ToastKind::Success, "Video copied. Paste it into the X composer.");
+                                if cliprelay_core::x::XAssistant::copy_file(std::path::Path::new(
+                                    &output_path_copy,
+                                ))
+                                .is_ok()
+                                {
+                                    app.toast(
+                                        ToastKind::Success,
+                                        "Video copied. Paste it into the X composer.",
+                                    );
                                 }
                                 cx.notify();
                             },
@@ -1982,8 +2217,15 @@ impl crate::App {
                                 // Native drag-out has no GPUI equivalent;
                                 // place the file on the clipboard so it can
                                 // be pasted or dragged into the composer.
-                                if cliprelay_core::x::XAssistant::copy_file(std::path::Path::new(&output_path_drag)).is_ok() {
-                                    app.toast(ToastKind::Success, "Video copied. Paste it into the X composer.");
+                                if cliprelay_core::x::XAssistant::copy_file(std::path::Path::new(
+                                    &output_path_drag,
+                                ))
+                                .is_ok()
+                                {
+                                    app.toast(
+                                        ToastKind::Success,
+                                        "Video copied. Paste it into the X composer.",
+                                    );
                                 }
                                 cx.notify();
                             },
@@ -1996,7 +2238,9 @@ impl crate::App {
                             true,
                             cx,
                             move |_app, cx| {
-                                let _ = cliprelay_core::x::XAssistant::reveal(std::path::Path::new(&output_path_reveal));
+                                let _ = cliprelay_core::x::XAssistant::reveal(
+                                    std::path::Path::new(&output_path_reveal),
+                                );
                                 cx.notify();
                             },
                         )),
@@ -2390,36 +2634,38 @@ fn compression_combo(
         .flex()
         .flex_col();
     for (index, (label, _)) in COMPRESSION_OPTIONS.iter().enumerate() {
-        menu = menu.child(
-            div()
-                .id(SharedString::from(format!("compression-{index}")))
-                .h(px(40.0))
-                .px(px(10.0))
-                .cursor_pointer()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .w(px(13.0))
-                        .child(if index == selected { "✓" } else { "" })
-                        .text_size(px(13.0))
-                        .text_color(theme.accent_text),
-                )
-                .child(
-                    div()
-                        .child(*label)
-                        .text_size(px(13.0))
-                        .text_color(if index == selected { theme.text } else { theme.text_soft }),
-                )
-                .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.close_combo("compression", cx);
-                    app.prepare.compression_index = index as i64;
-                    app.save_draft();
-                    cx.notify();
-                })),
-        );
+        menu =
+            menu.child(
+                div()
+                    .id(SharedString::from(format!("compression-{index}")))
+                    .h(px(40.0))
+                    .px(px(10.0))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .w(px(13.0))
+                            .child(if index == selected { "✓" } else { "" })
+                            .text_size(px(13.0))
+                            .text_color(theme.accent_text),
+                    )
+                    .child(div().child(*label).text_size(px(13.0)).text_color(
+                        if index == selected {
+                            theme.text
+                        } else {
+                            theme.text_soft
+                        },
+                    ))
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        app.close_combo("compression", cx);
+                        app.prepare.compression_index = index as i64;
+                        app.save_draft();
+                        cx.notify();
+                    })),
+            );
     }
     menu
 }
@@ -2497,7 +2743,11 @@ fn mode_combo(
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.close_combo("tg-mode", cx);
                     app.prepare.telegram_mode_index = index as i64;
-                    app.set_setting(TELEGRAM_MODE, json!(if index == 1 { "personal" } else { "bot" }), cx);
+                    app.set_setting(
+                        TELEGRAM_MODE,
+                        json!(if index == 1 { "personal" } else { "bot" }),
+                        cx,
+                    );
                     app.save_draft();
                     cx.notify();
                 })),
@@ -2577,11 +2827,7 @@ fn cleanup_combo(
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.close_combo("cleanup", cx);
                     app.prepare.cleanup_index = index as i64;
-                    app.set_setting(
-                        CLEANUP_POLICY,
-                        json!(CLEANUP_OPTIONS[index].1),
-                        cx,
-                    );
+                    app.set_setting(CLEANUP_POLICY, json!(CLEANUP_OPTIONS[index].1), cx);
                     app.save_draft();
                     cx.notify();
                 })),
@@ -2610,6 +2856,7 @@ fn caption_area(
                 text: value.to_string(),
                 caret: value.chars().count(),
                 committed: true,
+                marked_range: None,
             })
     };
     crate::widgets::text_area(
@@ -2625,8 +2872,7 @@ fn caption_area(
 impl crate::App {
     pub fn prepare_crop_preset(&self) -> usize {
         let crop = self.prepare.crop;
-        let full_frame =
-            (crop.width - 1.0).abs() < 0.001 && (crop.height - 1.0).abs() < 0.001;
+        let full_frame = (crop.width - 1.0).abs() < 0.001 && (crop.height - 1.0).abs() < 0.001;
         if !self.prepare.crop_enabled || full_frame {
             1
         } else if (crop.width - crop.height).abs() < 0.001 {

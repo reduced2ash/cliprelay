@@ -75,8 +75,8 @@ pub struct PublishState {
 
 #[derive(Debug, Clone, Default)]
 pub struct TelegramState {
-    pub bot: String,          // "configured" | "not configured" | "@username"
-    pub personal: String,     // "signed in" | "not signed in" | display
+    pub bot: String,      // "configured" | "not configured" | "@username"
+    pub personal: String, // "signed in" | "not signed in" | display
     pub message: String,
     pub password_required: bool,
 }
@@ -145,6 +145,8 @@ pub struct PublishPayload {
 pub struct Diagnostics {
     pub ffmpeg: String,
     pub ffprobe: String,
+    pub gstreamer: String,
+    pub export_encoder: String,
     pub database: String,
     pub secret_backend: String,
     pub library_inside_exports: bool,
@@ -213,6 +215,7 @@ pub enum Command {
     LoadRandomFolderOptions,
     ResetShuffle,
     EnsureThumbnail(i64),
+    ThumbnailFinished(i64),
     SelectionCheckFinished,
     EnsurePreview(i64),
     PreviewFinished(i64),
@@ -253,11 +256,17 @@ pub enum Event {
     TelegramStateChanged(TelegramState),
     TelegramDialogsChanged(Vec<DialogInfo>),
     HistorySearchCommitted(u64, String),
+    CommandSearchCommitted {
+        generation: u64,
+        query: String,
+        scope: String,
+        library_search: Option<String>,
+    },
     MarkBotConfigured(String),
     MarkPersonalConfigured(String),
     SelectedMediaChanged(Option<MediaRow>),
-    SelectionCheckingChanged(bool),
-    TimelineLoadingChanged(bool),
+    SelectionCheckingChanged(i64, bool),
+    TimelineLoadingChanged(i64, bool),
     LibraryPage(LibraryPage),
     LibraryRefreshed,
     FoldersUpdated(Vec<FolderNode>),
@@ -266,12 +275,21 @@ pub enum Event {
     WorkspacesChanged(Vec<WorkspaceInfo>, usize),
     ThumbnailReady(i64, Option<PathBuf>),
     PreviewReady(i64, Option<PathBuf>),
+    PreviewDeferred(i64),
     TimelineReady(i64, Option<PathBuf>),
     RandomFoldersChanged(Vec<RandomFolderOption>, String, usize, bool, bool),
     Toast(ToastKind, String),
     NavigationRequested(Page),
-    RevealRequested { folder: String, media_index: i64, folder_index: i64 },
-    NavigationRestored { folder: String, search: String, folder_index: i64 },
+    RevealRequested {
+        folder: String,
+        media_index: i64,
+        folder_index: i64,
+    },
+    NavigationRestored {
+        folder: String,
+        search: String,
+        folder_index: i64,
+    },
     SelectionNavigationChanged(bool, bool),
     NeighborPreload(i64, i64),
     LoadMoreFinished(bool, u64, bool, usize),
@@ -282,7 +300,7 @@ pub enum Event {
     DraftRestoreRequested(PrepareDraft),
     CountsOnly,
     Tick,
-    HoverCheck(i64),
+    HoverCheck(i64, u64),
     PickingChanged(bool),
     ClosedCountChanged(usize),
     DraftsDirty,

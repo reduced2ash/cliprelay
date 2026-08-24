@@ -1,13 +1,13 @@
 # Contributing to ClipRelay
 
-Thank you for helping improve ClipRelay. Bug reports, focused fixes,
-accessibility improvements, performance work, and platform testing are all
-welcome.
+Thank you for helping improve ClipRelay. The current application is the Rust
+GPUI workspace in `crates/`; `src/`, the QML files, and the Python packaging
+scripts are retained only as the legacy implementation.
 
 ## Before opening an issue
 
 - Search existing issues for the same behavior.
-- Reproduce the problem with the latest release.
+- Reproduce the problem with the latest Rust build.
 - Remove private filenames, Telegram identifiers, tokens, phone numbers, and
   captions from screenshots or logs.
 - For security-sensitive problems, follow [SECURITY.md](SECURITY.md) instead of
@@ -15,47 +15,50 @@ welcome.
 
 ## Development setup
 
+Install Rust 1.96 or newer, FFmpeg/FFprobe, and the GStreamer runtime and
+development files for your platform. On Ubuntu or Debian:
+
+```bash
+sudo apt-get install ffmpeg libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good gstreamer1.0-libav
+```
+
+Then build and run the GPUI app:
+
 ```bash
 git clone https://github.com/reduced2ash/cliprelay.git
 cd cliprelay
-uv sync --frozen --extra dev
+cargo run -p cliprelay
 ```
 
-Install FFmpeg and FFprobe:
+Run the same gates as CI:
 
 ```bash
-# macOS
-brew install ffmpeg
-```
-
-```powershell
-# Windows
-choco install ffmpeg
-```
-
-Run the app:
-
-```bash
-uv run cliprelay
-```
-
-Run the checks:
-
-```bash
-PYTHONPATH=src uv run pytest
-PYTHONPATH=src uv run python -m compileall -q src tests
-uv run pyside6-qmllint src/cliprelay/qml/Main.qml
-uv build
+cargo check --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 ## Pull requests
 
-1. Create a focused branch from `main`.
-2. Keep unrelated formatting or cleanup out of the change.
+1. Create a focused branch from the current Rust branch.
+2. Keep unrelated formatting or legacy Python/QML cleanup out of the change.
 3. Add or update tests for behavioral changes.
 4. Preserve source-video safety and generated-file boundaries.
 5. Test the affected workflow on the relevant operating system.
 6. Explain user impact, validation, and known limitations in the pull request.
+
+## GPUI conventions
+
+- Keep filesystem, FFmpeg, database, GStreamer setup, and network work off the
+  GPUI application thread.
+- Retain async tasks that own important work; dropping a task cancels it.
+- Virtualize unbounded media and history collections and use stable element IDs.
+- Use semantic theme tokens and shared controls.
+- Preserve keyboard alternatives for pointer and hover interactions.
+- Keep interactive targets at least 44 logical pixels where practical.
+- Use explicit delivery states and actionable error text.
 
 ## Product boundaries
 
@@ -65,17 +68,9 @@ large-library responsiveness. Avoid destructive source operations, silent
 posting, decorative motion, and features that require uploading a user's
 library to ClipRelay infrastructure.
 
-## QML and Python conventions
-
-- Keep filesystem, FFmpeg, database, and network work off the UI thread.
-- Use the existing theme tokens and shared controls.
-- Preserve keyboard and screen-reader alternatives for hover interactions.
-- Keep interactive targets at least 44 logical pixels where practical.
-- Use explicit delivery states and actionable error text.
-- Prefer small service methods with tests over adding logic to QML.
-
 ## Release changes
 
 Do not commit certificates, signing keys, API credentials, generated
-installers, application databases, logs, or real user media. Maintainer release
-instructions are in [docs/RELEASING.md](docs/RELEASING.md).
+installers, application databases, logs, or real user media. The legacy
+Python packaging workflow must not be used to publish the Rust application;
+native GPUI packaging and GStreamer deployment need platform validation.

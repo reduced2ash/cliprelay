@@ -6,10 +6,12 @@ use cliprelay_core::db::PostRow;
 use gpui::*;
 use std::path::PathBuf;
 
+const HISTORY_ROW_HEIGHT: f32 = 176.0;
+
 impl crate::App {
     pub fn render_history(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
-        let rows = self.history.rows.clone();
+        let row_count = self.history.rows.len();
         let has_more = self.history.has_more;
         let search = self.history_search.clone();
         let narrow = self.window_size.0 < 820.0;
@@ -68,7 +70,11 @@ impl crate::App {
                     false,
                     cx,
                 )
-                .w(px(if narrow { (self.window_size.0 - 96.0).max(240.0) } else { 280.0 })),
+                .w(px(if narrow {
+                    (self.window_size.0 - 96.0).max(240.0)
+                } else {
+                    280.0
+                })),
             );
         page = page.child(header);
 
@@ -81,9 +87,12 @@ impl crate::App {
             .overflow_scroll()
             .scrollbar_width(px(10.0))
             .track_scroll(&self.history_scroll);
-        if rows.is_empty() {
+        if row_count == 0 {
             let (title, body) = if !search.is_empty() {
-                ("No matching relays".to_string(), "Try another filename or caption.".to_string())
+                (
+                    "No matching relays".to_string(),
+                    "Try another filename or caption.".to_string(),
+                )
             } else {
                 (
                     "Nothing relayed yet".to_string(),
@@ -134,8 +143,7 @@ impl crate::App {
                             true,
                             cx,
                             |app, cx| {
-                                app.page = Page::Library;
-                                cx.notify();
+                                app.navigate_to(Page::Library, cx);
                             },
                         )
                         .into_any()
@@ -144,21 +152,38 @@ impl crate::App {
                     }),
             );
         } else {
-            // Paged list: render every loaded row (rows are light elements)
-            // and load the next page when the scroll nears the end. The
-            // measured scroll extent keeps pagination exact regardless of
-            // variable row heights.
-            let mut inner = div().w_full().flex().flex_col().pb(px(16.0));
-            for post in rows.iter() {
-                inner = inner.child(self.render_history_row(cx, &theme, post));
+            // History can grow without bound. Keep a fixed-height virtual
+            // window so playback ticks and scroll updates render only nearby
+            // posts instead of rebuilding every loaded history row.
+            let scroll_y = (-f32::from(self.history_scroll.offset().y)).max(0.0);
+            let viewport_height =
+                (self.window_size.1 - if narrow { 250.0 } else { 220.0 }).max(HISTORY_ROW_HEIGHT);
+            let first = ((scroll_y / HISTORY_ROW_HEIGHT).floor() as isize - 2).max(0) as usize;
+            let visible = (viewport_height / HISTORY_ROW_HEIGHT).ceil() as usize + 4;
+            let end = (first + visible).min(row_count);
+            let visible_rows = self.history.rows[first..end].to_vec();
+            let mut window = div()
+                .absolute()
+                .top(px(first as f32 * HISTORY_ROW_HEIGHT))
+                .left(px(0.0))
+                .right(px(0.0))
+                .flex()
+                .flex_col();
+            for post in visible_rows.iter() {
+                window = window.child(self.render_history_row(cx, &theme, post));
             }
+            let inner = div()
+                .w_full()
+                .h(px(row_count as f32 * HISTORY_ROW_HEIGHT + 16.0))
+                .relative()
+                .child(window);
             list = list
                 .child(inner)
                 .on_scroll_wheel(cx.listener(|_app, _event, _window, cx| {
                     cx.notify();
                 }));
             if has_more {
-                let offset = f32::from(self.history_scroll.offset().y);
+                let offset = (-f32::from(self.history_scroll.offset().y)).max(0.0);
                 let max = f32::from(self.history_scroll.max_offset().height);
                 if max - offset < 500.0 {
                     let controller = self.controller.clone();
@@ -194,23 +219,22 @@ impl crate::App {
             caption.clone()
         };
         let caption_muted = caption.is_empty();
-        let edited = post
-            .edit_spec
-            .as_ref()
-            .is_some_and(|spec| {
-                let value: serde_json::Value = serde_json::from_str(spec).unwrap_or_default();
-                !cliprelay_core::media::normalize_edit_spec(&value).is_empty()
-            });
+        let edited = post.edit_spec.as_ref().is_some_and(|spec| {
+            let value: serde_json::Value = serde_json::from_str(spec).unwrap_or_default();
+            !cliprelay_core::media::normalize_edit_spec(&value).is_empty()
+        });
         let telegram_status = post.telegram_status.clone();
         let x_status = post.x_status.clone();
         let error_text = post.error.clone();
-        let can_trash = post.is_generated.unwrap_or(false) && post.cleanup_state.as_deref() != Some("trashed");
+        let can_trash =
+            post.is_generated.unwrap_or(false) && post.cleanup_state.as_deref() != Some("trashed");
         let has_export = post.export_path.is_some();
         let thumbnail = post.thumbnail_path.clone().unwrap_or_default();
 
         let mut row = div()
             .id(SharedString::from(format!("history-{post_id}")))
             .w_full()
+            .h(px(HISTORY_ROW_HEIGHT))
             .px(px(14.0))
             .py(px(14.0))
             .flex()
@@ -219,11 +243,7 @@ impl crate::App {
             .border_b_1()
             .border_color(theme.border)
             .hover(|style| style.bg(theme.surface_soft));
-        let mut top = div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .gap(px(16.0));
+        let mut top = div().w_full().flex().flex_row().gap(px(16.0));
 
         // Thumbnail.
         top = top.child(
@@ -291,7 +311,11 @@ impl crate::App {
                         .w_full()
                         .child(caption_label)
                         .text_size(px(13.0))
-                        .text_color(if caption_muted { theme.muted } else { theme.text })
+                        .text_color(if caption_muted {
+                            theme.muted
+                        } else {
+                            theme.text
+                        })
                         .text_ellipsis(),
                 )
                 .child(
@@ -431,12 +455,7 @@ impl crate::App {
     }
 }
 
-fn pill(
-    _theme: &crate::theme::Theme,
-    label: &str,
-    color: Hsla,
-    soft: &Hsla,
-) -> Div {
+fn pill(_theme: &crate::theme::Theme, label: &str, color: Hsla, soft: &Hsla) -> Div {
     div()
         .h(px(24.0))
         .px(px(9.0))

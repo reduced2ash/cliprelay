@@ -5,7 +5,9 @@
 
 mod controller;
 use crate::settings_import::*;
-mod settings_import { pub use cliprelay_core::settings::*; }
+mod settings_import {
+    pub use cliprelay_core::settings::*;
+}
 mod history;
 mod icons;
 mod library;
@@ -23,24 +25,20 @@ use cliprelay_core::db::MediaRow;
 
 use cliprelay_core::telegram::DialogInfo;
 use gpui::*;
-use gpui_video_player::Video;
+use gpui_video_player::{Video, VideoOptions};
 use serde_json::json;
-use std::collections::{HashMap, VecDeque};
-use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Duration;
-use url::Url;
-/// Global channel for extracted playback frames (set at startup).
-pub static FRAME_TX: OnceLock<flume::Sender<(i64, String, PathBuf)>> = OnceLock::new();
 
-// Path of the currently selected media, used by the frame extractor.
-thread_local! {
-    pub static FRAME_MEDIA: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-}
+actions!(
+    cliprelay,
+    [FocusNext, FocusPrevious, Activate, ActivateSpace]
+);
 
 #[derive(Clone)]
 pub struct Toast {
+    pub id: u64,
     pub kind: ToastKind,
     pub message: String,
     pub shown_at: std::time::Instant,
@@ -80,14 +78,19 @@ pub struct App {
     pub random_selected_only: bool,
     pub random_expanded: std::collections::HashSet<String>,
     pub toasts: Vec<Toast>,
+    next_toast_id: u64,
     pub diagnostics: Diagnostics,
-    pub last_diagnostics_request: std::time::Instant,
     pub search_text: String,
     pub show_folders: bool,
     pub active_folder: String,
     pub hovered_tiles: HashMap<i64, bool>,
-    pub preview_frames: HashMap<i64, Vec<PathBuf>>,
-    pub preview_videos: HashMap<i64, Video>,
+    pub preview_video: Option<(i64, Video)>,
+    pub preview_video_loading: Option<(i64, u64)>,
+    preview_video_load_task: Option<Task<()>>,
+    prepare_video_generation: u64,
+    prepare_video_load_task: Option<Task<()>>,
+    pub prepare_video_loading: bool,
+    pub prepare_video_error: Option<String>,
     pub active_preview_id: i64,
     pub reveal_request: Option<(String, i64, i64)>,
     pub pending_draft: Option<PrepareDraft>,
@@ -95,6 +98,7 @@ pub struct App {
     pub settings_page: settings_page::SettingsUiState,
     pub history_search: String,
     history_search_generation: u64,
+    history_search_task: Option<Task<()>>,
     pub history_more_menu_post: Option<i64>,
     pub history_more_menu_y: f32,
     history_more_menu_closed_at: std::time::Instant,
@@ -105,13 +109,14 @@ pub struct App {
     pub command_selected: usize,
     pub command_open: bool,
     pub command_searching: bool,
+    command_search_generation: u64,
+    command_search_task: Option<Task<()>>,
     pub random_picking: bool,
     pub closed_count: usize,
     pub explorer_focus: bool,
     pub explorer_selected: String,
     pub random_tree_cursor: usize,
     pub random_loading: bool,
-    pub last_scroll_y: f32,
     pub window_title: String,
     pub capture_after_frames: u32,
     pub capture_after_target: u32,
@@ -120,17 +125,20 @@ pub struct App {
     pub saved_bounds: (f32, f32),
     pub last_history_scroll_y: f32,
     pub reveal_target_row: Option<usize>,
-    pub library_scroll: gpui::ScrollHandle,
+    pub library_scroll: gpui::UniformListScrollHandle,
     pub history_scroll: gpui::ScrollHandle,
     pub tab_scroll: gpui::ScrollHandle,
     pub settings_scroll: gpui::ScrollHandle,
     pub thumbnail_states: HashMap<i64, String>,
     pub thumbnail_requested: std::collections::HashSet<i64>,
-    pub preview_extracting: std::collections::HashSet<i64>,
+    pub preview_hover_generation: u64,
+    pub library_scroll_pause_until: std::time::Instant,
     pub theme: crate::theme::Theme,
     pub window_size: (f32, f32),
     pub fields: HashMap<String, widgets::FieldState>,
     pub focused_field: Option<String>,
+    platform_input_bounds: Option<Bounds<Pixels>>,
+    platform_input_focus: Option<FocusHandle>,
     focus_handle: FocusHandle,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
@@ -140,20 +148,26 @@ pub struct App {
     pub sort_menu_open: bool,
     pub pending_close_workspace: Option<usize>,
     pub activity_open: bool,
-    pub pending: std::sync::Arc<Mutex<VecDeque<UiMessage>>>,
-}
-
-#[derive(Debug)]
-pub enum UiMessage {
-    Event(Box<Event>),
-    Frame(i64, String, PathBuf),
 }
 
 impl App {
+    pub fn navigate_to(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page != Page::Library {
+            self.random_popup_open = false;
+            self.sort_menu_open = false;
+            self.workspace_menu_open = false;
+            self.activity_open = false;
+            self.stop_hover_preview(None, cx);
+        }
+        if page == Page::Settings && self.page != Page::Settings {
+            self.command(Command::Diagnostics);
+        }
+        self.page = page;
+        cx.notify();
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (event_tx, event_rx) = flume::unbounded::<Event>();
-        let (frame_tx, frame_rx) = flume::unbounded::<(i64, String, PathBuf)>();
-        let _ = FRAME_TX.set(frame_tx);
         let controller = spawn_controller(None, event_tx.clone());
         // `--library PATH` overrides the stored library root on launch.
         if let Ok(library) = std::env::var("CLIPRELAY_LIBRARY") {
@@ -182,6 +196,7 @@ impl App {
                     text: query_at_boot.clone(),
                     caret: query_at_boot.chars().count(),
                     committed: true,
+                    marked_range: None,
                 },
             );
         }
@@ -211,6 +226,7 @@ impl App {
                             text,
                             caret,
                             committed: true,
+                            marked_range: None,
                         },
                     );
                 }
@@ -218,7 +234,10 @@ impl App {
         }
         let mut prepare_state = prepare::PrepareState::default();
         if let Ok(settings) = boot_settings() {
-            if let Some(value) = settings.get("telegram_destination").and_then(|v| v.as_str()) {
+            if let Some(value) = settings
+                .get("telegram_destination")
+                .and_then(|v| v.as_str())
+            {
                 prepare_state.destination = value.to_string();
             }
         }
@@ -229,22 +248,19 @@ impl App {
             Ok("settings") => Page::Settings,
             _ => Page::Library,
         };
-        let open_command_at_boot =
-            std::env::var("CLIPRELAY_OPEN_COMMAND").is_ok();
+        let open_command_at_boot = std::env::var("CLIPRELAY_OPEN_COMMAND").is_ok();
         let open_random_at_boot = std::env::var("CLIPRELAY_OPEN_RANDOM").is_ok();
         if open_random_at_boot {
             controller.send(Command::LoadRandomFolderOptions).ok();
         }
         let open_sort_at_boot = std::env::var("CLIPRELAY_OPEN_SORT").is_ok();
         let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
-        let open_workspace_menu_at_boot =
-            std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
+        let open_workspace_menu_at_boot = std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
         let settings_scroll_boot: f32 = std::env::var("CLIPRELAY_SETTINGS_SCROLL")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
         let app = Self {
-            pending: std::sync::Arc::new(Mutex::new(VecDeque::new())),
             event_tx: event_tx.clone(),
             controller,
             page: initial_page,
@@ -291,22 +307,26 @@ impl App {
             toasts: boot_toast
                 .map(|(kind, text)| {
                     vec![Toast {
+                        id: 1,
                         kind,
                         message: text,
                         shown_at: std::time::Instant::now(),
                     }]
                 })
                 .unwrap_or_default(),
+            next_toast_id: 2,
             diagnostics: Diagnostics::default(),
-            last_diagnostics_request: std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_secs(30))
-                .unwrap_or_else(std::time::Instant::now),
             search_text: String::new(),
             show_folders: true,
             active_folder: String::new(),
             hovered_tiles: HashMap::new(),
-            preview_frames: HashMap::new(),
-            preview_videos: HashMap::new(),
+            preview_video: None,
+            preview_video_loading: None,
+            preview_video_load_task: None,
+            prepare_video_generation: 0,
+            prepare_video_load_task: None,
+            prepare_video_loading: false,
+            prepare_video_error: None,
             active_preview_id: 0,
             reveal_request: None,
             pending_draft: None,
@@ -314,6 +334,7 @@ impl App {
             settings_page: settings_page::SettingsUiState::default(),
             history_search: String::new(),
             history_search_generation: 0,
+            history_search_task: None,
             history_more_menu_post: None,
             history_more_menu_y: 0.0,
             history_more_menu_closed_at: std::time::Instant::now(),
@@ -322,15 +343,16 @@ impl App {
             command_query: query_at_boot.clone(),
             command_scope: "all".into(),
             command_selected: 0,
-            
+
             command_searching: false,
+            command_search_generation: 0,
+            command_search_task: None,
             random_picking: false,
             closed_count: 0,
             explorer_focus: false,
             explorer_selected: String::new(),
             random_tree_cursor: 0,
             random_loading: false,
-            last_scroll_y: 0.0,
             window_title: String::new(),
             capture_after_frames: 0,
             capture_after_target: std::env::var("CLIPRELAY_CAPTURE_AFTER")
@@ -338,20 +360,25 @@ impl App {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(220),
             capture_started_at: std::time::Instant::now(),
-            capture_path: std::env::var("CLIPRELAY_CAPTURE").ok().map(std::path::PathBuf::from),
+            capture_path: std::env::var("CLIPRELAY_CAPTURE")
+                .ok()
+                .map(std::path::PathBuf::from),
             saved_bounds: (0.0, 0.0),
             last_history_scroll_y: 0.0,
             reveal_target_row: None,
-            library_scroll: gpui::ScrollHandle::new(),
+            library_scroll: gpui::UniformListScrollHandle::new(),
             history_scroll: gpui::ScrollHandle::new(),
             tab_scroll: gpui::ScrollHandle::new(),
             settings_scroll: gpui::ScrollHandle::new(),
             thumbnail_states: HashMap::new(),
             thumbnail_requested: std::collections::HashSet::new(),
-            preview_extracting: std::collections::HashSet::new(),
+            preview_hover_generation: 0,
+            library_scroll_pause_until: std::time::Instant::now(),
             theme: crate::theme::Theme::relay(),
             window_size: (1460.0, 900.0),
             fields,
+            platform_input_bounds: None,
+            platform_input_focus: None,
 
             open_combos: std::collections::HashSet::new(),
             key_captured: false,
@@ -361,79 +388,76 @@ impl App {
             pending_close_workspace: None,
         };
 
-        // UI message pump: background threads drain the event/frame
-        // channels into a queue that `render` processes every frame.
-        let pending = app.pending.clone();
-        std::thread::spawn(move || {
-            while let Ok(event) = event_rx.recv() {
-                pending.lock().push_back(UiMessage::Event(Box::new(event)));
-            }
-        });
-        let pending = app.pending.clone();
-        std::thread::spawn(move || {
-            while let Ok((media_id, key, path)) = frame_rx.recv() {
-                pending.lock().push_back(UiMessage::Frame(media_id, key, path));
-            }
-        });
-        let pending = app.pending.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(100));
-            pending.lock().push_back(UiMessage::Event(Box::new(Event::Tick)));
-        });
-
-        let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
-        if initial_page != Page::Library || settings_scroll_boot > 0.0 || open_command_at_boot_2 {
-            let settings_scroll = app.settings_scroll.clone();
-            cx.spawn(async move |this: WeakEntity<crate::App>, cx: &mut AsyncApp| {
-                // Apply after the boot restore settles (the restore may
-                // navigate to the Library while revealing the selection).
-                smol::Timer::after(std::time::Duration::from_millis(2500)).await;
-                if initial_page != Page::Library {
-                    if let Some(this) = this.upgrade() {
-                        this.update(
-                            cx,
-                            |app: &mut crate::App,
-                             _cx: &mut gpui::Context<crate::App>| {
-                                app.page = initial_page;
-                                _cx.notify();
-                            },
-                        )
-                        .ok();
-                    }
-                }
-                if open_command_at_boot_2 {
-                    if let Some(this) = this.upgrade() {
-                        this.update(
-                            cx,
-                            |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
-                                app.command_open = true;
-                                app.open_command_center(_cx);
-                            },
-                        )
-                        .ok();
-                    }
-                }
-                if settings_scroll_boot > 0.0 {
-                    // Wait for the settings page to render once so the
-                    // scroll handle is bound to its container.
-                    smol::Timer::after(std::time::Duration::from_millis(400)).await;
-                    // Offset is negative for downward scroll (distance from
-                    // the container top to the content top).
-                    settings_scroll.set_offset(point(px(0.0), px(-settings_scroll_boot)));
-                }
-            })
-            .detach();
+        if app.page == Page::Settings {
+            app.command(Command::Diagnostics);
         }
 
-        // Heartbeat: keep the render pipeline alive so queued messages are
-        // drained even when no UI event fires (gpui only repaints on notify).
+        // Drive background events directly through GPUI's foreground executor.
+        // This keeps model mutation out of render and removes the old permanent
+        // 10 Hz redraw that existed only to drain a mutex-backed queue.
+        cx.spawn(async move |this, cx| {
+            while let Ok(event) = event_rx.recv_async().await {
+                if this.update(cx, |app, cx| app.on_event(event, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| loop {
             smol::Timer::after(Duration::from_millis(100)).await;
-            if this.update(cx, |_app, cx| cx.notify()).is_err() {
+            if this
+                .update(cx, |app, cx| app.on_event(Event::Tick, cx))
+                .is_err()
+            {
                 break;
             }
         })
         .detach();
+
+        let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
+        if initial_page != Page::Library || settings_scroll_boot > 0.0 || open_command_at_boot_2 {
+            let settings_scroll = app.settings_scroll.clone();
+            cx.spawn(
+                async move |this: WeakEntity<crate::App>, cx: &mut AsyncApp| {
+                    // Apply after the boot restore settles (the restore may
+                    // navigate to the Library while revealing the selection).
+                    smol::Timer::after(std::time::Duration::from_millis(2500)).await;
+                    if initial_page != Page::Library {
+                        if let Some(this) = this.upgrade() {
+                            this.update(
+                                cx,
+                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                    app.page = initial_page;
+                                    _cx.notify();
+                                },
+                            )
+                            .ok();
+                        }
+                    }
+                    if open_command_at_boot_2 {
+                        if let Some(this) = this.upgrade() {
+                            this.update(
+                                cx,
+                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                    app.command_open = true;
+                                    app.open_command_center(_cx);
+                                },
+                            )
+                            .ok();
+                        }
+                    }
+                    if settings_scroll_boot > 0.0 {
+                        // Wait for the settings page to render once so the
+                        // scroll handle is bound to its container.
+                        smol::Timer::after(std::time::Duration::from_millis(400)).await;
+                        // Offset is negative for downward scroll (distance from
+                        // the container top to the content top).
+                        settings_scroll.set_offset(point(px(0.0), px(-settings_scroll_boot)));
+                    }
+                },
+            )
+            .detach();
+        }
 
         app
     }
@@ -455,6 +479,14 @@ impl App {
                 if !settings.is_empty() {
                     self.settings = settings;
                     self.apply_settings();
+                    if !self
+                        .settings
+                        .get(HOVER_PREVIEWS)
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(true)
+                    {
+                        self.stop_hover_preview(None, cx);
+                    }
                     cx.notify();
                 }
             }
@@ -497,30 +529,50 @@ impl App {
                         self.command(Command::RevealMedia(row.id));
                     }
                 }
+                let next_media_id = row.as_ref().map(|row| row.id).unwrap_or(0);
+                let next_media_path = row.as_ref().map(|row| PathBuf::from(&row.path));
+                let media_source_changed = self.prepare.media_id != next_media_id
+                    || self.prepare.media_path.as_ref() != next_media_path.as_ref();
+                if media_source_changed {
+                    self.prepare_video_generation = self.prepare_video_generation.wrapping_add(1);
+                    self.prepare_video_load_task.take();
+                    if let Some(video) = self.prepare.video.take() {
+                        Self::retire_video(video, cx);
+                    }
+                }
                 self.selected = row;
-                match &self.selected {
-                    Some(row) => {
-                        FRAME_MEDIA.with(|cell| *cell.borrow_mut() = Some(PathBuf::from(&row.path)));
-                        self.prepare.on_media_changed(row.id, row.duration);
+                match self
+                    .selected
+                    .as_ref()
+                    .map(|row| (row.id, row.duration, PathBuf::from(&row.path)))
+                {
+                    Some((media_id, duration, media_path)) => {
+                        self.prepare.on_media_changed(media_id, duration);
                         for id in ["caption-shared", "caption-tg", "caption-x"] {
                             if let Some(field) = self.fields.get_mut(id) {
                                 field.text.clear();
                                 field.caret = 0;
                             }
                         }
-                        self.prepare.set_media_path(PathBuf::from(&row.path));
-                        self.thumbnail_states.entry(row.id).or_insert_with(|| "queued".into());
-                        self.command(Command::EnsureThumbnail(row.id));
-                        self.command(Command::EnsureTimeline(row.id));
-                        if row.duration > 0.0 {
-                            self.prepare.seek(0.0, row.duration);
-                            // Autoplay the freshly selected video (muted
-                            // frame playback), mirroring the original.
-                            self.prepare.playing = true;
+                        if media_source_changed {
+                            self.prepare.set_media_path(media_path.clone());
+                            self.start_prepare_video(media_id, media_path, cx);
+                        }
+                        self.thumbnail_states
+                            .entry(media_id)
+                            .or_insert_with(|| "queued".into());
+                        self.command(Command::EnsureThumbnail(media_id));
+                        self.command(Command::EnsureTimeline(media_id));
+                        if duration > 0.0 {
+                            self.prepare.seek(0.0, duration);
+                            // Selection is intentionally paused: background
+                            // browsing must never surprise the user with
+                            // sound or decoder work.
+                            self.prepare.playing = false;
                         }
                         // Apply a pending draft when its media becomes selected.
                         if let Some(draft) = self.pending_draft.take() {
-                            if draft.media_id == row.id {
+                            if draft.media_id == media_id {
                                 self.apply_draft(draft);
                             } else {
                                 self.pending_draft = Some(draft);
@@ -528,32 +580,44 @@ impl App {
                         }
                     }
                     None => {
-                        FRAME_MEDIA.with(|cell| *cell.borrow_mut() = None);
                         self.prepare.on_media_changed(0, 0.0);
-                        self.active_preview_id = 0;
+                        self.prepare_video_loading = false;
+                        self.prepare_video_error = None;
+                        self.stop_hover_preview(None, cx);
                     }
                 }
                 cx.notify();
             }
-            Event::SelectionCheckingChanged(checking) => {
+            Event::SelectionCheckingChanged(media_id, checking) => {
+                if self.selected.as_ref().map(|row| row.id) != Some(media_id) {
+                    return;
+                }
                 self.checking = checking;
                 if !checking {
                     self.command(Command::SelectionCheckFinished);
                 }
                 cx.notify();
             }
-            Event::TimelineLoadingChanged(loading) => {
+            Event::TimelineLoadingChanged(media_id, loading) => {
+                if self.selected.as_ref().map(|row| row.id) != Some(media_id) {
+                    return;
+                }
                 self.timeline_loading = loading;
                 cx.notify();
             }
             Event::LibraryPage(page) => {
                 if page.offset == 0 && page.generation >= self.library.generation {
+                    let visible_ids: std::collections::HashSet<i64> =
+                        page.rows.iter().map(|row| row.id).collect();
+                    self.thumbnail_states
+                        .retain(|media_id, _| visible_ids.contains(media_id));
+                    self.thumbnail_requested
+                        .retain(|media_id| visible_ids.contains(media_id));
                     let loaded = page.rows.len();
                     self.library = page;
                     // Next expected DB offset (the page's own offset is 0).
                     self.library.offset = loaded;
-                    self.library_scroll.set_offset(point(px(0.0), px(0.0)));
-                    self.last_scroll_y = 0.0;
+                    self.reset_library_scroll();
                 } else if page_appendable(
                     self.library.generation,
                     self.library.offset,
@@ -622,66 +686,71 @@ impl App {
             }
             Event::WorkspacesChanged(workspaces, _count) => {
                 self.workspaces = workspaces;
-                self.active_workspace_index = self
-                    .workspaces
-                    .iter()
-                    .position(|w| w.active)
-                    .unwrap_or(0);
+                self.active_workspace_index =
+                    self.workspaces.iter().position(|w| w.active).unwrap_or(0);
                 cx.notify();
             }
             Event::ThumbnailReady(id, path) => {
+                self.command(Command::ThumbnailFinished(id));
                 self.thumbnail_states.insert(
                     id,
-                    if path.is_some() { "ready".into() } else { "failed".into() },
+                    if path.is_some() {
+                        "ready".into()
+                    } else {
+                        "failed".into()
+                    },
                 );
+                self.thumbnail_requested.remove(&id);
                 if let Some(path) = path {
+                    let display_path = path.to_string_lossy().into_owned();
+                    if let Some(row) = self.library.rows.iter_mut().find(|row| row.id == id) {
+                        row.thumbnail_path = Some(display_path.clone());
+                    }
                     if let Some(row) = self.selected.as_mut() {
                         if row.id == id {
-                            row.thumbnail_path = Some(path.to_string_lossy().into_owned());
+                            row.thumbnail_path = Some(display_path);
                         }
                     }
                 }
                 cx.notify();
+            }
+            Event::PreviewDeferred(media_id) => {
+                if self.page == Page::Library
+                    && self.active_preview_id == media_id
+                    && self.hovered_tiles.get(&media_id) == Some(&true)
+                {
+                    self.command(Command::EnsurePreview(media_id));
+                }
             }
             Event::PreviewReady(id, path) => {
                 if let Some(path) = path {
-                    if self.active_preview_id == id {
-                        let mut video_created = false;
-                        if let Ok(url) = Url::from_file_path(&path) {
-                            if let Ok(video) = Video::new(&url) {
-                                video.set_muted(true);
-                                video.set_volume(0.0);
-                                video.set_looping(true);
-                                video.set_paused(false);
-                                self.preview_videos.insert(id, video);
-                                self.preview_frames.remove(&id);
-                                self.preview_extracting.remove(&id);
-                                video_created = true;
-                                cx.notify();
-                            }
-                        }
-                        if !video_created && !self.preview_extracting.contains(&id) {
-                            self.preview_extracting.insert(id);
-                            self.start_preview_frames(id, path);
-                            cx.notify();
-                        }
-                    }
+                    self.start_hover_video(id, path, cx);
                 }
             }
             Event::TimelineReady(id, path) => {
+                if self.selected.as_ref().map(|row| row.id) != Some(id) {
+                    return;
+                }
                 self.timeline_loading = false;
                 self.prepare.timeline_ready = true;
                 if let Some(path) = path {
+                    let display_path = path.to_string_lossy().into_owned();
+                    if let Some(row) = self.library.rows.iter_mut().find(|row| row.id == id) {
+                        row.timeline_path = Some(display_path.clone());
+                    }
                     if let Some(row) = self.selected.as_mut() {
-                        if row.id == id {
-                            row.timeline_path = Some(path.to_string_lossy().into_owned());
-                        }
+                        row.timeline_path = Some(display_path);
                     }
                 }
-                self.command(Command::RefreshAll);
                 cx.notify();
             }
-            Event::RandomFoldersChanged(options, summary, selected, all_selected, has_selection) => {
+            Event::RandomFoldersChanged(
+                options,
+                summary,
+                selected,
+                all_selected,
+                has_selection,
+            ) => {
                 self.random_loading = false;
                 self.random_options = options;
                 if !summary.is_empty() {
@@ -699,7 +768,10 @@ impl App {
                 cx.notify();
             }
             Event::Toast(kind, message) => {
+                let id = self.next_toast_id;
+                self.next_toast_id = self.next_toast_id.wrapping_add(1);
                 self.toasts.push(Toast {
+                    id,
                     kind,
                     message,
                     shown_at: std::time::Instant::now(),
@@ -707,17 +779,13 @@ impl App {
                 cx.notify();
             }
             Event::NavigationRequested(page) => {
-                if page != Page::Library {
-                    self.random_popup_open = false;
-                    self.sort_menu_open = false;
-                    self.workspace_menu_open = false;
-                    self.activity_open = false;
-                    self.active_preview_id = 0;
-                }
-                self.page = page;
-                cx.notify();
+                self.navigate_to(page, cx);
             }
-            Event::RevealRequested { folder, media_index, folder_index } => {
+            Event::RevealRequested {
+                folder,
+                media_index,
+                folder_index,
+            } => {
                 self.reveal_request = Some((folder, media_index, folder_index));
                 self.page = Page::Library;
                 cx.notify();
@@ -725,8 +793,7 @@ impl App {
             Event::NavigationRestored { folder, search, .. } => {
                 self.search_text = search;
                 self.active_folder = folder;
-                self.library_scroll.set_offset(point(px(0.0), px(0.0)));
-                self.last_scroll_y = 0.0;
+                self.reset_library_scroll();
                 // Restored selection may live beyond the loaded page.
                 if self.search_text.is_empty() {
                     if let Some(row) = self.selected.as_ref() {
@@ -748,7 +815,9 @@ impl App {
                 self.command(Command::SelectionVerified(media_id, row));
             }
             Event::LoadMoreFinished(library, generation, has_more, offset) => {
-                self.command(Command::LoadMoreFinished(library, generation, has_more, offset));
+                self.command(Command::LoadMoreFinished(
+                    library, generation, has_more, offset,
+                ));
             }
             Event::NeighborPreload(previous, next) => {
                 if previous > 0 {
@@ -776,28 +845,14 @@ impl App {
             Event::Tick => {
                 let now = std::time::Instant::now();
                 let before = self.toasts.len();
-                self.toasts
-                    .retain(|toast| now.duration_since(toast.shown_at) < Duration::from_millis(5200));
+                self.toasts.retain(|toast| {
+                    now.duration_since(toast.shown_at) < Duration::from_millis(5200)
+                });
                 let playback_changed = self.prepare.tick();
-                let mut diagnostics_refreshed = false;
-                if self.page == Page::Settings
-                    && self.last_diagnostics_request.elapsed() > Duration::from_secs(2) {
-                        self.last_diagnostics_request = now;
-                        self.command(Command::Diagnostics);
-                        diagnostics_refreshed = true;
-                    }
-                // Follow the grid/history scroll (any scroll source) for
-                // virtualization.
+                // History still uses a manual visible-window virtualizer.
+                // The library uses GPUI's uniform list, which invalidates the
+                // window directly as its scroll position changes.
                 let scroll_changed = match self.page {
-                    Page::Library => {
-                        let current = f32::from(self.library_scroll.offset().y);
-                        if (current - self.last_scroll_y).abs() > 0.5 {
-                            self.last_scroll_y = current;
-                            true
-                        } else {
-                            false
-                        }
-                    }
                     Page::History => {
                         let current = f32::from(self.history_scroll.offset().y);
                         if (current - self.last_history_scroll_y).abs() > 0.5 {
@@ -807,14 +862,27 @@ impl App {
                             false
                         }
                     }
-                    Page::Settings => false,
+                    Page::Library | Page::Settings => false,
                 };
-                if self.toasts.len() != before || playback_changed || diagnostics_refreshed || scroll_changed {
+                let capture_pending = self.capture_path.is_some();
+                if self.toasts.len() != before
+                    || playback_changed
+                    || scroll_changed
+                    || capture_pending
+                {
                     cx.notify();
                 }
             }
-            Event::HoverCheck(media_id) => {
-                if self.active_preview_id == media_id {
+            Event::HoverCheck(media_id, generation) => {
+                if generation != self.preview_hover_generation {
+                    return;
+                }
+                if std::time::Instant::now() < self.library_scroll_pause_until {
+                    return;
+                }
+                if self.active_preview_id == media_id
+                    && self.hovered_tiles.get(&media_id) == Some(&true)
+                {
                     self.command(Command::EnsurePreview(media_id));
                 }
             }
@@ -822,10 +890,14 @@ impl App {
                 if query == self.command_needle() {
                     self.command_results = items;
                     self.command_searching = false;
-                    self.command_selected = self.command_entries().iter().position(|e| {
-                        matches!(e, crate::render_impls::CommandEntry::Action(a) if a.enabled)
-                            || matches!(e, crate::render_impls::CommandEntry::Result(_))
-                    }).unwrap_or(0);
+                    self.command_selected = self
+                        .command_entries()
+                        .iter()
+                        .position(|e| {
+                            matches!(e, crate::render_impls::CommandEntry::Action(a) if a.enabled)
+                                || matches!(e, crate::render_impls::CommandEntry::Result(_))
+                        })
+                        .unwrap_or(0);
                     cx.notify();
                 }
             }
@@ -844,6 +916,25 @@ impl App {
                 if generation == self.history_search_generation && text == self.history_search {
                     self.command(Command::SetHistorySearch(text));
                 }
+            }
+            Event::CommandSearchCommitted {
+                generation,
+                query,
+                scope,
+                library_search,
+            } => {
+                if generation != self.command_search_generation
+                    || query != self.command_needle()
+                    || scope != self.effective_command_scope()
+                {
+                    return;
+                }
+                if let Some(search) = library_search {
+                    if search == self.search_text {
+                        self.command(Command::SetSearch(search));
+                    }
+                }
+                self.command(Command::SearchSuggestions { query, scope });
             }
             Event::DraftsDirty => {
                 self.command(Command::FlushDrafts);
@@ -867,7 +958,10 @@ impl App {
         let duration = self.prepare.duration;
         self.prepare.trim_start = draft.trim_start.clamp(0.0, duration.max(0.0));
         self.prepare.trim_end = if draft.trim_end > 0.0 {
-            draft.trim_end.clamp(self.prepare.trim_start, duration.max(self.prepare.trim_start))
+            draft.trim_end.clamp(
+                self.prepare.trim_start,
+                duration.max(self.prepare.trim_start),
+            )
         } else {
             duration
         };
@@ -938,27 +1032,6 @@ impl App {
         }
     }
 
-    fn on_frame_ready(&mut self, media_id: i64, key: String, path: PathBuf, cx: &mut Context<Self>) {
-        if key.starts_with("preview-") {
-            if key == "preview-done" {
-                self.preview_extracting.remove(&media_id);
-                cx.notify();
-                return;
-            }
-            let frames = self.preview_frames.entry(media_id).or_default();
-            if !frames.contains(&path) {
-                frames.push(path);
-            }
-            if key == "preview-5" {
-                self.preview_extracting.remove(&media_id);
-            }
-            cx.notify();
-            return;
-        }
-        self.prepare.on_frame_ready(media_id, key, path);
-        cx.notify();
-    }
-
     fn apply_settings(&mut self) {
         let mode = self
             .settings
@@ -995,7 +1068,10 @@ impl App {
         // Single toast slot like the original: a new message replaces the
         // previous one.
         self.toasts.clear();
+        let id = self.next_toast_id;
+        self.next_toast_id = self.next_toast_id.wrapping_add(1);
         self.toasts.push(Toast {
+            id,
             kind,
             message: message.into(),
             shown_at: std::time::Instant::now(),
@@ -1003,8 +1079,14 @@ impl App {
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
-        if [THEME_MODE, UI_SCALE, SIDEBAR_COLLAPSED, PREPARE_EXPANDED, LIBRARY_DENSITY]
-            .contains(&key)
+        if [
+            THEME_MODE,
+            UI_SCALE,
+            SIDEBAR_COLLAPSED,
+            PREPARE_EXPANDED,
+            LIBRARY_DENSITY,
+        ]
+        .contains(&key)
         {
             self.settings.insert(key.to_string(), value.clone());
             self.apply_settings();
@@ -1045,16 +1127,41 @@ impl App {
         }
     }
 
+    pub fn schedule_command_search(&mut self, cx: &mut Context<Self>) {
+        self.command_search_generation = self.command_search_generation.wrapping_add(1);
+        let generation = self.command_search_generation;
+        let query = self.command_needle();
+        let scope = self.effective_command_scope();
+        let library_search = (!self.command_prefix()).then(|| self.command_query.clone());
+        self.command_searching = !query.is_empty() && scope != "commands";
+        let tx = self.event_tx.clone();
+        self.command_search_task = Some(cx.spawn(
+            move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                smol::Timer::after(Duration::from_millis(160)).await;
+                let _ = tx.send(Event::CommandSearchCommitted {
+                    generation,
+                    query,
+                    scope,
+                    library_search,
+                });
+            },
+        ));
+    }
+
     pub fn open_command_center(&mut self, cx: &mut Context<Self>) {
         self.command_open = true;
         self.command_query = self.field_text("command-center");
         let needle = self.command_needle();
         let scope = self.effective_command_scope();
         self.command_searching = !needle.is_empty() && scope != "commands";
-        self.command_selected = self.command_entries().iter().position(|e| {
-            matches!(e, crate::render_impls::CommandEntry::Action(a) if a.enabled)
-                || matches!(e, crate::render_impls::CommandEntry::Result(_))
-        }).unwrap_or(0);
+        self.command_selected = self
+            .command_entries()
+            .iter()
+            .position(|e| {
+                matches!(e, crate::render_impls::CommandEntry::Action(a) if a.enabled)
+                    || matches!(e, crate::render_impls::CommandEntry::Result(_))
+            })
+            .unwrap_or(0);
         self.command(Command::SearchSuggestions {
             query: needle,
             scope,
@@ -1122,6 +1229,7 @@ impl App {
 
     pub fn focus_field(&mut self, id: &str, cx: &mut Context<Self>) {
         self.focused_field = Some(id.to_string());
+        self.platform_input_focus = None;
         // Seed the field from the committed value so editing starts from it
         // (mirrors the original's Binding restore on focus).
         let seed: Option<String> = match id {
@@ -1178,13 +1286,16 @@ impl App {
             multiple: false,
             prompt: Some("Choose your video library".into()),
         });
-        cx.spawn(move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
-            if let Ok(Ok(Some(mut paths))) = folder.await {
-                if let Some(path) = paths.pop() {
-                    let _ = controller.send(Command::ChooseLibrary(path.to_string_lossy().into_owned()));
+        cx.spawn(
+            move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                if let Ok(Ok(Some(mut paths))) = folder.await {
+                    if let Some(path) = paths.pop() {
+                        let _ = controller
+                            .send(Command::ChooseLibrary(path.to_string_lossy().into_owned()));
+                    }
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -1196,32 +1307,194 @@ impl App {
             multiple: false,
             prompt: Some("Choose where generated videos are kept".into()),
         });
-        cx.spawn(move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
-            if let Ok(Ok(Some(mut paths))) = folder.await {
-                if let Some(path) = paths.pop() {
-                    let _ = controller
-                        .send(Command::SetSetting(EXPORT_DIR.to_string(), json!(path.to_string_lossy().into_owned())));
+        cx.spawn(
+            move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                if let Ok(Ok(Some(mut paths))) = folder.await {
+                    if let Some(path) = paths.pop() {
+                        let _ = controller.send(Command::SetSetting(
+                            EXPORT_DIR.to_string(),
+                            json!(path.to_string_lossy().into_owned()),
+                        ));
+                    }
                 }
-            }
+            },
+        )
+        .detach();
+    }
+
+    // ---- video lifecycle ------------------------------------------------
+
+    fn load_video(path: PathBuf, options: VideoOptions) -> Result<Video, String> {
+        let uri = gpui_video_player::Url::from_file_path(&path)
+            .map_err(|_| format!("invalid local video path: {}", path.display()))?;
+        Video::new_with_options(&uri, options)
+            .map_err(|error| format!("failed to open {}: {error:?}", path.display()))
+    }
+
+    fn retire_video(video: Video, cx: &Context<Self>) {
+        cx.background_spawn(async move {
+            // Keep one non-UI owner until the previous element tree has been
+            // discarded. The final Video drop stops GStreamer and joins its
+            // worker, so that final drop must not happen on the app thread.
+            smol::Timer::after(Duration::from_millis(150)).await;
+            drop(video);
         })
         .detach();
     }
 
-    // ---- preview frames -------------------------------------------------
+    fn retire_video_async(video: Video, cx: &AsyncApp) {
+        cx.background_spawn(async move {
+            smol::Timer::after(Duration::from_millis(150)).await;
+            drop(video);
+        })
+        .detach();
+    }
 
-    pub fn start_preview_frames(&mut self, media_id: i64, preview_path: PathBuf) {
-        let frame_tx = FRAME_TX.get().cloned();
-        if let Some(frame_tx) = frame_tx {
-            std::thread::spawn(move || {
-                if let Some(frames) = crate::extract_preview_frames(&preview_path, 6) {
-                    for (index, frame) in frames.into_iter().enumerate() {
-                        let _ = frame_tx.send((media_id, format!("preview-{index}"), frame));
+    fn start_prepare_video(&mut self, media_id: i64, media_path: PathBuf, cx: &mut Context<Self>) {
+        self.prepare_video_generation = self.prepare_video_generation.wrapping_add(1);
+        let generation = self.prepare_video_generation;
+        self.prepare_video_load_task.take();
+        self.prepare_video_loading = true;
+        self.prepare_video_error = None;
+        let expected_path = media_path.clone();
+        let load = cx.background_spawn(async move {
+            Self::load_video(
+                media_path,
+                VideoOptions {
+                    frame_buffer_capacity: Some(0),
+                    looping: Some(false),
+                    speed: Some(1.0),
+                },
+            )
+        });
+        self.prepare_video_load_task = Some(cx.spawn(async move |this, cx| match load.await {
+            Ok(video) => {
+                let retired = this.update(cx, move |app, cx| {
+                    let current = app.prepare_video_generation == generation
+                        && app.prepare.media_id == media_id
+                        && app.prepare.media_path.as_ref() == Some(&expected_path);
+                    if !current {
+                        return Some(video);
                     }
+                    video.set_muted(false);
+                    video.set_volume(0.65);
+                    video.set_looping(false);
+                    video.set_paused(!app.prepare.playing);
+                    app.prepare.position = 0.0;
+                    app.prepare_video_loading = false;
+                    app.prepare_video_error = None;
+                    let previous = app.prepare.video.replace(video);
+                    log::info!("gpui-video-player ready for {:?}", expected_path);
+                    cx.notify();
+                    previous
+                });
+                if let Ok(Some(video)) = retired {
+                    Self::retire_video_async(video, cx);
                 }
-                // Always release the extraction lock, even when partial
-                // or failed (a stuck mark would disable re-extraction).
-                let _ = frame_tx.send((media_id, "preview-done".to_string(), PathBuf::new()));
-            });
+            }
+            Err(error) => {
+                let _ = this.update(cx, move |app, cx| {
+                    if app.prepare_video_generation == generation
+                        && app.prepare.media_id == media_id
+                    {
+                        log::warn!("{error}");
+                        app.prepare_video_loading = false;
+                        app.prepare_video_error = Some("Video playback unavailable".into());
+                        app.prepare.playing = false;
+                        cx.notify();
+                    }
+                });
+            }
+        }));
+    }
+
+    fn start_hover_video(&mut self, media_id: i64, preview_path: PathBuf, cx: &mut Context<Self>) {
+        let generation = self.preview_hover_generation;
+        if !preview_request_is_current(
+            self.active_preview_id,
+            self.preview_hover_generation,
+            self.hovered_tiles.get(&media_id) == Some(&true),
+            media_id,
+            generation,
+        ) || std::time::Instant::now() < self.library_scroll_pause_until
+        {
+            return;
+        }
+        if self.preview_video.as_ref().map(|(id, _)| *id) == Some(media_id)
+            || self.preview_video_loading == Some((media_id, generation))
+        {
+            return;
+        }
+
+        self.preview_video_load_task.take();
+        self.preview_video_loading = Some((media_id, generation));
+        let expected_path = preview_path.clone();
+        let load = cx.background_spawn(async move {
+            let video = Self::load_video(
+                preview_path,
+                VideoOptions {
+                    // Hover previews render the most recent frame. Retaining a
+                    // second raw-frame queue only increases copies and memory.
+                    frame_buffer_capacity: Some(0),
+                    looping: Some(true),
+                    speed: Some(1.0),
+                },
+            )?;
+            video.set_muted(true);
+            video.set_volume(0.0);
+            Ok::<Video, String>(video)
+        });
+        self.preview_video_load_task = Some(cx.spawn(async move |this, cx| match load.await {
+            Ok(video) => {
+                let retired = this.update(cx, move |app, cx| {
+                    if app.preview_video_loading == Some((media_id, generation)) {
+                        app.preview_video_loading = None;
+                    }
+                    let current = preview_request_is_current(
+                        app.active_preview_id,
+                        app.preview_hover_generation,
+                        app.hovered_tiles.get(&media_id) == Some(&true),
+                        media_id,
+                        generation,
+                    ) && std::time::Instant::now() >= app.library_scroll_pause_until;
+                    if !current {
+                        return Some(video);
+                    }
+                    let previous = app.preview_video.replace((media_id, video));
+                    log::debug!(
+                        "hover video ready for {} from {:?}",
+                        media_id,
+                        expected_path
+                    );
+                    cx.notify();
+                    previous.map(|(_, video)| video)
+                });
+                if let Ok(Some(video)) = retired {
+                    Self::retire_video_async(video, cx);
+                }
+            }
+            Err(error) => {
+                let _ = this.update(cx, |app, cx| {
+                    if app.preview_video_loading == Some((media_id, generation)) {
+                        app.preview_video_loading = None;
+                        log::warn!("hover preview {media_id}: {error}");
+                        cx.notify();
+                    }
+                });
+            }
+        }));
+    }
+
+    pub fn stop_hover_preview(&mut self, media_id: Option<i64>, cx: &mut Context<Self>) {
+        if media_id.is_some_and(|id| self.active_preview_id != id) {
+            return;
+        }
+        self.preview_hover_generation = self.preview_hover_generation.wrapping_add(1);
+        self.active_preview_id = 0;
+        self.preview_video_loading = None;
+        self.preview_video_load_task.take();
+        if let Some((_, video)) = self.preview_video.take() {
+            Self::retire_video(video, cx);
         }
     }
 
@@ -1243,25 +1516,17 @@ impl App {
 
         // Text field editing takes priority.
         if let Some(field_id) = self.focused_field.clone() {
-            let handled = self.handle_field_key(&field_id, key, keystroke.key_char.as_deref(), cmd, cx);
+            let handled =
+                self.handle_field_key(&field_id, key, keystroke.key_char.as_deref(), cmd, cx);
             if handled {
                 return;
             }
         }
 
         match key {
-            "1" if cmd => {
-                self.page = Page::Library;
-                cx.notify();
-            }
-            "2" if cmd => {
-                self.page = Page::History;
-                cx.notify();
-            }
-            "," if cmd => {
-                self.page = Page::Settings;
-                cx.notify();
-            }
+            "1" if cmd => self.navigate_to(Page::Library, cx),
+            "2" if cmd => self.navigate_to(Page::History, cx),
+            "," if cmd => self.navigate_to(Page::Settings, cx),
             "f" if cmd && modifiers.control => {
                 window.toggle_fullscreen();
                 cx.notify();
@@ -1319,7 +1584,8 @@ impl App {
                 self.save_draft();
                 let count = self.workspaces.len();
                 if count > 0 {
-                    let next = (self.active_workspace_index as isize + direction as isize).rem_euclid(count as isize) as usize;
+                    let next = (self.active_workspace_index as isize + direction as isize)
+                        .rem_euclid(count as isize) as usize;
                     self.activate_workspace_at(next, cx);
                 }
             }
@@ -1328,14 +1594,13 @@ impl App {
                 self.page = Page::Library;
                 self.command(Command::PickRandom);
             }
-            "up" | "down"
-                if self.random_popup_open && self.focused_field.is_none() =>
-            {
+            "up" | "down" if self.random_popup_open && self.focused_field.is_none() => {
                 let rows = self.random_visible_options();
                 if !rows.is_empty() {
                     let delta = if key == "up" { -1 } else { 1 };
                     self.random_tree_cursor = (self.random_tree_cursor as isize + delta)
-                        .rem_euclid(rows.len() as isize) as usize;
+                        .rem_euclid(rows.len() as isize)
+                        as usize;
                 }
                 cx.notify();
             }
@@ -1347,31 +1612,22 @@ impl App {
                 }
                 cx.notify();
             }
-            "left" | "right"
-                if self.random_popup_open && self.focused_field.is_none() =>
-            {
+            "left" | "right" if self.random_popup_open && self.focused_field.is_none() => {
                 if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
                     let folder = option.folder.clone();
-                    if option.has_children
-                        && !self.random_expanded.remove(&folder) {
-                            self.random_expanded.insert(folder);
-                        }
+                    if option.has_children && !self.random_expanded.remove(&folder) {
+                        self.random_expanded.insert(folder);
+                    }
                 }
                 cx.notify();
             }
-            "left" | "right"
-                if self.explorer_focus && self.page == Page::Library =>
-            {
+            "left" | "right" if self.explorer_focus && self.page == Page::Library => {
                 self.explorer_key(key, cx);
             }
-            "up" | "down"
-                if self.explorer_focus && self.page == Page::Library =>
-            {
+            "up" | "down" if self.explorer_focus && self.page == Page::Library => {
                 self.explorer_move(if key == "up" { -1 } else { 1 }, cx);
             }
-            " " | "space" | "enter"
-                if self.explorer_focus && self.page == Page::Library =>
-            {
+            " " | "space" | "enter" if self.explorer_focus && self.page == Page::Library => {
                 self.explorer_key(key, cx);
             }
             "left" | "right" if !self.random_popup_open => {
@@ -1396,7 +1652,8 @@ impl App {
                         let index = rows.iter().position(|r| r.id == current.id);
                         index
                             .and_then(|i| {
-                                let target = (i as isize + delta).clamp(0, rows.len() as isize - 1) as usize;
+                                let target =
+                                    (i as isize + delta).clamp(0, rows.len() as isize - 1) as usize;
                                 rows.get(target).map(|r| r.id)
                             })
                             .or(Some(current.id))
@@ -1436,7 +1693,7 @@ impl App {
                     // Escape cancels a pending rename (mirrors the original).
                     self.focused_field = None;
                     self.renaming_workspace = None;
-                } else if !self.focused_field.is_none() {
+                } else if self.focused_field.is_some() {
                     self.focused_field = None;
                 } else if self.prepare.studio_mode {
                     self.prepare.studio_mode = false;
@@ -1495,6 +1752,7 @@ impl App {
                 _ => {}
             }
         }
+        let platform_input_ready = self.platform_input_focus.is_some();
         let field = self.field_state_mut(field_id);
         match key {
             "backspace" => {
@@ -1554,11 +1812,13 @@ impl App {
                 true
             }
             _ => {
-                if let Some(ch) = key_char {
-                    if ch.chars().count() == 1 && !cmd {
-                        field.insert(ch.chars().next().unwrap());
-                        self.on_field_changed(field_id, cx);
-                        return true;
+                if !platform_input_ready {
+                    if let Some(ch) = key_char {
+                        if ch.chars().count() == 1 && !cmd {
+                            field.insert(ch.chars().next().unwrap());
+                            self.on_field_changed(field_id, cx);
+                            return true;
+                        }
                     }
                 }
                 false
@@ -1571,21 +1831,12 @@ impl App {
         if field_id == "command-center" {
             self.command_query = text.clone();
             self.command_open = true;
-            let prefix = self.command_prefix();
-            let needle = self.command_needle();
-            let scope = self.effective_command_scope();
-            self.command_searching = !needle.is_empty() && scope != "commands";
-            if !prefix {
+            if !self.command_prefix() {
                 // Outside command mode the field drives the library search.
                 self.search_text = text.clone();
-                self.library_scroll.set_offset(point(px(0.0), px(0.0)));
-                self.last_scroll_y = 0.0;
-                self.command(Command::SetSearch(text.clone()));
+                self.reset_library_scroll();
             }
-            self.command(Command::SearchSuggestions {
-                query: needle,
-                scope,
-            });
+            self.schedule_command_search(cx);
             cx.notify();
             return;
         }
@@ -1615,11 +1866,12 @@ impl App {
                 self.history_search_generation += 1;
                 let generation = self.history_search_generation;
                 let tx = self.event_tx.clone();
-                cx.spawn(move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
-                    smol::Timer::after(std::time::Duration::from_millis(180)).await;
-                    let _ = tx.send(Event::HistorySearchCommitted(generation, text));
-                })
-                .detach();
+                self.history_search_task = Some(cx.spawn(
+                    move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                        smol::Timer::after(Duration::from_millis(180)).await;
+                        let _ = tx.send(Event::HistorySearchCommitted(generation, text));
+                    },
+                ));
             }
             "prepare-in" => {
                 if let Ok(seconds) = parse_time(&text) {
@@ -1650,7 +1902,8 @@ impl App {
                 if let Ok(seconds) = parse_time(&text) {
                     let max = (self.prepare.trim_end - 0.05).max(0.0);
                     self.prepare.trim_start = seconds.clamp(0.0, max);
-                    self.prepare.seek(self.prepare.trim_start, self.prepare.duration);
+                    self.prepare
+                        .seek(self.prepare.trim_start, self.prepare.duration);
                 }
             }
             "prepare-out" => {
@@ -1721,9 +1974,7 @@ impl App {
             // settle well before the threshold. Frames are unreliable
             // because the render loop only repaints dirty windows.
             let elapsed = self.capture_started_at.elapsed();
-            let target = std::time::Duration::from_millis(
-                (self.capture_after_target as u64) * 100,
-            );
+            let target = std::time::Duration::from_millis((self.capture_after_target as u64) * 100);
             if elapsed >= target {
                 self.capture_path = None;
                 eprintln!("[capture] firing for {:?}", path);
@@ -1733,14 +1984,6 @@ impl App {
             }
         }
 
-        // Process queued UI messages (events + frames) before painting.
-        let mut messages = std::mem::take(&mut *self.pending.lock());
-        while let Some(message) = messages.pop_front() {
-            match message {
-                UiMessage::Event(event) => self.on_event(*event, cx),
-                UiMessage::Frame(media_id, key, path) => self.on_frame_ready(media_id, key, path, cx),
-            }
-        }
         // Reflect the active library in the window title.
         {
             let root_label = self.settings_value(LIBRARY_ROOT);
@@ -1770,6 +2013,24 @@ impl App {
             .font_family("System Font")
             .track_focus(&self.focus_handle)
             .key_context("cliprelay")
+            .on_action(cx.listener(|_app, _: &FocusNext, window, _cx| {
+                window.focus_next();
+            }))
+            .on_action(cx.listener(|_app, _: &FocusPrevious, window, _cx| {
+                window.focus_prev();
+            }))
+            .on_action(cx.listener(|app, _: &Activate, _window, cx| {
+                if let Some(field_id) = app.focused_field.clone() {
+                    app.handle_field_key(&field_id, "enter", None, false, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|app, _: &ActivateSpace, _window, cx| {
+                if let Some(field_id) = app.focused_field.clone() {
+                    app.handle_field_key(&field_id, "space", Some(" "), false, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_key_down(cx.listener(|app, event, window, cx| {
                 app.on_key_down(event, window, cx);
             }));
@@ -1792,7 +2053,12 @@ impl App {
         body = body.child(match page {
             Page::Library => {
                 if self.selected.is_some() && !self.prepare.studio_mode {
-                    let mut row = div().id("library-row").flex_1().flex().flex_row().min_w(px(0.0));
+                    let mut row = div()
+                        .id("library-row")
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .min_w(px(0.0));
                     row = row.child(self.render_library(cx));
                     row = row.child(self.render_prepare_dock(cx));
                     row.into_any()
@@ -1823,6 +2089,7 @@ impl App {
                 .gap(px(8.0))
                 .w(px(460.0));
             for toast in toasts {
+                let toast_id = toast.id;
                 let (bg, border, glyph, color) = match toast.kind {
                     ToastKind::Info => (theme.surface_soft, theme.accent, "i", theme.accent),
                     ToastKind::Success => (theme.success_soft, theme.success, "✓", theme.success),
@@ -1831,7 +2098,7 @@ impl App {
                 };
                 toast_column = toast_column.child(
                     div()
-                        .id(SharedString::from(format!("toast-{}", toast.shown_at.elapsed().as_nanos())))
+                        .id(SharedString::from(format!("toast-{toast_id}")))
                         .w_full()
                         .min_h(px(52.0))
                         .px(px(16.0))
@@ -1854,7 +2121,7 @@ impl App {
                         )
                         .child(
                             div()
-                                .id(SharedString::from(format!("toast-dismiss-{}", toast.shown_at.elapsed().as_nanos())))
+                                .id(SharedString::from(format!("toast-dismiss-{toast_id}")))
                                 .h(px(28.0))
                                 .px(px(10.0))
                                 .cursor_pointer()
@@ -1865,8 +2132,8 @@ impl App {
                                 .text_size(px(12.0))
                                 .text_color(theme.muted)
                                 .child(icon("✕", 11.0, theme.muted))
-                                .on_click(cx.listener(|app, _event, _window, cx| {
-                                    app.toasts.clear();
+                                .on_click(cx.listener(move |app, _event, _window, cx| {
+                                    app.toasts.retain(|toast| toast.id != toast_id);
                                     cx.notify();
                                 })),
                         ),
@@ -1909,9 +2176,157 @@ impl App {
     }
 }
 
+impl App {
+    fn replace_platform_text(
+        &mut self,
+        range_utf16: Option<std::ops::Range<usize>>,
+        text: &str,
+        selected_utf16: Option<std::ops::Range<usize>>,
+        mark: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.focused_field.clone() else {
+            return;
+        };
+        let state = self.fields.entry(id.clone()).or_default();
+        let replacement = range_utf16
+            .map(|range| {
+                widgets::FieldState::utf16_to_char(&state.text, range.start)
+                    ..widgets::FieldState::utf16_to_char(&state.text, range.end)
+            })
+            .or_else(|| state.marked_range.clone())
+            .unwrap_or(state.caret..state.caret);
+        let start = replacement.start.min(state.text.chars().count());
+        let end = replacement.end.max(start).min(state.text.chars().count());
+        let start_byte = widgets::FieldState::char_to_byte(&state.text, start);
+        let end_byte = widgets::FieldState::char_to_byte(&state.text, end);
+        state.text.replace_range(start_byte..end_byte, text);
+        let inserted = text.chars().count();
+        state.marked_range = (mark && !text.is_empty()).then_some(start..start + inserted);
+        let selection_offset = selected_utf16
+            .map(|range| widgets::FieldState::utf16_to_char(text, range.end))
+            .unwrap_or(inserted);
+        state.caret = (start + selection_offset).min(state.text.chars().count());
+        self.on_field_changed(&id, cx);
+    }
+}
+
+impl EntityInputHandler for App {
+    fn text_for_range(
+        &mut self,
+        range_utf16: std::ops::Range<usize>,
+        actual_range: &mut Option<std::ops::Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let id = self.focused_field.as_ref()?;
+        let state = self.fields.get(id)?;
+        let start = widgets::FieldState::utf16_to_char(&state.text, range_utf16.start);
+        let end = widgets::FieldState::utf16_to_char(&state.text, range_utf16.end).max(start);
+        actual_range.replace(
+            widgets::FieldState::char_to_utf16(&state.text, start)
+                ..widgets::FieldState::char_to_utf16(&state.text, end),
+        );
+        let start_byte = widgets::FieldState::char_to_byte(&state.text, start);
+        let end_byte = widgets::FieldState::char_to_byte(&state.text, end);
+        Some(state.text[start_byte..end_byte].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let id = self.focused_field.as_ref()?;
+        let state = self.fields.get(id)?;
+        let caret = widgets::FieldState::char_to_utf16(&state.text, state.caret);
+        Some(UTF16Selection {
+            range: caret..caret,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<std::ops::Range<usize>> {
+        let id = self.focused_field.as_ref()?;
+        let state = self.fields.get(id)?;
+        state.marked_range.as_ref().map(|range| {
+            widgets::FieldState::char_to_utf16(&state.text, range.start)
+                ..widgets::FieldState::char_to_utf16(&state.text, range.end)
+        })
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        if let Some(id) = self.focused_field.clone() {
+            if let Some(state) = self.fields.get_mut(&id) {
+                state.marked_range = None;
+            }
+        }
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<std::ops::Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_platform_text(range_utf16, text, None, false, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<std::ops::Range<usize>>,
+        text: &str,
+        selected_utf16: Option<std::ops::Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_platform_text(range_utf16, text, selected_utf16, true, cx);
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: std::ops::Range<usize>,
+        bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let id = self.focused_field.as_ref()?;
+        let state = self.fields.get(id)?;
+        let index = widgets::FieldState::utf16_to_char(&state.text, range_utf16.start);
+        let x = bounds.left() + px(13.0 + index as f32 * 7.0);
+        Some(Bounds::new(
+            point(x.min(bounds.right()), bounds.top()),
+            size(px(1.0), bounds.size.height),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let id = self.focused_field.as_ref()?;
+        let state = self.fields.get(id)?;
+        let left = self
+            .platform_input_bounds
+            .map(|bounds| f32::from(bounds.left()))
+            .unwrap_or(0.0);
+        let approximate = ((f32::from(point.x) - left - 13.0).max(0.0) / 7.0).round() as usize;
+        let index = approximate.min(state.text.chars().count());
+        Some(widgets::FieldState::char_to_utf16(&state.text, index))
+    }
+}
+
 #[cfg(test)]
 mod time_tests {
-    use super::parse_time;
+    use super::{parse_time, preview_request_is_current};
 
     #[test]
     fn parse_time_rejects_non_finite() {
@@ -1923,6 +2338,15 @@ mod time_tests {
         assert!(parse_time("1:30").is_ok());
         assert_eq!(parse_time("1:30").unwrap(), 90.0);
         assert_eq!(parse_time("12.5").unwrap(), 12.5);
+    }
+
+    #[test]
+    fn hover_preview_rejects_stale_or_inactive_loads() {
+        assert!(preview_request_is_current(42, 7, true, 42, 7));
+        assert!(!preview_request_is_current(42, 8, true, 42, 7));
+        assert!(!preview_request_is_current(0, 7, true, 42, 7));
+        assert!(!preview_request_is_current(42, 7, false, 42, 7));
+        assert!(!preview_request_is_current(42, 7, true, 99, 7));
     }
 }
 
@@ -1946,56 +2370,14 @@ fn parse_time(text: &str) -> Result<f64, ()> {
     Ok(seconds)
 }
 
-/// Extract preview frames (muted hover playback).
-pub fn extract_preview_frames(preview: &std::path::Path, count: usize) -> Option<Vec<PathBuf>> {
-    use cliprelay_core::paths::preview_dir;
-    use std::process::Command;
-    let ffmpeg = cliprelay_core::paths::ffmpeg_path()?;
-    let probe = cliprelay_core::paths::ffprobe_path()?;
-    // Key the frame directory by the preview's cache key so repeated
-    // hovers reuse (and overwrite) the same files instead of leaking a
-    // fresh directory per hover.
-    let key = preview
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "preview".to_string());
-    let out_dir = preview_dir().join(format!("hover-{key}"));
-    let _ = std::fs::create_dir_all(&out_dir);
-    let probe_output = Command::new(&probe)
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
-        .arg(preview)
-        .output()
-        .ok()?;
-    let duration: f64 = String::from_utf8_lossy(&probe_output.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(6.0);
-    let duration = duration.max(0.5);
-    let mut frames = Vec::new();
-    for i in 0..count {
-        let timestamp = duration * (i as f64 + 0.5) / count as f64;
-        let output = out_dir.join(format!("f{i:02}.jpg"));
-        let status = Command::new(&ffmpeg)
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-ss"])
-            .arg(format!("{timestamp:.3}"))
-            .arg("-i")
-            .arg(preview)
-            .args([
-                "-frames:v", "1", "-vf", "scale=640:360:force_original_aspect_ratio=decrease", "-q:v", "4",
-            ])
-            .arg(&output)
-            .status()
-            .ok();
-        if matches!(status, Some(s) if s.success()) && output.is_file() {
-            frames.push(output);
-        }
-    }
-    if frames.is_empty() {
-        let _ = std::fs::remove_dir_all(&out_dir);
-        None
-    } else {
-        Some(frames)
-    }
+fn preview_request_is_current(
+    active_media_id: i64,
+    active_generation: u64,
+    hovered: bool,
+    request_media_id: i64,
+    request_generation: u64,
+) -> bool {
+    hovered && active_media_id == request_media_id && active_generation == request_generation
 }
 
 // Widget helpers exposed for the widgets module.
@@ -2165,8 +2547,10 @@ fn init_bundled_gstreamer() {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let manifest_plugins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/gst-plugins");
-    let manifest_plugins_release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/gst-plugins");
+    let manifest_plugins =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/gst-plugins");
+    let manifest_plugins_release =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/gst-plugins");
     let candidates = [
         exe_dir.clone().map(|d| d.join("gst-plugins")),
         exe_dir.clone().map(|d| d.join("lib/gstreamer-1.0")),
@@ -2209,7 +2593,10 @@ fn main() {
     configure_linux_backend();
     let (mut window_width, mut window_height) = parse_cli_args();
     let cli_size = std::env::args().any(|a| {
-        a == "--window-width" || a == "--window_width" || a == "--window-height" || a == "--window_height"
+        a == "--window-width"
+            || a == "--window_width"
+            || a == "--window-height"
+            || a == "--window_height"
     });
     if !cli_size {
         if let Some((saved_w, saved_h)) = saved_window_size() {
@@ -2217,57 +2604,74 @@ fn main() {
             window_height = saved_h;
         }
     }
-    Application::new().with_assets(icons::ClipRelayAssets).run(move |app| {
-        // After the platform is up (the gpui registers its NSApplication
-        // ivars during init, so the icon must be applied later).
-        apply_dock_icon();
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(window_width), px(window_height)),
-                app,
-            ))),
-            // The original's min is 940x660, but tiling WMs and half-screen
-            // layouts routinely give the app less; the adaptive header and
-            // toolbar keep everything reachable down to this size.
-            window_min_size: Some(size(px(700.0), px(520.0))),
-            app_id: Some("cliprelay".to_string()),
-            titlebar: Some(TitlebarOptions {
-                title: Some("ClipRelay".into()),
-                // Custom flush title bar: the app's own header row is the
-                // title bar (the native one is hidden), with the traffic
-                // lights parked over it.
-                appears_transparent: true,
-                // Centered in the 40px title bar (measured empirically:
-                // y=27 lands the lights on the bar's vertical midline).
-                traffic_light_position: Some(point(px(18.0), px(27.0))),
-            }),
-            ..Default::default()
-        };
-        app.open_window(options, |window, cx| {
-            let view = cx.new(App::new);
-            window.focus(&view.read(cx).focus_handle);
-            view
-        })
-        .expect("failed to open window");
-        // Quit when the window closes (gpui does not exit by default).
-        app.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
+    Application::new()
+        .with_assets(icons::ClipRelayAssets)
+        .run(move |app| {
+            app.bind_keys([
+                KeyBinding::new("tab", FocusNext, Some("cliprelay")),
+                KeyBinding::new("shift-tab", FocusPrevious, Some("cliprelay")),
+                KeyBinding::new("enter", Activate, Some("cliprelay")),
+                KeyBinding::new("space", ActivateSpace, Some("cliprelay")),
+            ]);
+            // After the platform is up (the gpui registers its NSApplication
+            // ivars during init, so the icon must be applied later).
+            apply_dock_icon();
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(window_width), px(window_height)),
+                    app,
+                ))),
+                // The original's min is 940x660, but tiling WMs and half-screen
+                // layouts routinely give the app less; the adaptive header and
+                // toolbar keep everything reachable down to this size.
+                window_min_size: Some(size(px(700.0), px(520.0))),
+                app_id: Some("cliprelay".to_string()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("ClipRelay".into()),
+                    // Custom flush title bar: the app's own header row is the
+                    // title bar (the native one is hidden), with the traffic
+                    // lights parked over it.
+                    appears_transparent: true,
+                    // Centered in the 40px title bar (measured empirically:
+                    // y=27 lands the lights on the bar's vertical midline).
+                    traffic_light_position: Some(point(px(18.0), px(27.0))),
+                }),
+                ..Default::default()
+            };
+            let window_result = app.open_window(options, |window, cx| {
+                let view = cx.new(App::new);
+                window.focus(&view.read(cx).focus_handle);
+                view
+            });
+            if let Err(error) = window_result {
+                log::error!("ClipRelay could not open its main window: {error:#}");
+                eprintln!("ClipRelay could not open its main window: {error:#}");
+                app.quit();
+                return;
             }
-        })
-        .detach();
-    });
+            // Quit when the window closes (gpui does not exit by default).
+            app.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+        });
 }
 
 mod prepare_render;
 mod render_impls;
 
-
 /// A paged result may be appended only when it belongs to the current
 /// generation and is the exact next expected offset (dedupes duplicate and
 /// out-of-order pages).
-fn page_appendable(current_generation: u64, current_offset: usize, page_generation: u64, page_offset: usize) -> bool {
+fn page_appendable(
+    current_generation: u64,
+    current_offset: usize,
+    page_generation: u64,
+    page_offset: usize,
+) -> bool {
     page_generation == current_generation && page_offset == current_offset
 }
 
@@ -2285,9 +2689,6 @@ mod page_tests {
         assert!(!page_appendable(3, 100, 3, 200));
         // Stale generation is rejected.
         assert!(!page_appendable(4, 100, 3, 100));
-        // Full-page replaces apply with a fresh generation.
-        assert!(3 >= 3);
-        assert!(!(2 >= 4));
     }
 }
 

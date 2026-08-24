@@ -1,0 +1,76 @@
+x-gui-environment: &gui-environment
+  DISPLAY: ":99"
+  GUI_TEST_SCREEN: "1440x900x24"
+  GUI_TEST_DPI: "96"
+  GUI_TEST_WINDOW_NAME: "${GUI_TEST_WINDOW_NAME:-^Your App}"
+  GUI_TEST_SETTLE_SECONDS: "${GUI_TEST_SETTLE_SECONDS:-2}"
+  GUI_TEST_MAX_DIFF_PIXELS: "${GUI_TEST_MAX_DIFF_PIXELS:-0}"
+  HOME: /tmp/gui-test-home
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  LIBGL_ALWAYS_SOFTWARE: "1"
+  MESA_LOADER_DRIVER_OVERRIDE: llvmpipe
+  TZ: UTC
+  XDG_CACHE_HOME: /tmp/gui-test-home/.cache
+  XDG_CONFIG_HOME: /tmp/gui-test-home/.config
+  XDG_DATA_HOME: /tmp/gui-test-home/.local/share
+
+x-gui-runtime: &gui-runtime
+  image: gui-test-template:rust-1.96.0-bookworm
+  build:
+    context: .
+    dockerfile: tools/gui-test-template/Dockerfile
+    target: tester
+    args:
+      RUST_IMAGE: rust:1.96.0-bookworm@sha256:5e2214abe154fe26e39f64488952e5c991eeed1d6d6da7cc8381ae83927f0cfc
+      RUNTIME_IMAGE: debian:bookworm-20260803-slim
+      APP_PACKAGE: your-app-package
+      APP_BINARY: your-app-binary
+  user: "${GUI_TEST_UID:-1000}:${GUI_TEST_GID:-1000}"
+  environment: *gui-environment
+  volumes:
+    - type: bind
+      source: "${GUI_TEST_ARTIFACT_DIR:-./artifacts/gui-test/latest}"
+      target: /artifacts
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=1073741824,mode=1777
+    - /run:rw,nosuid,nodev,size=67108864,mode=0755
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 512
+  shm_size: 512m
+  init: true
+  healthcheck:
+    test: ["CMD-SHELL", "xdpyinfo -display $${DISPLAY} >/dev/null 2>&1"]
+    interval: 2s
+    timeout: 2s
+    retries: 15
+    start_period: 5s
+
+services:
+  gui-test:
+    <<: *gui-runtime
+    network_mode: none
+    command: ["/opt/gui-test/bin/run-gui-test.sh"]
+
+  gui-inspect:
+    <<: *gui-runtime
+    profiles: ["inspect"]
+    command: ["/opt/gui-test/bin/start-inspection.sh"]
+    environment:
+      <<: *gui-environment
+      GUI_TEST_VNC_PASSWORD: "${GUI_TEST_VNC_PASSWORD:-}"
+    networks: [isolated-inspection]
+    ports:
+      - "127.0.0.1:${GUI_TEST_NOVNC_PORT:-6080}:6080"
+    healthcheck:
+      test: ["CMD-SHELL", "xdpyinfo -display $${DISPLAY} >/dev/null 2>&1 && xdotool search --onlyvisible --name \"$${GUI_TEST_WINDOW_NAME}\" >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+
+networks:
+  isolated-inspection:
+    internal: true

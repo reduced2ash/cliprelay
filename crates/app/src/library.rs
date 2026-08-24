@@ -6,9 +6,9 @@ use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
 use cliprelay_core::db::MediaRow;
-use gpui::*;
 use gpui::prelude::*;
-use gpui_video_player::{Video, video as video_element};
+use gpui::*;
+use gpui_video_player::{video as video_element, Video};
 use std::path::PathBuf;
 
 /// Layout helpers shared by the pages.
@@ -46,7 +46,11 @@ impl Layout {
         let explorer_visible = app.page == Page::Library
             && !app.settings_value(LIBRARY_ROOT).is_empty()
             && app.explorer_visible();
-        let explorer_width = if explorer_visible { EXPLORER_WIDTH } else { 0.0 };
+        let explorer_width = if explorer_visible {
+            EXPLORER_WIDTH
+        } else {
+            0.0
+        };
         let grid_left = sidebar_width + explorer_width;
         let mut grid_width = (page_width - explorer_width).max(1.0);
         // The docked Prepare panel shares the page row; the scrollbar
@@ -58,10 +62,24 @@ impl Layout {
         // the scrollbar reserves 10px inside the column.
         grid_width = (grid_width - 28.0 - 10.0).max(1.0);
         let density_compact = app.density == "compact";
-        let tile_min = if density_compact { TILE_MIN_COMPACT } else { TILE_MIN_DEFAULT };
-        let tile_gap = if density_compact { TILE_GAP_COMPACT } else { TILE_GAP_DEFAULT };
-        let tile_chrome = if density_compact { TILE_CHROME_COMPACT } else { TILE_CHROME_DEFAULT };
-        let columns = ((grid_width + tile_gap) / (tile_min + tile_gap)).floor().max(1.0) as usize;
+        let tile_min = if density_compact {
+            TILE_MIN_COMPACT
+        } else {
+            TILE_MIN_DEFAULT
+        };
+        let tile_gap = if density_compact {
+            TILE_GAP_COMPACT
+        } else {
+            TILE_GAP_DEFAULT
+        };
+        let tile_chrome = if density_compact {
+            TILE_CHROME_COMPACT
+        } else {
+            TILE_CHROME_DEFAULT
+        };
+        let columns = ((grid_width + tile_gap) / (tile_min + tile_gap))
+            .floor()
+            .max(1.0) as usize;
         let cell_width = grid_width / columns as f32;
         // The original floors the poster at 96px and rounds to a pixel.
         let poster_height = ((cell_width - tile_gap) * 9.0 / 16.0).round().max(96.0);
@@ -96,7 +114,10 @@ impl crate::App {
     }
 
     pub fn settings_bool(&self, key: &str) -> bool {
-        self.settings.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+        self.settings
+            .get(key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
 
     pub fn explorer_visible(&self) -> bool {
@@ -125,7 +146,6 @@ impl crate::App {
             column = column.child(self.render_explorer(cx, &theme, &layout));
             column = column.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
         }
-
 
         // Grid column.
         let mut grid = div()
@@ -156,7 +176,7 @@ impl crate::App {
             );
         }
 
-        let rows = self.library.rows.clone();
+        let row_count = self.library.rows.len();
         let has_more = self.library.has_more;
         let columns = layout.columns;
         let cell_width = layout.cell_width;
@@ -165,129 +185,120 @@ impl crate::App {
         let tile_gap = layout.tile_gap;
         let cell_height = layout.cell_height;
         let density = self.density.clone();
-        let hovered = self.hovered_tiles.clone();
-        let preview_frames = self.preview_frames.clone();
-        let preview_videos = self.preview_videos.clone();
-        let active_preview = self.active_preview_id;
-        let thumbnail_states = self.thumbnail_states.clone();
-
-        if rows.is_empty() && !scanning {
+        if row_count == 0 && !scanning {
             grid = grid.child(self.render_empty_state(cx, &theme));
         } else {
-            let mut rows_wrap = div()
-                .id("tiles")
-                .w_full()
-                .px(px(14.0))
-                .pt(px(8.0))
-                .pb(px(8.0))
-                .relative()
-                .overflow_scroll()
-                .scrollbar_width(px(10.0))
-                .track_scroll(&self.library_scroll)
-                .on_scroll_wheel(cx.listener(|_app, _event, _window, cx| {
-                    // Re-render so the visible tile window follows the scroll.
-                    cx.notify();
-                }));
-            // Scroll-window virtualization: only tiles near the viewport are
-            // rendered, inside a spacer the height of the full virtual grid.
-            let total_rows = rows.len();
             // One-shot reveal: scroll the selected tile into view, loading
             // further pages until the page holding the tile is available.
             if let Some((_folder, media_index, _folder_index)) = self.reveal_request.take() {
                 if media_index >= 0 {
                     self.reveal_target_row = Some(media_index as usize);
-                    if media_index as usize >= total_rows && has_more {
+                    if media_index as usize >= row_count && has_more {
                         let controller = self.controller.clone();
                         let _ = controller.send(Command::LoadMoreLibrary);
                     }
                 }
             }
             self.apply_reveal_scroll();
-            let scroll_y = f32::from(self.library_scroll.offset().y).max(0.0);
-            let viewport_rows = ((self.window_size.1 - 210.0) / cell_height.max(1.0)).ceil() as usize + 4;
-            let first_row = ((scroll_y / cell_height.max(1.0)).floor() as isize - 2).max(0) as usize;
-            let end_index = ((first_row + viewport_rows) * columns.max(1)).min(total_rows);
-            let start_index = (first_row * columns.max(1)).min(end_index);
-            let virtual_rows = total_rows.div_ceil(columns.max(1)).max(1);
-            let spacer_height = virtual_rows as f32 * cell_height;
-            let window_height = end_index.saturating_sub(start_index) as f32 / columns.max(1) as f32 * cell_height;
-            let mut window = div()
-                .id("tile-window")
-                .absolute()
-                .top(px(first_row as f32 * cell_height))
-                .left(px(0.0))
-                .right(px(0.0))
-                .h(px(window_height.max(0.0)))
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .gap(px(tile_gap));
-            for (index, row) in rows[start_index..end_index].iter().enumerate() {
-                let media_id = row.id;
-                // Lazily request a thumbnail when a tile without one becomes
-                // visible (mirrors MediaTile.requestThumbnail).
-                if row.thumbnail_path.is_none()
-                    && self.thumbnail_states.get(&media_id).map(|s| s.as_str()) != Some("failed")
-                    && !self.thumbnail_requested.contains(&media_id)
-                {
-                    self.thumbnail_requested.insert(media_id);
-                    self.thumbnail_states.insert(media_id, "queued".into());
-                    let controller = self.controller.clone();
-                    let _ = controller.send(Command::EnsureThumbnail(media_id));
-                }
-                let is_hovered = hovered.get(&media_id) == Some(&true);
-                let is_selected = media_id == selected_id;
-                let is_active_preview = media_id == active_preview && is_hovered;
-                let state = thumbnail_states.get(&media_id).cloned().unwrap_or_else(|| {
-                    if row.thumbnail_path.is_some() { "ready".into() } else { "idle".into() }
-                });
-                let frames = preview_frames.get(&media_id).cloned().unwrap_or_default();
-                let preview_video = preview_videos.get(&media_id).cloned();
-                window = window.child(
-                    self.render_tile(
-                        cx,
-                        &theme,
-                        row,
-                        start_index + index,
-                        cell_width,
-                        tile_gap,
-                        poster_height,
-                        tile_chrome,
-                        is_selected,
-                        is_hovered,
-                        is_active_preview,
-                        &state,
-                        frames,
-                        preview_video,
-                        &density,
-                    ),
-                );
-            }
-            rows_wrap = rows_wrap.child(
-                div()
-                    .w_full()
-                    .h(px(spacer_height))
-                    .relative()
-                    .child(window),
-            );
-            if end_index >= total_rows && has_more {
-                // Trigger pagination when the user scrolls to the end.
-                let controller = self.controller.clone();
-                cx.defer(move |_cx| {
-                    let _ = controller.send(Command::LoadMoreLibrary);
-                });
-            }
-            grid = grid.child(rows_wrap);
+            let grid_rows = library_grid_row_count(row_count, columns);
+            let list = uniform_list(
+                "tiles",
+                grid_rows,
+                cx.processor(
+                    move |app, visible_grid_rows: std::ops::Range<usize>, _window, cx| {
+                        let active_preview = app.active_preview_id;
+                        let preview_video =
+                            app.preview_video.as_ref().and_then(|(media_id, video)| {
+                                (*media_id == active_preview).then(|| video.clone())
+                            });
+                        let mut rendered_rows = Vec::with_capacity(visible_grid_rows.len());
+                        for grid_row_index in visible_grid_rows {
+                            let start_index = grid_row_index.saturating_mul(columns);
+                            let end_index = (start_index + columns).min(app.library.rows.len());
+                            let visible_rows = app.library.rows[start_index..end_index].to_vec();
+                            let mut tile_row = div()
+                                .id(SharedString::from(format!("tile-row-{grid_row_index}")))
+                                .w_full()
+                                .h(px(cell_height))
+                                .flex()
+                                .flex_row()
+                                .gap(px(tile_gap));
+
+                            for (column_index, row) in visible_rows.iter().enumerate() {
+                                let media_id = row.id;
+                                if row.thumbnail_path.is_none()
+                                    && app.thumbnail_states.get(&media_id).map(String::as_str)
+                                        != Some("failed")
+                                    && !app.thumbnail_requested.contains(&media_id)
+                                {
+                                    app.thumbnail_requested.insert(media_id);
+                                    app.thumbnail_states.insert(media_id, "queued".into());
+                                    let _ = app.controller.send(Command::EnsureThumbnail(media_id));
+                                }
+                                let is_hovered = app.hovered_tiles.get(&media_id) == Some(&true);
+                                let is_selected = media_id == selected_id;
+                                let is_active_preview = media_id == active_preview && is_hovered;
+                                let state =
+                                    app.thumbnail_states.get(&media_id).cloned().unwrap_or_else(
+                                        || {
+                                            if row.thumbnail_path.is_some() {
+                                                "ready".into()
+                                            } else {
+                                                "idle".into()
+                                            }
+                                        },
+                                    );
+                                let tile_preview =
+                                    is_active_preview.then(|| preview_video.clone()).flatten();
+                                tile_row = tile_row.child(app.render_tile(
+                                    cx,
+                                    &theme,
+                                    row,
+                                    start_index + column_index,
+                                    cell_width,
+                                    tile_gap,
+                                    poster_height,
+                                    tile_chrome,
+                                    is_selected,
+                                    is_hovered,
+                                    is_active_preview,
+                                    &state,
+                                    tile_preview,
+                                    &density,
+                                ));
+                            }
+                            rendered_rows.push(tile_row);
+                        }
+                        rendered_rows
+                    },
+                ),
+            )
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .px(px(14.0))
+            .pt(px(8.0))
+            .pb(px(8.0))
+            .track_scroll(self.library_scroll.clone())
+            .on_scroll_wheel(cx.listener(|app, _event, _window, cx| {
+                app.mark_library_scrolled(cx);
+                app.hovered_tiles.clear();
+                app.load_more_library_if_near_end();
+                cx.notify();
+            }));
+            grid = grid.child(list);
         }
-
-
 
         column = column.child(grid);
         let _ = search;
         column
     }
 
-    fn render_empty_state(&self, cx: &mut Context<Self>, theme: &crate::theme::Theme) -> impl Element {
+    fn render_empty_state(
+        &self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+    ) -> impl Element {
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
         let searching = !self.search_text.is_empty();
         let (title, body) = if !has_root {
@@ -296,7 +307,10 @@ impl crate::App {
                 "Choose one top-level folder. ClipRelay finds videos inside every nested folder without moving your originals.".to_string(),
             )
         } else if searching {
-            ("No matching videos".to_string(), "Try a broader search or switch folders.".to_string())
+            (
+                "No matching videos".to_string(),
+                "Try a broader search or switch folders.".to_string(),
+            )
         } else {
             let body = if self.settings_bool(AUTO_INDEX) {
                 "Rescan the library, or enable deep format detection for uncommon files."
@@ -370,7 +384,6 @@ impl crate::App {
         is_hovered: bool,
         is_active_preview: bool,
         thumbnail_state: &str,
-        preview_frames: Vec<PathBuf>,
         preview_video: Option<Video>,
         density: &str,
     ) -> impl Element {
@@ -415,26 +428,39 @@ impl crate::App {
             .cursor_pointer()
             .flex()
             .flex_col()
-            .focusable()
+            .tab_index(0)
+            .focus(|style| style.border_2().border_color(theme.accent))
             .on_click(cx.listener(move |app, _event, _window, cx| {
                 app.explorer_focus = false;
                 app.command(Command::SelectMedia(media_id));
                 cx.notify();
             }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                app.explorer_focus = false;
+                app.command(Command::SelectMedia(media_id));
+                cx.stop_propagation();
+            }))
+            .on_action(
+                cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                    app.explorer_focus = false;
+                    app.command(Command::SelectMedia(media_id));
+                    cx.stop_propagation();
+                }),
+            )
             .on_hover(cx.listener(move |app, &hovered, _window, cx| {
+                // Suppress hover churn during scroll: the pointer may appear
+                // to sweep many tiles as the content moves under it, and each
+                // hover would otherwise restart the preview pipeline.
+                if std::time::Instant::now() < app.library_scroll_pause_until {
+                    return;
+                }
                 if app.hovered_tiles.get(&media_id) != Some(&hovered) {
-                    app.hovered_tiles.insert(media_id, hovered);
                     if hovered {
-                        app.command(Command::EnsurePreview(media_id));
+                        app.hovered_tiles.insert(media_id, true);
                         app.start_preview_timer(media_id, cx);
                     } else {
-                        if app.active_preview_id == media_id {
-                            app.active_preview_id = 0;
-                        }
-                        app.preview_videos.remove(&media_id);
-                        app.preview_frames.remove(&media_id);
-                        app.preview_extracting.remove(&media_id);
-                        app.preview_timer_cancel();
+                        app.hovered_tiles.remove(&media_id);
+                        app.stop_hover_preview(Some(media_id), cx);
                     }
                     cx.notify();
                 }
@@ -462,33 +488,16 @@ impl crate::App {
             .when(is_hovered && !is_selected, |this| {
                 this.border_color(theme.accent.opacity(0.55))
             });
-        // Preview: GStreamer Video when available, else cycled JPEG frames, else thumbnail.
         if is_active_preview {
             if let Some(video) = preview_video {
                 poster = poster.child(
                     video_element(video)
-                        .id(SharedString::from(format!("hover-video-{}", media_id)))
-                        .buffer_capacity(5)
+                        .id(SharedString::from(format!("hover-video-{media_id}")))
                         .size(px(tile_width), px(poster_height)),
                 );
-            } else if !preview_frames.is_empty() {
-                let frame_index = ((std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-                    / 120)
-                    % preview_frames.len() as u128) as usize;
-                if let Some(frame) = preview_frames.get(frame_index) {
-                    poster = poster.child(
-                        img(frame.clone())
-                            .w_full()
-                            .h_full()
-                            .object_fit(ObjectFit::Contain),
-                    );
-                } else {
-                    poster = poster.child(self.poster_fallback(theme));
-                }
             } else if thumbnail_ok {
+                // Keep the thumbnail stable while the debounced preview encode
+                // and off-thread GStreamer startup complete.
                 poster = poster.child(
                     img(PathBuf::from(thumbnail))
                         .w_full()
@@ -498,13 +507,12 @@ impl crate::App {
             } else {
                 poster = poster.child(self.poster_fallback(theme));
                 if thumbnail_state == "failed" {
-                    poster = poster.child(
-                        div()
-                            .absolute()
-                            .top(px(8.0))
-                            .right(px(8.0))
-                            .child(icon("⚠", 22.0, theme.warning)),
-                    );
+                    poster =
+                        poster.child(div().absolute().top(px(8.0)).right(px(8.0)).child(icon(
+                            "⚠",
+                            22.0,
+                            theme.warning,
+                        )));
                 }
             }
         } else if thumbnail_ok {
@@ -517,34 +525,30 @@ impl crate::App {
         } else {
             poster = poster.child(self.poster_fallback(theme));
             if thumbnail_state == "failed" {
-                poster = poster.child(
-                    div()
-                        .absolute()
-                        .top(px(8.0))
-                        .right(px(8.0))
-                        .child(icon("⚠", 22.0, theme.warning)),
-                );
+                poster = poster.child(div().absolute().top(px(8.0)).right(px(8.0)).child(icon(
+                    "⚠",
+                    22.0,
+                    theme.warning,
+                )));
             }
         }
         // Duration badge.
         let badge_margin = if compact { 5.0 } else { 7.0 };
         let badge_h = if compact { 18.0 } else { 20.0 };
         if row.duration > 0.0 {
-            poster = poster.child(
-                tabular(
-                    div()
-                        .absolute()
-                        .bottom(px(badge_margin))
-                        .right(px(badge_margin))
-                        .h(px(badge_h))
-                        .px(px(if compact { 5.0 } else { 6.0 }))
-                        .rounded(px(4.0))
-                        .bg(theme.media_overlay)
-                        .child(duration_label)
-                        .text_size(px(if compact { 10.0 } else { 12.0 }))
-                        .text_color(theme.media_text),
-                ),
-            );
+            poster = poster.child(tabular(
+                div()
+                    .absolute()
+                    .bottom(px(badge_margin))
+                    .right(px(badge_margin))
+                    .h(px(badge_h))
+                    .px(px(if compact { 5.0 } else { 6.0 }))
+                    .rounded(px(4.0))
+                    .bg(theme.media_overlay)
+                    .child(duration_label)
+                    .text_size(px(if compact { 10.0 } else { 12.0 }))
+                    .text_color(theme.media_text),
+            ));
         }
         // Selection check.
         if is_selected {
@@ -579,16 +583,14 @@ impl crate::App {
             } else {
                 div()
             })
-            .child(
-                tabular(
-                    div()
-                        .flex_1()
-                        .child(metadata)
-                        .text_size(px(if compact { 11.0 } else { 12.0 }))
-                        .text_color(theme.muted)
-                        .text_ellipsis(),
-                ),
-            );
+            .child(tabular(
+                div()
+                    .flex_1()
+                    .child(metadata)
+                    .text_size(px(if compact { 11.0 } else { 12.0 }))
+                    .text_color(theme.muted)
+                    .text_ellipsis(),
+            ));
         if posted > 0 {
             meta_row = meta_row.child(
                 div()
@@ -617,8 +619,16 @@ impl crate::App {
                         .w_full()
                         .child(name)
                         .text_size(px(if compact { 12.0 } else { 13.0 }))
-                        .text_color(if is_selected { theme.text } else { theme.text_soft })
-                        .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                        .text_color(if is_selected {
+                            theme.text
+                        } else {
+                            theme.text_soft
+                        })
+                        .font_weight(if is_selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
                         .text_ellipsis(),
                 )
                 .child(meta_row),
@@ -696,7 +706,13 @@ impl crate::App {
         };
         match key {
             "left" => {
-                if node.has_children && self.folders_expanded.get(&node.folder).copied().unwrap_or(true) {
+                if node.has_children
+                    && self
+                        .folders_expanded
+                        .get(&node.folder)
+                        .copied()
+                        .unwrap_or(true)
+                {
                     self.folders_expanded.insert(node.folder.clone(), false);
                 } else if !node.parent.is_empty() {
                     self.explorer_selected = node.parent.clone();
@@ -706,7 +722,11 @@ impl crate::App {
             }
             "right" => {
                 if node.has_children {
-                    let expanded = self.folders_expanded.get(&node.folder).copied().unwrap_or(true);
+                    let expanded = self
+                        .folders_expanded
+                        .get(&node.folder)
+                        .copied()
+                        .unwrap_or(true);
                     if !expanded {
                         self.folders_expanded.insert(node.folder.clone(), true);
                     } else if let Some(first) = self
@@ -772,11 +792,15 @@ impl crate::App {
                         .flex_1()
                         .child(format!("{}", self.counts.0))
                         .text_size(px(10.0))
-                        .text_color(theme.muted_soft)
-                        ,
+                        .text_color(theme.muted_soft),
                 ),
         );
-        let mut items = div().id("explorer-tree").flex_1().flex().flex_col().overflow_scroll();
+        let mut items = div()
+            .id("explorer-tree")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .overflow_scroll();
         // Root row.
         items = items.child(
             div()
@@ -831,7 +855,11 @@ impl crate::App {
                 .gap(px(6.0))
                 .cursor_pointer()
                 .hover(|style| style.bg(theme.active.opacity(0.5)))
-                .bg(if is_active || is_focused { theme.active } else { theme.transparent() });
+                .bg(if is_active || is_focused {
+                    theme.active
+                } else {
+                    theme.transparent()
+                });
             // Disclosure chevron (own hit target; toggles expansion).
             if has_children {
                 let folder_for_toggle = folder.clone();
@@ -844,7 +872,11 @@ impl crate::App {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(icon(if expanded { "▾" } else { "▸" }, 11.0, theme.muted_soft))
+                        .child(icon(
+                            if expanded { "▾" } else { "▸" },
+                            11.0,
+                            theme.muted_soft,
+                        ))
                         .on_click(cx.listener(move |app, _event, _window, cx| {
                             let current = app
                                 .folders_expanded
@@ -861,21 +893,41 @@ impl crate::App {
             }
             // Row body: select the folder.
             row = row
-                .child(icon("▸", 15.0, if is_active { theme.accent_text } else { theme.muted }))
+                .child(icon(
+                    "▸",
+                    15.0,
+                    if is_active {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
+                ))
                 .child(
                     div()
                         .flex_1()
                         .child(name)
                         .text_size(px(12.0))
-                        .text_color(if is_active { theme.text } else { theme.text_soft })
-                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                        .text_color(if is_active {
+                            theme.text
+                        } else {
+                            theme.text_soft
+                        })
+                        .font_weight(if is_active {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
                         .text_ellipsis(),
                 )
                 .child(
                     div()
                         .child(format!("{count}"))
                         .text_size(px(10.0))
-                        .text_color(if is_active { theme.text_soft } else { theme.muted_soft }),
+                        .text_color(if is_active {
+                            theme.text_soft
+                        } else {
+                            theme.muted_soft
+                        }),
                 )
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.explorer_focus = true;
@@ -909,15 +961,28 @@ impl crate::App {
         if target >= self.library.rows.len() {
             return;
         }
-        let columns = self.library_columns().max(1);
-        let row_index = target / columns;
-        let cell_height = self.library_cell_height();
-        let top = row_index as f32 * cell_height;
-        let scroll = f32::from(self.library_scroll.offset().y);
-        let viewport = (self.window_size.1 - 210.0).max(200.0);
-        if top < scroll || top + cell_height > scroll + viewport {
-            self.library_scroll
-                .set_offset(point(px(0.0), px((top - 8.0).max(0.0))));
+        let row_index = target / self.library_columns().max(1);
+        self.library_scroll
+            .scroll_to_item(row_index, gpui::ScrollStrategy::Top);
+    }
+
+    pub fn reset_library_scroll(&self) {
+        self.library_scroll
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(point(px(0.0), px(0.0)));
+    }
+
+    fn load_more_library_if_near_end(&self) {
+        let base_handle = self.library_scroll.0.borrow().base_handle.clone();
+        if library_should_prefetch(
+            base_handle.offset().y,
+            base_handle.max_offset().height,
+            px(self.library_cell_height() * 5.0),
+            self.library.has_more,
+        ) {
+            let _ = self.controller.send(Command::LoadMoreLibrary);
         }
     }
 
@@ -934,24 +999,52 @@ impl crate::App {
         cx.notify();
     }
 
-    /// Request preview frame extraction for a hovered tile.
+    /// Request a real video preview for a hovered tile (debounced).
+    /// The actual `EnsurePreview` is sent only after `PREVIEW_DELAY_MS`
+    /// and only if the same tile is still hovered and no scroll has
+    /// occurred — this prevents the lag when the user scrolls with the
+    /// pointer resting over the grid (hover events fire rapidly during
+    /// scroll and would otherwise spam ffmpeg/GStreamer work).
     pub fn start_preview_timer(&mut self, media_id: i64, cx: &mut Context<Self>) {
+        if !self
+            .settings
+            .get(HOVER_PREVIEWS)
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        if std::time::Instant::now() < self.library_scroll_pause_until {
+            return;
+        }
+        if self.active_preview_id != 0 && self.active_preview_id != media_id {
+            self.stop_hover_preview(None, cx);
+        }
+        self.preview_hover_generation = self.preview_hover_generation.wrapping_add(1);
+        let generation = self.preview_hover_generation;
         self.active_preview_id = media_id;
         let tx = self.event_tx.clone();
-        cx.spawn(move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
-            smol::Timer::after(std::time::Duration::from_millis(PREVIEW_DELAY_MS)).await;
-            let _ = tx.send(Event::HoverCheck(media_id));
-        })
+        cx.spawn(
+            move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                smol::Timer::after(std::time::Duration::from_millis(PREVIEW_DELAY_MS)).await;
+                let _ = tx.send(Event::HoverCheck(media_id, generation));
+            },
+        )
         .detach();
     }
 
-    pub fn preview_timer_cancel(&mut self) {
-        // Hover-end clears active_preview_id; the timer re-checks.
+    pub fn mark_library_scrolled(&mut self, cx: &mut Context<Self>) {
+        self.library_scroll_pause_until =
+            std::time::Instant::now() + std::time::Duration::from_millis(350);
+        self.stop_hover_preview(None, cx);
     }
 }
 
 #[cfg(test)]
 mod grid_tests {
+    use super::{library_grid_row_count, library_should_prefetch};
+    use gpui::px;
+
     #[test]
     fn columns_fit_within_content_width() {
         // The invariant: `columns` tiles plus `columns-1` gaps must fit the
@@ -969,4 +1062,53 @@ mod grid_tests {
             }
         }
     }
+
+    #[test]
+    fn grid_rows_include_a_partial_final_row() {
+        assert_eq!(library_grid_row_count(0, 4), 0);
+        assert_eq!(library_grid_row_count(1, 4), 1);
+        assert_eq!(library_grid_row_count(4, 4), 1);
+        assert_eq!(library_grid_row_count(5, 4), 2);
+    }
+
+    #[test]
+    fn prefetch_uses_negative_gpui_offsets_and_a_bounded_lead() {
+        assert!(!library_should_prefetch(
+            px(-200.0),
+            px(1000.0),
+            px(250.0),
+            true
+        ));
+        assert!(library_should_prefetch(
+            px(-760.0),
+            px(1000.0),
+            px(250.0),
+            true
+        ));
+        assert!(library_should_prefetch(
+            px(-1000.0),
+            px(1000.0),
+            px(250.0),
+            true
+        ));
+        assert!(!library_should_prefetch(
+            px(-1000.0),
+            px(1000.0),
+            px(250.0),
+            false
+        ));
+    }
+}
+
+fn library_grid_row_count(item_count: usize, columns: usize) -> usize {
+    item_count.div_ceil(columns.max(1))
+}
+
+fn library_should_prefetch(
+    offset_y: Pixels,
+    max_offset_y: Pixels,
+    lead: Pixels,
+    has_more: bool,
+) -> bool {
+    has_more && max_offset_y + offset_y <= lead.max(px(0.0))
 }

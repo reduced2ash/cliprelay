@@ -4,10 +4,9 @@
 //! and streams events to the UI.
 
 use crate::state::*;
+use anyhow::Result;
 use cliprelay_core::cleanup::move_generated_to_trash;
-use cliprelay_core::db::{
-    Database, MediaRow, PostUpdate, PostValues, RandomFolder,
-};
+use cliprelay_core::db::{Database, MediaRow, PostUpdate, PostValues, RandomFolder};
 use cliprelay_core::media::{
     normalize_edit_spec, EncoderMode, MediaIndexer, MediaProcessor, ScanResult,
 };
@@ -15,11 +14,10 @@ use cliprelay_core::paths::{database_path, ffmpeg_path, ffprobe_path, is_within}
 use cliprelay_core::secrets::SecretStore;
 use cliprelay_core::settings::*;
 use cliprelay_core::telegram::{
-    DialogInfo, PersonalTelegram, TelegramBotService, TelegramDelivery, TelegramError, ProgressCb,
+    DialogInfo, PersonalTelegram, ProgressCb, TelegramBotService, TelegramDelivery, TelegramError,
 };
 use cliprelay_core::utils::{format_bytes, format_duration};
 use cliprelay_core::x::XAssistant;
-use anyhow::Result;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -135,7 +133,7 @@ pub struct Controller {
     draft_save_pending: bool,
     nav_restoring: bool,
     random_picking: bool,
-    preview_pending: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
+    preview_pending: Arc<Mutex<HashSet<i64>>>,
     preview_slots: Arc<std::sync::atomic::AtomicUsize>,
     library_generation: u64,
     library_offset: usize,
@@ -223,7 +221,7 @@ pub fn spawn_controller(
                 draft_save_pending: false,
                 nav_restoring: false,
                 random_picking: false,
-                preview_pending: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                preview_pending: Arc::new(Mutex::new(HashSet::new())),
                 preview_slots: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 library_generation: 0,
                 library_offset: 0,
@@ -280,17 +278,30 @@ impl Controller {
     }
 
     fn sync_configured_flags(&mut self) {
-        let bot_stored = self.settings.get_bool(TELEGRAM_BOT_CONFIGURED).unwrap_or(false);
-        let mode = self.settings.get_string(TELEGRAM_MODE).unwrap_or_else(|_| "bot".into());
-        let destination = self.settings.get_string(TELEGRAM_DESTINATION).unwrap_or_default();
-        self.bot_configured =
-            bot_stored || (mode == "bot" && !destination.trim().is_empty());
-        let personal_stored =
-            self.settings.get_bool(TELEGRAM_PERSONAL_CONFIGURED).unwrap_or(false);
-        let api_id = self.settings.get_string(TELEGRAM_API_ID).unwrap_or_default();
+        let bot_stored = self
+            .settings
+            .get_bool(TELEGRAM_BOT_CONFIGURED)
+            .unwrap_or(false);
+        let mode = self
+            .settings
+            .get_string(TELEGRAM_MODE)
+            .unwrap_or_else(|_| "bot".into());
+        let destination = self
+            .settings
+            .get_string(TELEGRAM_DESTINATION)
+            .unwrap_or_default();
+        self.bot_configured = bot_stored || (mode == "bot" && !destination.trim().is_empty());
+        let personal_stored = self
+            .settings
+            .get_bool(TELEGRAM_PERSONAL_CONFIGURED)
+            .unwrap_or(false);
+        let api_id = self
+            .settings
+            .get_string(TELEGRAM_API_ID)
+            .unwrap_or_default();
         let phone = self.settings.get_string(TELEGRAM_PHONE).unwrap_or_default();
-        self.personal_configured =
-            personal_stored || (mode == "personal" && !api_id.trim().is_empty() && !phone.trim().is_empty());
+        self.personal_configured = personal_stored
+            || (mode == "personal" && !api_id.trim().is_empty() && !phone.trim().is_empty());
         self.telegram_state.bot = if self.bot_configured {
             "configured".into()
         } else {
@@ -321,7 +332,8 @@ impl Controller {
     fn restore_workspaces(&mut self) {
         let tabs: Vec<Value> = self
             .settings
-            .get(WORKSPACE_TABS).map(|v| serde_json::from_value(v).unwrap_or_default())
+            .get(WORKSPACE_TABS)
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
             .unwrap_or_default();
         let library_root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
         let mut workspaces: Vec<Workspace> = Vec::new();
@@ -336,14 +348,23 @@ impl Controller {
             // top-level settings (mirrors the original).
             let mut initial = Workspace::new(new_id(), library_root.clone(), None);
             let sort = self.settings.get_string(SORT_MODE).unwrap_or_default();
-            if matches!(sort.as_str(), "newest" | "oldest" | "name" | "duration" | "size") {
+            if matches!(
+                sort.as_str(),
+                "newest" | "oldest" | "name" | "duration" | "size"
+            ) {
                 initial.sort_mode = sort;
             }
-            let folder_sort = self.settings.get_string(FOLDER_SORT_MODE).unwrap_or_default();
+            let folder_sort = self
+                .settings
+                .get_string(FOLDER_SORT_MODE)
+                .unwrap_or_default();
             if !folder_sort.is_empty() {
                 initial.folder_sort_mode = folder_sort;
             }
-            initial.random_mode = self.settings.get_string(RANDOM_FOLDER_MODE).unwrap_or_default();
+            initial.random_mode = self
+                .settings
+                .get_string(RANDOM_FOLDER_MODE)
+                .unwrap_or_default();
             if initial.random_mode != "selected" {
                 initial.random_mode = "all".into();
             }
@@ -360,7 +381,10 @@ impl Controller {
             }
             workspaces.push(initial);
         }
-        let saved_active = self.settings.get_string(ACTIVE_WORKSPACE_ID).unwrap_or_default();
+        let saved_active = self
+            .settings
+            .get_string(ACTIVE_WORKSPACE_ID)
+            .unwrap_or_default();
         let activate_id = if workspaces.iter().any(|w| w.id == saved_active) {
             saved_active
         } else {
@@ -369,7 +393,8 @@ impl Controller {
         };
         self.closed = self
             .settings
-            .get(CLOSED_WORKSPACE_TABS).map(|v| serde_json::from_value(v).unwrap_or_default())
+            .get(CLOSED_WORKSPACE_TABS)
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
             .unwrap_or_default();
         self.emit(Event::ClosedCountChanged(self.closed.len()));
         self.workspaces = workspaces;
@@ -381,22 +406,45 @@ impl Controller {
     }
     fn normalize_workspace(&self, value: Value, seen: &mut HashSet<String>) -> Option<Workspace> {
         let obj = value.as_object()?;
-        let mut id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let mut id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if id.is_empty() || !seen.insert(id.clone()) {
             id = new_id();
         }
-        let root = obj.get("root").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let root = obj
+            .get("root")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let title = obj
             .get("title")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| workspace_title(&root));
         let mut workspace = Workspace::new(id, root, Some(title));
-        workspace.custom_title = obj.get("customTitle").and_then(|v| v.as_bool()).unwrap_or(false);
-        workspace.folder = obj.get("folder").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        workspace.search = obj.get("search").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let sort = obj.get("sortMode").and_then(|v| v.as_str()).unwrap_or("newest");
-        workspace.sort_mode = if matches!(sort, "newest" | "oldest" | "name" | "duration" | "size") {
+        workspace.custom_title = obj
+            .get("customTitle")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        workspace.folder = obj
+            .get("folder")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        workspace.search = obj
+            .get("search")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let sort = obj
+            .get("sortMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("newest");
+        workspace.sort_mode = if matches!(sort, "newest" | "oldest" | "name" | "duration" | "size")
+        {
             sort.to_string()
         } else {
             "newest".into()
@@ -426,7 +474,10 @@ impl Controller {
                 out
             })
             .unwrap_or_default();
-        workspace.selected_media_id = obj.get("selectedMediaId").and_then(|v| v.as_i64()).unwrap_or(0);
+        workspace.selected_media_id = obj
+            .get("selectedMediaId")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         workspace.selected_media_name = obj
             .get("selectedMediaName")
             .and_then(|v| v.as_str())
@@ -464,14 +515,16 @@ impl Controller {
             .iter()
             .map(|w| self.workspace_snapshot(w))
             .collect();
+        let _ = self.settings.set(WORKSPACE_TABS, Value::Array(snapshots));
         let _ = self
             .settings
-            .set(WORKSPACE_TABS, Value::Array(snapshots));
-        let _ = self.settings.set(ACTIVE_WORKSPACE_ID, json!(self.active_id));
+            .set(ACTIVE_WORKSPACE_ID, json!(self.active_id));
         // Persist in append order so the most recently closed reopens first
         // after a restart (pop from the end).
         let closed = self.closed.iter().take(10).cloned().collect::<Vec<_>>();
-        let _ = self.settings.set(CLOSED_WORKSPACE_TABS, Value::Array(closed));
+        let _ = self
+            .settings
+            .set(CLOSED_WORKSPACE_TABS, Value::Array(closed));
         self.emit_workspaces();
     }
 
@@ -498,7 +551,10 @@ impl Controller {
                 has_forward: !workspace.nav_forward.is_empty(),
                 scanning,
                 scan_cancelling: scanning
-                    && self.scan.as_ref().is_some_and(|s| s.cancel.load(Ordering::Relaxed)),
+                    && self
+                        .scan
+                        .as_ref()
+                        .is_some_and(|s| s.cancel.load(Ordering::Relaxed)),
             });
         }
         self.emit(Event::WorkspacesChanged(infos, self.workspaces.len()));
@@ -528,7 +584,16 @@ impl Controller {
             return;
         }
         self.active_id = id.to_string();
-        let (root, folder, search, sort_mode, folder_sort_mode, random_mode, random_folders, media_id) = {
+        let (
+            root,
+            folder,
+            search,
+            sort_mode,
+            folder_sort_mode,
+            random_mode,
+            random_folders,
+            media_id,
+        ) = {
             let workspace = self.active();
             (
                 workspace.root.clone(),
@@ -579,7 +644,10 @@ impl Controller {
             self.db.activate_root(Some(root))
         };
         if let Err(e) = result {
-            self.toast(ToastKind::Error, format!("The library database could not be updated. ({e})"));
+            self.toast(
+                ToastKind::Error,
+                format!("The library database could not be updated. ({e})"),
+            );
         }
     }
 
@@ -614,7 +682,8 @@ impl Controller {
         self.closed.push(self.workspace_snapshot(&removed));
         self.emit(Event::ClosedCountChanged(self.closed.len()));
         if self.workspaces.is_empty() {
-            self.workspaces.push(Workspace::new(new_id(), String::new(), None));
+            self.workspaces
+                .push(Workspace::new(new_id(), String::new(), None));
         }
         if self.active_id == id {
             let new_index = index.min(self.workspaces.len() - 1);
@@ -721,6 +790,15 @@ impl Controller {
     // ---- settings -------------------------------------------------------
 
     fn handle_set_setting(&mut self, key: &str, value: Value) {
+        let old_library_root = if key == LIBRARY_ROOT {
+            self.settings.get_string(LIBRARY_ROOT).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if let Err(e) = self.settings.set(key, value.clone()) {
+            self.toast(ToastKind::Error, e.to_string());
+            return;
+        }
         if key == EXPORT_DIR {
             let new_dir = value
                 .as_str()
@@ -739,8 +817,7 @@ impl Controller {
         }
         if key == LIBRARY_ROOT {
             let new_root = value.as_str().unwrap_or("").to_string();
-            let old_root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
-            if new_root != old_root {
+            if new_root != old_library_root {
                 self.handle_library_root_change(new_root.clone());
             }
         }
@@ -753,22 +830,20 @@ impl Controller {
             let encoder = self.effective_encoder();
             self.processor.set_encoder_mode(encoder);
         }
-        let result = self.settings.set(key, value);
-        if let Err(e) = result {
-            self.toast(ToastKind::Error, e.to_string());
-        }
-        if key == AUTO_INDEX
-            && self.settings.get_bool(AUTO_INDEX).unwrap_or(false) {
-                let root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
-                if !root.is_empty() {
-                    self.request_scan("automatic", true);
-                }
+        if key == AUTO_INDEX && self.settings.get_bool(AUTO_INDEX).unwrap_or(false) {
+            let root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
+            if !root.is_empty() {
+                self.request_scan("automatic", true);
             }
+        }
         self.settings_changed();
     }
 
     fn effective_encoder(&self) -> EncoderMode {
-        let encoder = self.settings.get_string(EXPORT_ENCODER).unwrap_or_else(|_| "auto".into());
+        let encoder = self
+            .settings
+            .get_string(EXPORT_ENCODER)
+            .unwrap_or_else(|_| "auto".into());
         let performance = self
             .settings
             .get_string(PERFORMANCE_MODE)
@@ -815,7 +890,10 @@ impl Controller {
             let auto_index = self.settings.get_bool(AUTO_INDEX).unwrap_or(false);
             self.request_scan("new_root", auto_index);
             if !auto_index {
-                self.toast(ToastKind::Success, "Folder selected. Building the fast filename list now.");
+                self.toast(
+                    ToastKind::Success,
+                    "Folder selected. Building the fast filename list now.",
+                );
             }
         }
         self.persist_workspaces();
@@ -868,7 +946,13 @@ impl Controller {
         let events = self.events.clone();
         std::thread::spawn(move || {
             let rows = db
-                .list_media(&search, &folder, &sort_mode, PAGE_SIZE_LIBRARY + 1, offset as i64)
+                .list_media(
+                    &search,
+                    &folder,
+                    &sort_mode,
+                    PAGE_SIZE_LIBRARY + 1,
+                    offset as i64,
+                )
                 .unwrap_or_default();
             let has_more = rows.len() as i64 > PAGE_SIZE_LIBRARY;
             let rows = rows.into_iter().take(PAGE_SIZE_LIBRARY as usize).collect();
@@ -892,8 +976,10 @@ impl Controller {
         std::thread::spawn(move || {
             let rows = db.list_explorer_folders().unwrap_or_default();
             // Build a compact tree with auto-expanded top-level branches.
-            let mut nodes: Vec<FolderNode> = Vec::new();
-            let mut children_of: std::collections::HashMap<String, Vec<String>> = Default::default();
+            let row_by_folder: HashMap<&str, _> =
+                rows.iter().map(|row| (row.folder.as_str(), row)).collect();
+            let mut nodes: HashMap<String, FolderNode> = HashMap::new();
+            let mut children_of: HashMap<String, HashSet<String>> = HashMap::new();
             for row in &rows {
                 let parts: Vec<&str> = row.folder.split('/').collect();
                 for depth in 0..parts.len() {
@@ -903,67 +989,69 @@ impl Controller {
                     } else {
                         parts[..depth].join("/")
                     };
-                    children_of.entry(parent.clone()).or_default().push(folder.clone());
-                    if !nodes.iter().any(|n| n.folder == folder) {
-                        nodes.push(FolderNode {
+                    children_of
+                        .entry(parent.clone())
+                        .or_default()
+                        .insert(folder.clone());
+                    nodes.entry(folder.clone()).or_insert_with(|| {
+                        let exact = row_by_folder.get(folder.as_str()).copied();
+                        FolderNode {
                             folder: folder.clone(),
                             name: parts[depth].to_string(),
-                            count: row.count,
+                            count: exact.map_or(0, |value| value.count),
                             depth,
                             has_children: false,
                             expanded: depth < 1,
                             parent,
-                            latest_mtime: row.latest_mtime,
-                            latest_indexed: row.latest_indexed.clone(),
-                        });
-                    }
+                            latest_mtime: exact.map_or(0.0, |value| value.latest_mtime),
+                            latest_indexed: exact
+                                .map_or_else(String::new, |value| value.latest_indexed.clone()),
+                        }
+                    });
                 }
             }
-            for node in &mut nodes {
-                node.has_children = children_of.get(&node.folder).map(|c| !c.is_empty()).unwrap_or(false);
-                if let Some(row) = rows.iter().find(|r| r.folder == node.folder) {
-                    node.count = row.count;
-                    node.latest_mtime = row.latest_mtime;
-                    node.latest_indexed = row.latest_indexed.clone();
-                }
+            for node in nodes.values_mut() {
+                node.has_children = children_of
+                    .get(&node.folder)
+                    .is_some_and(|children| !children.is_empty());
             }
             // Sort siblings by the workspace's folder sort mode (level-order
             // walk with per-level sorting).
-            let sort_key = |node: &FolderNode| -> (i64, String) {
-                match sort_mode.as_str() {
-                    "name_desc" => (
-                        -node.name.to_lowercase().bytes().map(|b| b as i64).sum::<i64>(),
-                        node.name.to_lowercase(),
-                    ),
-                    "added_recent" => (-rank_indexed(&node.latest_indexed), node.name.to_lowercase()),
-                    "added_old" => (rank_indexed(&node.latest_indexed), node.name.to_lowercase()),
-                    "recent" => (-(node.latest_mtime as i64), node.name.to_lowercase()),
-                    "stale" => (node.latest_mtime as i64, node.name.to_lowercase()),
-                    "count_desc" => (-node.count, node.name.to_lowercase()),
-                    "count_asc" => (node.count, node.name.to_lowercase()),
-                    _ => (0, node.name.to_lowercase()),
-                }
+            let sort_siblings = |siblings: &mut Vec<FolderNode>| {
+                siblings.sort_by(|a, b| {
+                    let a_name = a.name.to_lowercase();
+                    let b_name = b.name.to_lowercase();
+                    let order =
+                        match sort_mode.as_str() {
+                            "name_desc" => b_name.cmp(&a_name),
+                            "added_recent" => rank_indexed(&b.latest_indexed)
+                                .cmp(&rank_indexed(&a.latest_indexed)),
+                            "added_old" => rank_indexed(&a.latest_indexed)
+                                .cmp(&rank_indexed(&b.latest_indexed)),
+                            "recent" => b.latest_mtime.total_cmp(&a.latest_mtime),
+                            "stale" => a.latest_mtime.total_cmp(&b.latest_mtime),
+                            "count_desc" => b.count.cmp(&a.count),
+                            "count_asc" => a.count.cmp(&b.count),
+                            _ => a_name.cmp(&b_name),
+                        };
+                    order.then_with(|| a_name.cmp(&b_name))
+                });
             };
-            let mut sorted: Vec<FolderNode> = Vec::new();
-            let mut level: Vec<FolderNode> = nodes
-                .iter()
-                .filter(|n| n.depth == 0)
-                .cloned()
-                .collect();
-            level.sort_by_key(sort_key);
-            let mut index = 0;
-            while index < level.len() {
-                let node = level[index].clone();
-                index += 1;
+            let mut by_parent: HashMap<String, Vec<FolderNode>> = HashMap::new();
+            for node in nodes.into_values() {
+                by_parent.entry(node.parent.clone()).or_default().push(node);
+            }
+            for siblings in by_parent.values_mut() {
+                sort_siblings(siblings);
+            }
+            let mut sorted = Vec::new();
+            let mut stack = by_parent.remove("").unwrap_or_default();
+            stack.reverse();
+            while let Some(node) = stack.pop() {
                 sorted.push(node.clone());
-                let mut children: Vec<FolderNode> = nodes
-                    .iter()
-                    .filter(|n| n.parent == node.folder)
-                    .cloned()
-                    .collect();
-                if !children.is_empty() {
-                    children.sort_by_key(sort_key);
-                    level.splice(index..index, children);
+                if let Some(mut children) = by_parent.remove(&node.folder) {
+                    children.reverse();
+                    stack.extend(children);
                 }
             }
             let _ = events.send(Event::FoldersUpdated(sorted));
@@ -1059,7 +1147,11 @@ impl Controller {
                     self.ensure_timeline(row.id);
                     // Maximum-performance mode preloads the preview on
                     // selection (mirrors the original).
-                    if self.settings.get_string(PERFORMANCE_MODE).unwrap_or_default() == "maximum"
+                    if self
+                        .settings
+                        .get_string(PERFORMANCE_MODE)
+                        .unwrap_or_default()
+                        == "maximum"
                         && self.settings.get_bool(HOVER_PREVIEWS).unwrap_or(true)
                     {
                         self.ensure_preview(row.id);
@@ -1076,13 +1168,13 @@ impl Controller {
 
     fn verify_selection(&mut self, media_id: i64) {
         self.checking = true;
-        self.emit(Event::SelectionCheckingChanged(true));
+        self.emit(Event::SelectionCheckingChanged(media_id, true));
         let indexer = Arc::clone(&self.indexer);
         let events = self.events.clone();
         let db = Arc::clone(&self.db);
         std::thread::spawn(move || {
             let result = indexer.ensure_metadata(media_id);
-            let _ = events.send(Event::SelectionCheckingChanged(false));
+            let _ = events.send(Event::SelectionCheckingChanged(media_id, false));
             match result {
                 Some(row) => {
                     // Route through the controller so a newer selection
@@ -1113,7 +1205,11 @@ impl Controller {
             return;
         };
         let (search, folder, sort_mode) = self.active_library_filter();
-        let maximum = self.settings.get_string(PERFORMANCE_MODE).unwrap_or_default() == "maximum";
+        let maximum = self
+            .settings
+            .get_string(PERFORMANCE_MODE)
+            .unwrap_or_default()
+            == "maximum";
         let hover_previews = self.settings.get_bool(HOVER_PREVIEWS).unwrap_or(true);
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
@@ -1156,13 +1252,19 @@ impl Controller {
         let workspace_id = workspace.id.clone();
         if root.is_empty() {
             if include_index || matches!(reason, "manual" | "new_root") {
-                self.toast(ToastKind::Info, "Choose a library folder to begin indexing videos.");
+                self.toast(
+                    ToastKind::Info,
+                    "Choose a library folder to begin indexing videos.",
+                );
             }
             return;
         }
         if !Path::new(&root).is_dir() {
             if matches!(reason, "manual" | "new_root") {
-                self.toast(ToastKind::Error, "The selected library folder is unavailable.");
+                self.toast(
+                    ToastKind::Error,
+                    "The selected library folder is unavailable.",
+                );
             }
             return;
         }
@@ -1222,11 +1324,7 @@ impl Controller {
                         ),
                     ));
                 }
-                let _ = events.send(Event::CountsChanged(
-                    result.discovered as i64,
-                    0,
-                    0,
-                ));
+                let _ = events.send(Event::CountsChanged(result.discovered as i64, 0, 0));
             }
         });
     }
@@ -1254,7 +1352,10 @@ impl Controller {
         let workspace = self.active();
         if workspace.root.is_empty() {
             self.random_picking = false;
-            self.toast(ToastKind::Info, "Choose a library folder before picking a video.");
+            self.toast(
+                ToastKind::Info,
+                "Choose a library folder before picking a video.",
+            );
             return;
         }
         if workspace.random_mode == "selected" && workspace.random_folders.is_empty() {
@@ -1351,7 +1452,7 @@ impl Controller {
         });
     }
 
-fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
+    fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         // Subtree semantics (mirrors the original): toggling a folder
         // affects every direct-video folder at or below it.
         let all = self.db.list_random_folders().unwrap_or_default();
@@ -1362,9 +1463,7 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             .collect();
         let subtree: Vec<String> = direct_all
             .iter()
-            .filter(|path| {
-                path.as_str() == folder || path.starts_with(&format!("{folder}/"))
-            })
+            .filter(|path| path.as_str() == folder || path.starts_with(&format!("{folder}/")))
             .cloned()
             .collect();
         let mode_all = self.active().random_mode == "all";
@@ -1389,8 +1488,8 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 selected.remove(path);
             }
         }
-        let all_selected = !direct_all.is_empty()
-            && direct_all.iter().all(|path| selected.contains(path));
+        let all_selected =
+            !direct_all.is_empty() && direct_all.iter().all(|path| selected.contains(path));
         let tokens: Vec<String> = direct_all
             .iter()
             .filter(|path| selected.contains(*path))
@@ -1405,7 +1504,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 workspace.random_mode = "selected".into();
                 workspace.random_folders = tokens;
             }
-            (workspace.random_mode.clone(), workspace.random_folders.clone())
+            (
+                workspace.random_mode.clone(),
+                workspace.random_folders.clone(),
+            )
         };
         let _ = self.settings.set(RANDOM_FOLDER_MODE, json!(random_mode));
         let _ = self.settings.set(RANDOM_FOLDERS, json!(random_folders));
@@ -1413,7 +1515,6 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         self.settings_changed();
         self.load_random_folder_options();
     }
-
 
     fn reset_shuffle(&mut self) {
         let workspace = self.active();
@@ -1483,14 +1584,19 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         if !self.settings.get_bool(HOVER_PREVIEWS).unwrap_or(true) {
             return;
         }
-        if !self.preview_pending.lock().unwrap().insert(media_id) {
+        if !self.preview_pending.lock().insert(media_id) {
             return;
         }
         // Bound concurrent preview encodes like the original's semaphore
         // (1 automatic, 2 maximum performance).
         let slots = Arc::clone(&self.preview_slots);
         let pending = Arc::clone(&self.preview_pending);
-        let cap = if self.settings.get_string(PERFORMANCE_MODE).unwrap_or_default() == "maximum" {
+        let cap = if self
+            .settings
+            .get_string(PERFORMANCE_MODE)
+            .unwrap_or_default()
+            == "maximum"
+        {
             2
         } else {
             1
@@ -1501,13 +1607,15 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             if slots.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= cap {
                 slots.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 // Release the pending mark so a later hover can retry.
-                pending.lock().unwrap().remove(&media_id);
+                pending.lock().remove(&media_id);
+                std::thread::sleep(Duration::from_millis(80));
+                let _ = events.send(Event::PreviewDeferred(media_id));
                 return;
             }
             let result = indexer.ensure_preview(media_id);
             slots.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             // Release the pending mark so later hovers can re-extract.
-            pending.lock().unwrap().remove(&media_id);
+            pending.lock().remove(&media_id);
             let _ = events.send(Event::PreviewReady(media_id, result));
         });
     }
@@ -1527,7 +1635,7 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let generation = self.timeline_generation;
         self.timeline_pending = Some((media_id, generation));
         self.timeline_loading = true;
-        self.emit(Event::TimelineLoadingChanged(true));
+        self.emit(Event::TimelineLoadingChanged(media_id, true));
         let indexer = Arc::clone(&self.indexer);
         let events = self.events.clone();
         let db = Arc::clone(&self.db);
@@ -1542,13 +1650,23 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
 
     // ---- publish --------------------------------------------------------
 
-#[allow(dead_code)]
-    fn estimate_output_size(&self, trim_start: f64, trim_end: f64, preset: &str, target_mb: f64) -> String {
+    #[allow(dead_code)]
+    fn estimate_output_size(
+        &self,
+        trim_start: f64,
+        trim_end: f64,
+        preset: &str,
+        target_mb: f64,
+    ) -> String {
         let Some(media) = &self.selected else {
             return String::new();
         };
         let source_duration = media.duration.max(0.05);
-        let end = if trim_end > 0.0 { trim_end } else { source_duration };
+        let end = if trim_end > 0.0 {
+            trim_end
+        } else {
+            source_duration
+        };
         let duration = (end - trim_start).max(0.05);
         let ratio = duration / source_duration;
         let size = media.size_bytes as f64;
@@ -1579,7 +1697,14 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         telegram_mode: &str,
     ) -> f64 {
         let x_limit = self.settings.get_f64(X_LIMIT_MB).unwrap_or(512.0);
-        resolve_target(preset, target_mb, telegram_enabled, x_enabled, telegram_mode, x_limit)
+        resolve_target(
+            preset,
+            target_mb,
+            telegram_enabled,
+            x_enabled,
+            telegram_mode,
+            x_limit,
+        )
     }
 
     fn publish(&mut self, payload: PublishPayload) {
@@ -1604,7 +1729,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             return;
         }
         if self.checking {
-            self.toast(ToastKind::Info, "Wait for the selected video check to finish.");
+            self.toast(
+                ToastKind::Info,
+                "Wait for the selected video check to finish.",
+            );
             return;
         }
         if !payload.telegram_enabled && !payload.x_enabled {
@@ -1617,7 +1745,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 return;
             }
             if payload.telegram_mode == "bot" && !self.bot_configured {
-                self.toast(ToastKind::Warning, "Connect a Telegram bot in Settings before sending.");
+                self.toast(
+                    ToastKind::Warning,
+                    "Connect a Telegram bot in Settings before sending.",
+                );
                 return;
             }
             if payload.telegram_mode == "personal" && !self.personal_configured {
@@ -1629,8 +1760,13 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             }
         }
         if payload.telegram_enabled {
-            let _ = self.settings.set(TELEGRAM_MODE, json!(payload.telegram_mode));
-            let _ = self.settings.set(TELEGRAM_DESTINATION, json!(payload.telegram_destination.trim()));
+            let _ = self
+                .settings
+                .set(TELEGRAM_MODE, json!(payload.telegram_mode));
+            let _ = self.settings.set(
+                TELEGRAM_DESTINATION,
+                json!(payload.telegram_destination.trim()),
+            );
             self.settings_changed();
         }
         let post_id = match self.db.create_post(&PostValues {
@@ -1680,7 +1816,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let settings_snapshot = self.settings.as_map().unwrap_or_default();
         let bot_token = self.secrets.get("telegram_bot_token", "");
         let personal_credentials = (
-            self.settings.get_string(TELEGRAM_API_ID).unwrap_or_default(),
+            self.settings
+                .get_string(TELEGRAM_API_ID)
+                .unwrap_or_default(),
             self.secrets.get("telegram_api_hash", ""),
         );
         let cleanup_policy = payload.cleanup_policy.clone();
@@ -1714,12 +1852,18 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             return;
         };
         let Some(path) = post.export_path.clone().or(post.source_path.clone()) else {
-            self.toast(ToastKind::Error, "The video used for this post is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The video used for this post is no longer available.",
+            );
             return;
         };
         let path = PathBuf::from(path);
         if !path.is_file() {
-            self.toast(ToastKind::Error, "The video used for this post is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The video used for this post is no longer available.",
+            );
             return;
         }
         self.publish_state = PublishState {
@@ -1737,7 +1881,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let caption = post.telegram_caption.clone();
         let bot_token = self.secrets.get("telegram_bot_token", "");
         let personal_credentials = (
-            self.settings.get_string(TELEGRAM_API_ID).unwrap_or_default(),
+            self.settings
+                .get_string(TELEGRAM_API_ID)
+                .unwrap_or_default(),
             self.secrets.get("telegram_api_hash", ""),
         );
         let progress_events = events.clone();
@@ -1779,7 +1925,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                         &delivery.message_id,
                         true,
                     );
-                    let _ = events.send(Event::Toast(ToastKind::Success, "Telegram retry succeeded.".to_string()));
+                    let _ = events.send(Event::Toast(
+                        ToastKind::Success,
+                        "Telegram retry succeeded.".to_string(),
+                    ));
                     let _ = events.send(Event::HistoryRefreshed);
                 }
                 Err(e) => {
@@ -1813,7 +1962,14 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 ..Default::default()
             },
         );
-        let _ = self.db.add_attempt(post_id, "x", "posted", "Confirmed by user", url.trim(), true);
+        let _ = self.db.add_attempt(
+            post_id,
+            "x",
+            "posted",
+            "Confirmed by user",
+            url.trim(),
+            true,
+        );
         self.apply_cleanup(post_id);
         self.refresh_history();
         self.toast(ToastKind::Success, "X post marked as posted.");
@@ -1824,12 +1980,18 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             return;
         };
         let Some(path) = post.export_path.clone().or(post.source_path.clone()) else {
-            self.toast(ToastKind::Error, "The video used for this post is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The video used for this post is no longer available.",
+            );
             return;
         };
         let path = PathBuf::from(path);
         if !path.is_file() {
-            self.toast(ToastKind::Error, "The video used for this post is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The video used for this post is no longer available.",
+            );
             return;
         }
         let caption = post.x_caption.clone();
@@ -1872,7 +2034,8 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let Some(post) = self.db.get_post(post_id).ok().flatten() else {
             return;
         };
-        let (Some(export_id), Some(export_path)) = (post.export_id, post.export_path.clone()) else {
+        let (Some(export_id), Some(export_path)) = (post.export_id, post.export_path.clone())
+        else {
             return;
         };
         if !post.is_generated.unwrap_or(true) {
@@ -1885,11 +2048,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             "after_telegram" => post.x_status == "not_requested" && telegram_done,
             _ => false,
         };
-        if trash
-            && move_generated_to_trash(&export_path, &self.export_dir, true).is_ok() {
-                let _ = self.db.mark_export_cleanup(export_id, "trashed");
-                self.refresh_history();
-            }
+        if trash && move_generated_to_trash(&export_path, &self.export_dir, true).is_ok() {
+            let _ = self.db.mark_export_cleanup(export_id, "trashed");
+            self.refresh_history();
+        }
     }
 
     // ---- telegram connection -------------------------------------------
@@ -1899,33 +2061,34 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         self.emit(Event::TelegramStateChanged(self.telegram_state.clone()));
         let events = self.events.clone();
         let mut bot = TelegramBotService::new(SecretStore::new(None));
-        std::thread::spawn(move || {
-            match bot.validate(&token) {
-                Ok(result) => {
-                    let username = result
-                        .get("username")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("bot")
-                        .to_string();
-                    let _ = events.send(Event::TelegramStateChanged(TelegramState {
-                        bot: format!("@{username}"),
-                        personal: "not signed in".into(),
-                        message: "Bot connected".into(),
-                        password_required: false,
-                    }));
-                    let _ = events.send(Event::MarkBotConfigured(username));
-                    let _ = events.send(Event::Toast(ToastKind::Success, "Telegram bot connected.".to_string()));
-                    let _ = events.send(Event::SettingsChanged(std::collections::HashMap::new()));
-                }
-                Err(e) => {
-                    let _ = events.send(Event::TelegramStateChanged(TelegramState {
-                        bot: "not configured".into(),
-                        personal: "not signed in".into(),
-                        message: e.to_string(),
-                        password_required: false,
-                    }));
-                    let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
-                }
+        std::thread::spawn(move || match bot.validate(&token) {
+            Ok(result) => {
+                let username = result
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("bot")
+                    .to_string();
+                let _ = events.send(Event::TelegramStateChanged(TelegramState {
+                    bot: format!("@{username}"),
+                    personal: "not signed in".into(),
+                    message: "Bot connected".into(),
+                    password_required: false,
+                }));
+                let _ = events.send(Event::MarkBotConfigured(username));
+                let _ = events.send(Event::Toast(
+                    ToastKind::Success,
+                    "Telegram bot connected.".to_string(),
+                ));
+                let _ = events.send(Event::SettingsChanged(std::collections::HashMap::new()));
+            }
+            Err(e) => {
+                let _ = events.send(Event::TelegramStateChanged(TelegramState {
+                    bot: "not configured".into(),
+                    personal: "not signed in".into(),
+                    message: e.to_string(),
+                    password_required: false,
+                }));
+                let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
             }
         });
     }
@@ -1933,23 +2096,21 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
     fn validate_bot_destination(&mut self, destination: String) {
         let events = self.events.clone();
         let mut bot = TelegramBotService::new(SecretStore::new(None));
-        std::thread::spawn(move || {
-            match bot.validate_destination(&destination) {
-                Ok(chat) => {
-                    let title = chat
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&destination)
-                        .to_string();
-                    let _ = events.send(Event::Toast(
-                        ToastKind::Success,
-                        format!("Telegram destination ready: {title}"),
-                    ));
-                    let _ = events.send(Event::SettingsChanged(std::collections::HashMap::new()));
-                }
-                Err(e) => {
-                    let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
-                }
+        std::thread::spawn(move || match bot.validate_destination(&destination) {
+            Ok(chat) => {
+                let title = chat
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&destination)
+                    .to_string();
+                let _ = events.send(Event::Toast(
+                    ToastKind::Success,
+                    format!("Telegram destination ready: {title}"),
+                ));
+                let _ = events.send(Event::SettingsChanged(std::collections::HashMap::new()));
+            }
+            Err(e) => {
+                let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
             }
         });
     }
@@ -1989,12 +2150,14 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         self.telegram_state.message = "Requesting Telegram sign-in code".into();
         self.telegram_state.password_required = false;
         self.emit(Event::TelegramStateChanged(self.telegram_state.clone()));
-        let _ = self.settings.set(TELEGRAM_API_ID, json!(api_id.to_string()));
+        let _ = self
+            .settings
+            .set(TELEGRAM_API_ID, json!(api_id.to_string()));
         let _ = self.settings.set(TELEGRAM_PHONE, json!(phone.clone()));
         let events = self.events.clone();
         let personal = Arc::clone(&self.personal);
-        std::thread::spawn(move || {
-            match personal.lock().begin_login(api_id, &api_hash, &phone) {
+        std::thread::spawn(
+            move || match personal.lock().begin_login(api_id, &api_hash, &phone) {
                 Ok(()) => {
                     let _ = events.send(Event::TelegramStateChanged(TelegramState {
                         bot: "configured".into(),
@@ -2013,15 +2176,15 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                     }));
                     let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
                 }
-            }
-        });
+            },
+        );
     }
 
     fn complete_personal_login(&mut self, code: String, password: String) {
         let events = self.events.clone();
         let personal = Arc::clone(&self.personal);
-        std::thread::spawn(move || {
-            match personal.lock().complete_login(&code, &password) {
+        std::thread::spawn(
+            move || match personal.lock().complete_login(&code, &password) {
                 Ok(display) => {
                     let _ = events.send(Event::TelegramStateChanged(TelegramState {
                         bot: "configured".into(),
@@ -2050,8 +2213,8 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                         let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
                     }
                 }
-            }
-        });
+            },
+        );
     }
 
     fn load_telegram_dialogs(&mut self) {
@@ -2085,7 +2248,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             personal.lock().sign_out(api_id);
         });
         self.personal_configured = false;
-        let _ = self.settings.set(TELEGRAM_PERSONAL_CONFIGURED, json!(false));
+        let _ = self
+            .settings
+            .set(TELEGRAM_PERSONAL_CONFIGURED, json!(false));
         self.telegram_state.personal = "not signed in".into();
         self.telegram_state.message = "Personal Telegram session removed".into();
         self.emit(Event::TelegramStateChanged(self.telegram_state.clone()));
@@ -2097,11 +2262,17 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
 
     fn view_history_post(&mut self, post_id: i64) {
         let Some(post) = self.db.get_post(post_id).ok().flatten() else {
-            self.toast(ToastKind::Error, "That history item is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "That history item is no longer available.",
+            );
             return;
         };
         let Some(source) = post.source_path.clone() else {
-            self.toast(ToastKind::Error, "The source video for this history item is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The source video for this history item is no longer available.",
+            );
             return;
         };
         let source = PathBuf::from(&source);
@@ -2109,20 +2280,34 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         if !workspace.root.is_empty() {
             let root = PathBuf::from(&workspace.root);
             if !is_within(&source, &root) {
-                self.toast(ToastKind::Error, "Open this video's library folder before viewing it in Prepare.");
+                self.toast(
+                    ToastKind::Error,
+                    "Open this video's library folder before viewing it in Prepare.",
+                );
                 return;
             }
         }
         // The workspace root may be unresolved (/tmp) while the row's
         // root_path is canonical (/private/tmp): compare resolved.
-        if let Some(row) = self.db.get_media_by_path(&source.to_string_lossy()).ok().flatten() {
+        if let Some(row) = self
+            .db
+            .get_media_by_path(&source.to_string_lossy())
+            .ok()
+            .flatten()
+        {
             if !same_root(&row.root_path, &workspace.root) {
-                self.toast(ToastKind::Error, "Open this video's library folder before viewing it in Prepare.");
+                self.toast(
+                    ToastKind::Error,
+                    "Open this video's library folder before viewing it in Prepare.",
+                );
                 return;
             }
         }
         if !source.is_file() {
-            self.toast(ToastKind::Error, "The source video for this history item is no longer available.");
+            self.toast(
+                ToastKind::Error,
+                "The source video for this history item is no longer available.",
+            );
             return;
         }
         self.reveal_media_path(&source);
@@ -2137,8 +2322,16 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
     }
 
     fn reveal_media_path(&mut self, path: &Path) {
-        let Some(row) = self.db.get_media_by_path(&path.to_string_lossy()).ok().flatten() else {
-            self.toast(ToastKind::Error, "The selected video is no longer in the library.");
+        let Some(row) = self
+            .db
+            .get_media_by_path(&path.to_string_lossy())
+            .ok()
+            .flatten()
+        else {
+            self.toast(
+                ToastKind::Error,
+                "The selected video is no longer in the library.",
+            );
             return;
         };
         let (root, sort_mode) = {
@@ -2148,11 +2341,17 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         // Mirrors the original's reveal gates (roots compared resolved,
         // like the original's .resolve()).
         if !row.root_path.is_empty() && !same_root(&row.root_path, &root) {
-            self.toast(ToastKind::Error, "Open this video's library folder before viewing it in Prepare.");
+            self.toast(
+                ToastKind::Error,
+                "Open this video's library folder before viewing it in Prepare.",
+            );
             return;
         }
         if !row.active || !row.valid {
-            self.toast(ToastKind::Error, "This source video is not available in the current library.");
+            self.toast(
+                ToastKind::Error,
+                "This source video is not available in the current library.",
+            );
             return;
         }
         self.record_navigation_origin();
@@ -2166,10 +2365,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
-            let rows = db
-                .list_media("", &folder, &sort_mode, 5000, 0)
-                .unwrap_or_default();
-            let index = rows.iter().position(|r| r.id == media_id);
+            let index = db
+                .media_index(media_id, "", &folder, &sort_mode)
+                .unwrap_or(None);
             if index.is_none() {
                 let _ = events.send(Event::Toast(
                     ToastKind::Error,
@@ -2201,10 +2399,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
-            let rows = db
-                .list_media("", &folder, &sort_mode, 100000, 0)
-                .unwrap_or_default();
-            let index = rows.iter().position(|r| r.id == media_id);
+            let index = db
+                .media_index(media_id, "", &folder, &sort_mode)
+                .unwrap_or(None);
             let _ = events.send(Event::RevealRequested {
                 folder,
                 media_index: index.map(|i| i as i64).unwrap_or(-1),
@@ -2219,9 +2416,14 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             // backwards, mirroring the original).
             let (search, folder, sort_mode) = self.active_library_filter();
             let target = if direction < 0 {
+                let offset = self
+                    .db
+                    .media_count(&search, &folder)
+                    .unwrap_or(0)
+                    .saturating_sub(1);
                 let rows = self
                     .db
-                    .list_media(&search, &folder, &sort_mode, 100_000, 0)
+                    .list_media(&search, &folder, &sort_mode, 1, offset as i64)
                     .unwrap_or_default();
                 rows.last().map(|row| row.id)
             } else {
@@ -2382,7 +2584,8 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 if self.workspaces.is_empty() {
                     // The id may be stale (captured before a queued close);
                     // keep the never-empty workspace invariant.
-                    self.workspaces.push(Workspace::new(new_id(), String::new(), None));
+                    self.workspaces
+                        .push(Workspace::new(new_id(), String::new(), None));
                 }
                 let target = self.workspaces.first().map(|w| w.id.clone());
                 if let Some(target) = target {
@@ -2421,7 +2624,10 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                     .map(|w| w.root.clone())
                     .unwrap_or_default();
                 if root.is_empty() {
-                    self.toast(ToastKind::Info, "This workspace does not have a root folder yet.");
+                    self.toast(
+                        ToastKind::Info,
+                        "This workspace does not have a root folder yet.",
+                    );
                 } else if let Err(e) = XAssistant::reveal(Path::new(&root)) {
                     self.toast(ToastKind::Error, e.to_string());
                 }
@@ -2554,6 +2760,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             Command::LoadRandomFolderOptions => self.load_random_folder_options(),
             Command::ResetShuffle => self.reset_shuffle(),
             Command::EnsureThumbnail(id) => self.ensure_thumbnail(id),
+            Command::ThumbnailFinished(id) => {
+                self.thumb_queue.remove(&id);
+            }
             Command::EnsurePreview(id) => self.ensure_preview(id),
             Command::LoadMoreFinished(library, generation, has_more, offset) => {
                 // Always clear the in-flight flag (a refresh mid-flight
@@ -2601,7 +2810,7 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 self.random_picking = false;
             }
             Command::PreviewFinished(id) => {
-                self.preview_pending.lock().unwrap().remove(&id);
+                self.preview_pending.lock().remove(&id);
             }
             Command::EnsureTimeline(id) => self.ensure_timeline(id),
             Command::TimelineFinished(id) => {
@@ -2627,7 +2836,9 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
             Command::MarkBotConfigured(username) => self.mark_bot_configured(username),
             Command::MarkPersonalConfigured(display) => self.mark_personal_configured(display),
             Command::ValidateBotToken(token) => self.validate_bot_token(token),
-            Command::ValidateBotDestination(destination) => self.validate_bot_destination(destination),
+            Command::ValidateBotDestination(destination) => {
+                self.validate_bot_destination(destination)
+            }
             Command::DisconnectBot => self.disconnect_bot(),
             Command::BeginPersonalLogin(api_id, api_hash, phone) => {
                 self.begin_personal_login(api_id, api_hash, phone)
@@ -2690,13 +2901,21 @@ fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
                 let library_root = self.settings.get_string(LIBRARY_ROOT).unwrap_or_default();
                 let library_inside_exports =
                     !library_root.is_empty() && is_within(&library_root, &self.export_dir);
-                self.emit(Event::DiagnosticsReady(Diagnostics {
-                    ffmpeg,
-                    ffprobe,
-                    database: self.db_path_display(),
-                    secret_backend: self.secrets.backend().to_string(),
-                    library_inside_exports,
-                }));
+                let database = self.db_path_display();
+                let secret_backend = self.secrets.backend().to_string();
+                let events = self.events.clone();
+                std::thread::spawn(move || {
+                    let (_, _, export_encoder) = cliprelay_core::media::hardware_encoder_info();
+                    let _ = events.send(Event::DiagnosticsReady(Diagnostics {
+                        ffmpeg,
+                        ffprobe,
+                        gstreamer: gpui_video_player::gst::version_string().to_string(),
+                        export_encoder,
+                        database,
+                        secret_backend,
+                        library_inside_exports,
+                    }));
+                });
             }
             Command::Shutdown => {
                 self.shutting_down = true;
@@ -2728,7 +2947,8 @@ fn rank_indexed(iso: &str) -> i64 {
         .unwrap_or(0)
 }
 
-fn new_id() -> String {    use std::time::{SystemTime, UNIX_EPOCH};
+fn new_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -2749,8 +2969,16 @@ fn nav_from_value(value: Option<&Value>) -> Vec<NavState> {
         .filter_map(|item| {
             let obj = item.as_object()?;
             Some(NavState {
-                folder: obj.get("folder").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                search: obj.get("search").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                folder: obj
+                    .get("folder")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                search: obj
+                    .get("search")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 media_id: obj.get("mediaId").and_then(|v| v.as_i64()).unwrap_or(0),
             })
         })
@@ -2815,7 +3043,10 @@ fn run_scan_job(
                 message: "Scan failed".into(),
                 root_name: job.root.clone(),
             }));
-            let _ = events.send(Event::ScanFinished(job.workspace_id.clone(), job.generation));
+            let _ = events.send(Event::ScanFinished(
+                job.workspace_id.clone(),
+                job.generation,
+            ));
             let _ = events.send(Event::Toast(
                 ToastKind::Info,
                 "Scan stopped. Videos found so far are still available.".to_string(),
@@ -2831,7 +3062,10 @@ fn run_scan_job(
             message: "Scan stopped".into(),
             root_name: job.root.clone(),
         }));
-        let _ = events.send(Event::ScanFinished(job.workspace_id.clone(), job.generation));
+        let _ = events.send(Event::ScanFinished(
+            job.workspace_id.clone(),
+            job.generation,
+        ));
         let _ = events.send(Event::Toast(
             ToastKind::Info,
             "Scan stopped. Videos found so far are still available.".to_string(),
@@ -2846,7 +3080,10 @@ fn run_scan_job(
             message: format!("{:?} filenames ready", manifest.discovered),
             root_name: job.root.clone(),
         }));
-        let _ = events.send(Event::ScanFinished(job.workspace_id.clone(), job.generation));
+        let _ = events.send(Event::ScanFinished(
+            job.workspace_id.clone(),
+            job.generation,
+        ));
         return Some(manifest);
     }
     let _ = events.send(Event::ScanStateChanged(ScanState {
@@ -2874,7 +3111,11 @@ fn run_scan_job(
         let _ = events.send(Event::ScanStateChanged(ScanState {
             active: true,
             cancelling: false,
-            progress: if total > 0 { completed as f64 / total as f64 } else { -1.0 },
+            progress: if total > 0 {
+                completed as f64 / total as f64
+            } else {
+                -1.0
+            },
             message,
             root_name: job.root.clone(),
         }));
@@ -2903,7 +3144,10 @@ fn run_scan_job(
                 message,
                 root_name: job.root.clone(),
             }));
-            let _ = events.send(Event::ScanFinished(job.workspace_id.clone(), job.generation));
+            let _ = events.send(Event::ScanFinished(
+                job.workspace_id.clone(),
+                job.generation,
+            ));
             Some(result)
         }
         Err(_) => {
@@ -2914,7 +3158,10 @@ fn run_scan_job(
                 message: "Scan failed".into(),
                 root_name: job.root.clone(),
             }));
-            let _ = events.send(Event::ScanFinished(job.workspace_id.clone(), job.generation));
+            let _ = events.send(Event::ScanFinished(
+                job.workspace_id.clone(),
+                job.generation,
+            ));
             let _ = events.send(Event::Toast(
                 ToastKind::Info,
                 "Scan stopped. Videos found so far are still available.".to_string(),
@@ -2972,8 +3219,16 @@ fn publish_job(
             let _ = db.update_post(
                 post_id,
                 &PostUpdate {
-                    telegram_status: if payload.telegram_enabled { Some("failed".into()) } else { None },
-                    x_status: if payload.x_enabled { Some("failed".into()) } else { None },
+                    telegram_status: if payload.telegram_enabled {
+                        Some("failed".into())
+                    } else {
+                        None
+                    },
+                    x_status: if payload.x_enabled {
+                        Some("failed".into())
+                    } else {
+                        None
+                    },
                     error: Some(e.to_string()),
                     ..Default::default()
                 },
@@ -3109,7 +3364,14 @@ fn publish_job(
                         ..Default::default()
                     },
                 );
-                let _ = db.add_attempt(post_id, "x", "prepared", "Caption prefilled and video copied", "", true);
+                let _ = db.add_attempt(
+                    post_id,
+                    "x",
+                    "prepared",
+                    "Caption prefilled and video copied",
+                    "",
+                    true,
+                );
                 completed_any = true;
                 x_done = true;
             }
@@ -3201,7 +3463,15 @@ fn send_telegram(
         let personal = PersonalTelegram::new(SecretStore::new(None));
         personal
             .service
-            .send_video(api_id, api_hash, &personal.secrets.get("telegram_personal_session", ""), destination, path, caption, progress.clone())
+            .send_video(
+                api_id,
+                api_hash,
+                &personal.secrets.get("telegram_personal_session", ""),
+                destination,
+                path,
+                caption,
+                progress.clone(),
+            )
             .map(|(delivery, session)| {
                 let _ = personal.secrets.set("telegram_personal_session", &session);
                 delivery
@@ -3233,7 +3503,6 @@ pub fn resolution_label(width: i64, height: i64) -> String {
         "Unchecked".into()
     }
 }
-
 
 /// Size-target resolution shared by the publish path (mirrors the
 /// original's `_target_for`).
@@ -3298,7 +3567,9 @@ fn build_random_options(
         let mut map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for option in &options {
-            map.entry(option.parent.clone()).or_default().push(option.folder.clone());
+            map.entry(option.parent.clone())
+                .or_default()
+                .push(option.folder.clone());
         }
         map
     };
@@ -3413,7 +3684,6 @@ fn build_random_options(
     )
 }
 
-    
 fn resolve_target(
     preset: &str,
     target_mb: f64,
@@ -3442,6 +3712,21 @@ fn resolve_target(
         }
         _ => target_mb,
     }
+}
+
+/// Compare two library roots after resolving symlinks (/tmp -> /private/tmp),
+/// mirroring the original's Path.resolve() comparisons.
+fn same_root(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let resolve = |p: &str| {
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| std::path::Path::new(p).to_path_buf())
+            .to_string_lossy()
+            .into_owned()
+    };
+    resolve(a) == resolve(b)
 }
 
 #[cfg(test)]
@@ -3494,7 +3779,7 @@ mod controller_tests {
         let mut selected = HashSet::new();
         selected.insert("clips/shorts".to_string());
         selected.insert("clips/long".to_string());
-        let (options, summary, count, all_selected, has) =
+        let (options, _summary, count, _all_selected, _has) =
             build_random_options(&rows, &selected, "selected");
         let parent = options.iter().find(|o| o.folder == "clips").unwrap();
         assert_eq!(parent.selection_state, 1);
@@ -3513,9 +3798,15 @@ mod controller_tests {
     #[test]
     fn fit_presets_enforce_limits() {
         // Bot limit is 49 MB regardless of the custom-size field.
-        assert_eq!(resolve_target("fit_bot", 0.0, true, false, "bot", 512.0), 49.0);
+        assert_eq!(
+            resolve_target("fit_bot", 0.0, true, false, "bot", 512.0),
+            49.0
+        );
         // X limit is 98% of the configured cap.
-        assert_eq!(resolve_target("fit_x", 0.0, false, true, "bot", 100.0), 98.0);
+        assert_eq!(
+            resolve_target("fit_x", 0.0, false, true, "bot", 100.0),
+            98.0
+        );
         // Fit both: the tighter of the two destinations wins.
         assert_eq!(
             resolve_target("fit_both", 0.0, true, true, "bot", 20.0),
@@ -3531,25 +3822,18 @@ mod controller_tests {
             501.76
         );
         // No destinations: fall back to the custom target.
-        assert_eq!(resolve_target("fit_both", 33.0, false, false, "bot", 512.0), 33.0);
+        assert_eq!(
+            resolve_target("fit_both", 33.0, false, false, "bot", 512.0),
+            33.0
+        );
         // Other presets pass the target through untouched.
-        assert_eq!(resolve_target("balanced", 0.0, true, true, "bot", 512.0), 0.0);
-        assert_eq!(resolve_target("custom", 120.0, true, true, "bot", 512.0), 120.0);
+        assert_eq!(
+            resolve_target("balanced", 0.0, true, true, "bot", 512.0),
+            0.0
+        );
+        assert_eq!(
+            resolve_target("custom", 120.0, true, true, "bot", 512.0),
+            120.0
+        );
     }
-}
-
-
-/// Compare two library roots after resolving symlinks (/tmp -> /private/tmp),
-/// mirroring the original's Path.resolve() comparisons.
-fn same_root(a: &str, b: &str) -> bool {
-    if a == b {
-        return true;
-    }
-    let resolve = |p: &str| {
-        std::fs::canonicalize(p)
-            .unwrap_or_else(|_| std::path::Path::new(p).to_path_buf())
-            .to_string_lossy()
-            .into_owned()
-    };
-    resolve(a) == resolve(b)
 }

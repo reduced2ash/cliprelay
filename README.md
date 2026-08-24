@@ -22,10 +22,9 @@ Get the newest build from [GitHub Releases](https://github.com/reduced2ash/clipr
 | Windows 10/11 | `ClipRelay-Setup-Windows-x64.exe` |
 | Portable Windows | `ClipRelay-Windows-x64.zip` |
 
-Release downloads are self-contained. Users do not need to install Python,
-Qt, FFmpeg, FFprobe, or developer tools. See
-[Installation](docs/INSTALLATION.md) for platform-specific steps and signing
-status guidance.
+The downloads currently published by the legacy release workflow are for the
+older Python/Qt implementation. Native GPUI packaging is being replaced and
+must bundle or install both FFmpeg and GStreamer before a new public release.
 
 ## What it does
 
@@ -71,23 +70,25 @@ Read the full [Privacy statement](PRIVACY.md) and
 
 ### Rust (current — GPUI rewrite)
 
-The application is being rebuilt as a native Rust app on top of
+The current application is a native Rust app on top of
 [GPUI](https://gpui.rs) (Zed's UI framework). Requirements:
 
-- macOS 12+ (Apple silicon or Intel) with a Rust toolchain
+- Rust 1.96 or newer
 - FFmpeg and FFprobe on `PATH` (or `CLIPRELAY_FFMPEG_DIR` pointing at a
   directory containing both binaries)
+- GStreamer runtime and development files, including the base, good, and
+  libav plugins used for common video formats
 
 ```bash
 cargo build --release
-cargo test                 # core unit + integration tests
+cargo test --workspace --locked
 ./target/release/cliprelay # or: cargo run
 ```
 
 The app accepts the original's command-line arguments:
 `--data-dir PATH` (application-data directory), `--library PATH`
 (override the library root on launch), and `--window-width` /
-`--window-height` (initial window size, minimum 940×660).
+`--window-height` (initial window size, minimum 700×520).
 
 On machines where the macOS display pipeline never reports the window
 visible (headless sessions, broken display state), gpui's display link
@@ -97,7 +98,7 @@ does not start and the UI freezes after the first frame. Setting
 
 Notes:
 
-- The full Xcode toolchain is required to build the default Metal
+- On macOS, the full Xcode toolchain is required to build the default Metal
   renderer; when only Command Line Tools are installed the app builds
   with the `macos-blade` renderer (see the `gpui` dependency in
   `Cargo.toml`).
@@ -106,6 +107,8 @@ Notes:
   `~/Library/Application Support/ClipRelay/cliprelay.sqlite3` by default.
 - Media integration tests generate real videos with ffmpeg and skip
   silently when it is unavailable.
+- Linux development also needs the GPUI X11/Wayland development packages;
+  see [Contributing](CONTRIBUTING.md) for the CI-tested Ubuntu command.
 
 ### Python (legacy Qt implementation)
 
@@ -122,23 +125,24 @@ cd cliprelay
 uv sync --frozen --extra dev
 PYTHONPATH=src uv run pytest
 uv run cliprelay
-```
-
 See [Contributing](CONTRIBUTING.md) for development conventions and
 [Architecture](docs/ARCHITECTURE.md) for the major components.
 
 ## Releases
 
-Every tag matching `v*` runs native builds on:
+The checked-in tag workflow still packages the legacy Python/Qt branch. Do not
+use it for a GPUI release. Rust CI now checks, lints, tests, and builds the
+current workspace; native installers still need platform-specific GStreamer
+deployment and signing validation.
+
+The intended native release targets remain:
 
 - Apple-silicon macOS
 - Intel macOS
 - Windows x64
 
-GitHub Actions publishes DMG, ZIP, Windows installer, portable Windows,
-dependency metadata, and SHA-256 checksums. Signing and Apple notarization are
-enabled when the maintainer configures the documented repository secrets.
-See [Releasing](docs/RELEASING.md).
+See [Releasing](docs/RELEASING.md) for the legacy process and outstanding
+native packaging work.
 
 ## License
 

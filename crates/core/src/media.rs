@@ -7,11 +7,11 @@ use crate::paths::{ffmpeg_path, ffprobe_path, preview_dir, thumbnail_dir, timeli
 use crate::utils::{clamp, media_cache_key, safe_stem};
 use anyhow::Result;
 
+use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 /// Progress callback: `progress(fraction 0..1, stage)`.
@@ -105,7 +105,11 @@ impl EditSpec {
 fn unit_number(raw: &serde_json::Value, default: f64) -> f64 {
     match raw {
         serde_json::Value::Number(n) => n.as_f64().filter(|v| v.is_finite()).unwrap_or(default),
-        serde_json::Value::String(s) => s.parse::<f64>().ok().filter(|v| v.is_finite()).unwrap_or(default),
+        serde_json::Value::String(s) => s
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .unwrap_or(default),
         _ => default,
     }
 }
@@ -114,25 +118,40 @@ fn unit_number(raw: &serde_json::Value, default: f64) -> f64 {
 pub fn normalize_edit_spec(value: &serde_json::Value) -> EditSpec {
     let mut spec = EditSpec::default();
     if let Some(crop) = value.get("crop").and_then(|c| c.as_object()) {
-        let enabled = crop.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+        let enabled = crop
+            .get("enabled")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(true);
         if enabled {
             let x = clamp(unit_number(&crop["x"], 0.0), 0.0, 0.99);
             let y = clamp(unit_number(&crop["y"], 0.0), 0.0, 0.99);
             let width = clamp(unit_number(&crop["width"], 1.0), 0.01, 1.0 - x);
             let height = clamp(unit_number(&crop["height"], 1.0), 0.01, 1.0 - y);
             if x > 0.0001 || y > 0.0001 || width < 0.9999 || height < 0.9999 {
-                spec.crop = Some(CropSpec { x, y, width, height });
+                spec.crop = Some(CropSpec {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
             }
         }
     }
     if let Some(overlays) = value.get("overlays").and_then(|o| o.as_array()) {
         for overlay in overlays.iter().take(32) {
-            let Some(obj) = overlay.as_object() else { continue };
+            let Some(obj) = overlay.as_object() else {
+                continue;
+            };
             let x = clamp(unit_number(&obj["x"], 0.0), 0.0, 0.99);
             let y = clamp(unit_number(&obj["y"], 0.0), 0.0, 0.99);
             let width = clamp(unit_number(&obj["width"], 0.2), 0.01, 1.0 - x);
             let height = clamp(unit_number(&obj["height"], 0.2), 0.01, 1.0 - y);
-            spec.overlays.push(OverlaySpec { x, y, width, height });
+            spec.overlays.push(OverlaySpec {
+                x,
+                y,
+                width,
+                height,
+            });
         }
     }
     spec
@@ -332,7 +351,9 @@ fn run_ffmpeg_progress(
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(MediaError::Message("FFmpeg could not process this video.".into()));
+                return Err(MediaError::Message(
+                    "FFmpeg could not process this video.".into(),
+                ));
             }
         }
     };
@@ -344,7 +365,13 @@ fn run_ffmpeg_progress(
         let detail = if text.trim().is_empty() {
             "FFmpeg could not process this video.".to_string()
         } else {
-            text.chars().rev().take(2000).collect::<String>().chars().rev().collect()
+            text.chars()
+                .rev()
+                .take(2000)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect()
         };
         return Err(MediaError::Message(detail));
     }
@@ -365,13 +392,17 @@ impl MediaIndexer {
 
     fn ffmpeg(&self) -> Result<PathBuf, MediaError> {
         ffmpeg_path().ok_or_else(|| {
-            MediaError::Message("FFmpeg is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into())
+            MediaError::Message(
+                "FFmpeg is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into(),
+            )
         })
     }
 
     fn ffprobe(&self) -> Result<PathBuf, MediaError> {
         ffprobe_path().ok_or_else(|| {
-            MediaError::Message("FFprobe is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into())
+            MediaError::Message(
+                "FFprobe is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into(),
+            )
         })
     }
 
@@ -457,10 +488,7 @@ impl MediaIndexer {
                     return Err(MediaError::ScanCancelled);
                 }
                 let path = entry.path();
-                let is_dir = entry
-                    .file_type()
-                    .map(|t| t.is_dir())
-                    .unwrap_or(false);
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 if is_dir {
                     let Some(name) = entry.file_name().to_str().map(|n| n.to_string()) else {
                         continue;
@@ -523,7 +551,12 @@ impl MediaIndexer {
 
     /// FFprobe a single file; `None` when unreadable, missing a video
     /// stream, or with no positive duration.
-    pub fn probe(&self, path: &Path, root: &Path, cancel: Option<&CancelFlag>) -> Option<MediaMetadata> {
+    pub fn probe(
+        &self,
+        path: &Path,
+        root: &Path,
+        cancel: Option<&CancelFlag>,
+    ) -> Option<MediaMetadata> {
         let ffprobe = self.ffprobe().ok()?;
         let mut command = Command::new(&ffprobe);
         command
@@ -534,16 +567,20 @@ impl MediaIndexer {
             .arg("-show_format")
             .arg("-show_streams")
             .arg(path);
-        let (status, stdout, _) =
-            run_captured(command, Duration::from_secs(35), cancel).ok()?;
+        let (status, stdout, _) = run_captured(command, Duration::from_secs(35), cancel).ok()?;
         if !status.success() {
             return None;
         }
-        let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap_or(serde_json::Value::Null);
+        let json: serde_json::Value =
+            serde_json::from_slice(&stdout).unwrap_or(serde_json::Value::Null);
         if json.is_null() {
             return None;
         }
-        let streams = json.get("streams").and_then(|s| s.as_array()).cloned().unwrap_or_default();
+        let streams = json
+            .get("streams")
+            .and_then(|s| s.as_array())
+            .cloned()
+            .unwrap_or_default();
         let video = streams
             .iter()
             .find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("video"))?;
@@ -612,7 +649,11 @@ impl MediaIndexer {
             frame_rate,
             mtime: stat
                 .modified()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
+                .map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0)
+                })
                 .unwrap_or(0.0),
         })
     }
@@ -644,7 +685,11 @@ impl MediaIndexer {
             frame_rate: 0.0,
             mtime: stat
                 .modified()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
+                .map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0)
+                })
                 .unwrap_or(0.0),
         })
     }
@@ -659,16 +704,19 @@ impl MediaIndexer {
         progress: &mut dyn FnMut(usize, &str),
         mut batch_ready: Option<&mut dyn FnMut(usize)>,
     ) -> Result<ScanResult, MediaError> {
-        let root = root_path
-            .canonicalize()
-            .map_err(|_| MediaError::Message("The selected library folder is unavailable.".into()))?;
+        let root = root_path.canonicalize().map_err(|_| {
+            MediaError::Message("The selected library folder is unavailable.".into())
+        })?;
         let mut result = ScanResult::default();
         let mut batch: Vec<crate::db::ManifestEntry> = Vec::new();
         let mut present_paths: Vec<String> = Vec::new();
         let mut first_committed = false;
         let mut last_progress = Instant::now() - Duration::from_secs(1);
         let candidates = self.iter_candidate_paths(&root, false, cancel)?;
-        let state_map = self.database.media_state_map(&root.to_string_lossy()).unwrap_or_default();
+        let state_map = self
+            .database
+            .media_state_map(&root.to_string_lossy())
+            .unwrap_or_default();
         let mut flush = |batch: &mut Vec<crate::db::ManifestEntry>,
                          result: &mut ScanResult,
                          first_committed: &mut bool,
@@ -736,10 +784,20 @@ impl MediaIndexer {
             present_paths.push(path_str);
             batch.push(entry);
             if !first_committed || batch.len() >= batch_size.max(1) {
-                flush(&mut batch, &mut result, &mut first_committed, &self.database)?;
+                flush(
+                    &mut batch,
+                    &mut result,
+                    &mut first_committed,
+                    &self.database,
+                )?;
             }
         }
-        flush(&mut batch, &mut result, &mut first_committed, &self.database)?;
+        flush(
+            &mut batch,
+            &mut result,
+            &mut first_committed,
+            &self.database,
+        )?;
         result.skipped = self
             .database
             .invalidate_absent(&root.to_string_lossy(), &present_paths)
@@ -768,7 +826,11 @@ impl MediaIndexer {
             size_bytes: stat.len() as i64,
             mtime: stat
                 .modified()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
+                .map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0)
+                })
                 .unwrap_or(0.0),
         })
     }
@@ -786,9 +848,9 @@ impl MediaIndexer {
         progress: &mut dyn FnMut(usize, usize, &str),
         mut item_ready: Option<&mut dyn FnMut(i64)>,
     ) -> Result<ScanResult, MediaError> {
-        let root = root_path
-            .canonicalize()
-            .map_err(|_| MediaError::Message("The selected library folder is unavailable.".into()))?;
+        let root = root_path.canonicalize().map_err(|_| {
+            MediaError::Message("The selected library folder is unavailable.".into())
+        })?;
         let mut result = ScanResult::default();
         let candidates = if verify_media {
             self.iter_candidate_paths(&root, deep_scan, cancel)?
@@ -799,7 +861,10 @@ impl MediaIndexer {
                 .map_err(|e| MediaError::Message(format!("{e}")))?
         };
         result.discovered = candidates.len();
-        let state_map = self.database.media_state_map(&root.to_string_lossy()).unwrap_or_default();
+        let state_map = self
+            .database
+            .media_state_map(&root.to_string_lossy())
+            .unwrap_or_default();
         let mut to_probe: Vec<PathBuf> = Vec::new();
         let mut cached_thumbnail_ids: Vec<i64> = Vec::new();
         let mut valid_paths: Vec<String> = Vec::new();
@@ -818,7 +883,11 @@ impl MediaIndexer {
                     Ok(stat) => {
                         let mtime = stat
                             .modified()
-                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
+                            .map(|t| {
+                                t.duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs_f64())
+                                    .unwrap_or(0.0)
+                            })
                             .unwrap_or(0.0);
                         self.database
                             .media_needs_probe(&path_str, stat.len() as i64, mtime, verify_media)
@@ -879,7 +948,10 @@ impl MediaIndexer {
                 progress(
                     completed,
                     total,
-                    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().as_str(),
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                        .as_str(),
                 );
             }
         } else {
@@ -888,7 +960,8 @@ impl MediaIndexer {
             let index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let database = Arc::clone(&self.database);
             let root_arc = Arc::new(root.clone());
-            let (tx, rx) = crossbeam_channel::bounded::<Option<(PathBuf, Option<MediaMetadata>)>>(workers * 2);
+            let (tx, rx) =
+                crossbeam_channel::bounded::<Option<(PathBuf, Option<MediaMetadata>)>>(workers * 2);
             let mut handles = Vec::new();
             for _ in 0..workers {
                 let index = Arc::clone(&index);
@@ -907,7 +980,8 @@ impl MediaIndexer {
                             break;
                         }
                         let path = &probe_list[idx];
-                        let metadata = if cancel.as_ref().is_some_and(|f| f.load(Ordering::Relaxed)) {
+                        let metadata = if cancel.as_ref().is_some_and(|f| f.load(Ordering::Relaxed))
+                        {
                             None
                         } else {
                             indexer.probe(path, &root, cancel.as_ref())
@@ -947,7 +1021,10 @@ impl MediaIndexer {
                         progress(
                             completed,
                             total,
-                            path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().as_str(),
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                                .as_str(),
                         );
                     }
                     None => {
@@ -974,7 +1051,8 @@ impl MediaIndexer {
             let index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let ids = cached_thumbnail_ids.clone();
             let state_map = Arc::new(state_map);
-            let (tx, rx) = crossbeam_channel::bounded::<Option<(i64, Option<PathBuf>)>>(workers * 2);
+            let (tx, rx) =
+                crossbeam_channel::bounded::<Option<(i64, Option<PathBuf>)>>(workers * 2);
             let mut handles = Vec::new();
             let thumb_workers = workers.min(4);
             for _ in 0..thumb_workers {
@@ -995,11 +1073,12 @@ impl MediaIndexer {
                         }
                         let id = ids[idx];
                         let media = indexer.database.get_media(id).ok().flatten();
-                        let thumbnail = if cancel.as_ref().is_some_and(|f| f.load(Ordering::Relaxed)) {
-                            None
-                        } else {
-                            indexer.ensure_thumbnail_for(id, media.as_ref(), cancel.as_ref())
-                        };
+                        let thumbnail =
+                            if cancel.as_ref().is_some_and(|f| f.load(Ordering::Relaxed)) {
+                                None
+                            } else {
+                                indexer.ensure_thumbnail_for(id, media.as_ref(), cancel.as_ref())
+                            };
                         if tx.send(Some((id, thumbnail))).is_err() {
                             break;
                         }
@@ -1065,9 +1144,11 @@ impl MediaIndexer {
         let key = media_cache_key(Path::new(&media.path), media.size_bytes as u64, media.mtime);
         let output = thumbnail_dir().join(format!("{key}.jpg"));
         if output.is_file() && media_path_size(&output) > 0 {
-            let _ = self
-                .database
-                .set_media_asset(media_id, "thumbnail_path", &output.to_string_lossy());
+            let _ = self.database.set_media_asset(
+                media_id,
+                "thumbnail_path",
+                &output.to_string_lossy(),
+            );
             return Some(output);
         }
         let duration = media.duration.max(0.0);
@@ -1092,9 +1173,11 @@ impl MediaIndexer {
         let result = run_command(command, Duration::from_secs(60), cancel);
         match result {
             Ok(status) if status.success() && output.is_file() && media_path_size(&output) > 0 => {
-                let _ = self
-                    .database
-                    .set_media_asset(media_id, "thumbnail_path", &output.to_string_lossy());
+                let _ = self.database.set_media_asset(
+                    media_id,
+                    "thumbnail_path",
+                    &output.to_string_lossy(),
+                );
                 Some(output)
             }
             _ => {
@@ -1115,9 +1198,9 @@ impl MediaIndexer {
         let key = media_cache_key(Path::new(&media.path), media.size_bytes as u64, media.mtime);
         let output = preview_dir().join(format!("{key}.mp4"));
         if output.is_file() && media_path_size(&output) > 0 {
-            let _ = self
-                .database
-                .set_media_asset(media_id, "preview_path", &output.to_string_lossy());
+            let _ =
+                self.database
+                    .set_media_asset(media_id, "preview_path", &output.to_string_lossy());
             return Some(output);
         }
         let duration = media.duration.max(0.0);
@@ -1152,11 +1235,15 @@ impl MediaIndexer {
             .arg(&partial);
         let result = run_command(command, Duration::from_secs(120), None);
         match result {
-            Ok(status) if status.success() && partial.is_file() && media_path_size(&partial) > 0 => {
+            Ok(status)
+                if status.success() && partial.is_file() && media_path_size(&partial) > 0 =>
+            {
                 let _ = std::fs::rename(&partial, &output);
-                let _ = self
-                    .database
-                    .set_media_asset(media_id, "preview_path", &output.to_string_lossy());
+                let _ = self.database.set_media_asset(
+                    media_id,
+                    "preview_path",
+                    &output.to_string_lossy(),
+                );
                 Some(output)
             }
             _ => {
@@ -1177,9 +1264,9 @@ impl MediaIndexer {
         let key = media_cache_key(Path::new(&media.path), media.size_bytes as u64, media.mtime);
         let output = timeline_dir().join(format!("{key}.jpg"));
         if output.is_file() && media_path_size(&output) > 0 {
-            let _ = self
-                .database
-                .set_media_asset(media_id, "timeline_path", &output.to_string_lossy());
+            let _ =
+                self.database
+                    .set_media_asset(media_id, "timeline_path", &output.to_string_lossy());
             return Some(output);
         }
         let duration = media.duration.max(0.1);
@@ -1261,9 +1348,9 @@ impl MediaIndexer {
         }
         if ok {
             let _ = std::fs::rename(&partial, &output);
-            let _ = self
-                .database
-                .set_media_asset(media_id, "timeline_path", &output.to_string_lossy());
+            let _ =
+                self.database
+                    .set_media_asset(media_id, "timeline_path", &output.to_string_lossy());
             Some(output)
         } else {
             let _ = std::fs::remove_file(&partial);
@@ -1289,8 +1376,7 @@ impl MediaIndexer {
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
-        let changed = stat.len() != media.size_bytes as u64
-            || (mtime - media.mtime).abs() > 0.001;
+        let changed = stat.len() != media.size_bytes as u64 || (mtime - media.mtime).abs() > 0.001;
         if media.duration > 0.0 && media.valid && !changed {
             return Some(media);
         }
@@ -1333,7 +1419,8 @@ pub fn quick_probe_info(path: &Path) -> (i64, i64, i64) {
     if !status.success() {
         return (0, 0, 0);
     }
-    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value =
+        serde_json::from_slice(&stdout).unwrap_or(serde_json::Value::Null);
     let streams = json
         .get("streams")
         .and_then(|s| s.as_array())
@@ -1354,8 +1441,14 @@ pub fn quick_probe_info(path: &Path) -> (i64, i64, i64) {
                 .and_then(|d| d.parse::<f64>().ok())
         })
         .unwrap_or(0.0);
-    let width = video.and_then(|v| v.get("width")).and_then(|w| w.as_i64()).unwrap_or(0);
-    let height = video.and_then(|v| v.get("height")).and_then(|h| h.as_i64()).unwrap_or(0);
+    let width = video
+        .and_then(|v| v.get("width"))
+        .and_then(|w| w.as_i64())
+        .unwrap_or(0);
+    let height = video
+        .and_then(|v| v.get("height"))
+        .and_then(|h| h.as_i64())
+        .unwrap_or(0);
     ((duration * 1000.0) as i64, width, height)
 }
 
@@ -1380,7 +1473,10 @@ impl EncoderMode {
     }
 }
 
-static HARDWARE_ENCODER: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+// Cache both a detected encoder and the absence of one. The old `Option`
+// cache only remembered success, so opening Settings could repeatedly launch
+// several 12-second FFmpeg probes on machines without a hardware encoder.
+static HARDWARE_ENCODER: OnceLock<Option<String>> = OnceLock::new();
 
 fn hardware_encoder_candidates() -> &'static [&'static str] {
     if cfg!(target_os = "macos") {
@@ -1398,10 +1494,12 @@ pub fn detect_hardware_encoder_for_tests() -> Option<String> {
 }
 
 fn detect_hardware_encoder() -> Option<String> {
-    let cache = HARDWARE_ENCODER.get_or_init(|| Mutex::new(None));
-    if let Some(encoder) = cache.lock().clone() {
-        return Some(encoder);
-    }
+    HARDWARE_ENCODER
+        .get_or_init(detect_hardware_encoder_uncached)
+        .clone()
+}
+
+fn detect_hardware_encoder_uncached() -> Option<String> {
     let ffmpeg = ffmpeg_path()?;
     for encoder in hardware_encoder_candidates() {
         let mut command = Command::new(&ffmpeg);
@@ -1428,7 +1526,6 @@ fn detect_hardware_encoder() -> Option<String> {
             Err(_) => continue,
         };
         if status.success() {
-            *cache.lock() = Some(encoder.to_string());
             return Some(encoder.to_string());
         }
     }
@@ -1488,7 +1585,9 @@ impl MediaProcessor {
 
     fn ffmpeg(&self) -> Result<PathBuf, MediaError> {
         ffmpeg_path().ok_or_else(|| {
-            MediaError::Message("FFmpeg is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into())
+            MediaError::Message(
+                "FFmpeg is not available. Install FFmpeg or set CLIPRELAY_FFMPEG_DIR.".into(),
+            )
         })
     }
 
@@ -1511,7 +1610,11 @@ impl MediaProcessor {
         let source_duration = media.duration.max(0.0);
         let start = clamp(trim_start, 0.0, (source_duration - 0.05).max(0.0));
         let end = clamp(
-            if trim_end > 0.0 { trim_end } else { source_duration },
+            if trim_end > 0.0 {
+                trim_end
+            } else {
+                source_duration
+            },
             start + 0.05,
             source_duration,
         );
@@ -1644,20 +1747,50 @@ impl MediaProcessor {
         };
 
         // Post-hardware size gate (Python checks before deciding fallback).
-        if hardware_used && target_mb > 0.0
-            && media_path_size(&partial) as f64 > target_mb * 1024.0 * 1024.0 * 1.015 {
-                let _ = std::fs::remove_file(&partial);
-                progress(0.01, "Hardware export unavailable · retrying with software");
-                self.export_software(media, start, duration, preset, target_mb, &partial, progress)?;
-                return self.finish_export(partial, output, duration, preset, "libx264".to_string(), false, progress);
-            }
-
-        if hardware_used {
-            return self.finish_export(partial, output, duration, preset, used_encoder, true, progress);
+        if hardware_used
+            && target_mb > 0.0
+            && media_path_size(&partial) as f64 > target_mb * 1024.0 * 1024.0 * 1.015
+        {
+            let _ = std::fs::remove_file(&partial);
+            progress(0.01, "Hardware export unavailable · retrying with software");
+            self.export_software(
+                media, start, duration, preset, target_mb, &partial, progress,
+            )?;
+            return self.finish_export(
+                partial,
+                output,
+                duration,
+                preset,
+                "libx264".to_string(),
+                false,
+                progress,
+            );
         }
 
-        self.export_software(media, start, duration, preset, target_mb, &partial, progress)?;
-        self.finish_export(partial, output, duration, preset, used_encoder, false, progress)
+        if hardware_used {
+            return self.finish_export(
+                partial,
+                output,
+                duration,
+                preset,
+                used_encoder,
+                true,
+                progress,
+            );
+        }
+
+        self.export_software(
+            media, start, duration, preset, target_mb, &partial, progress,
+        )?;
+        self.finish_export(
+            partial,
+            output,
+            duration,
+            preset,
+            used_encoder,
+            false,
+            progress,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1683,8 +1816,8 @@ impl MediaProcessor {
                 .arg("-t")
                 .arg(format!("{duration:.3}"));
         };
-        let size_targeted = matches!(preset, "fit_bot" | "fit_x" | "fit_both" | "custom")
-            && target_mb > 0.0;
+        let size_targeted =
+            matches!(preset, "fit_bot" | "fit_x" | "fit_both" | "custom") && target_mb > 0.0;
         if size_targeted {
             // Two-pass with the exact Python bitrate math.
             let audio_kbps: i64 = if target_mb < 100.0 { 96 } else { 128 };
@@ -1702,13 +1835,14 @@ impl MediaProcessor {
             // Rebuild filter with the computed height (crop/overlay unchanged,
             // only the scale target differs).
             let size_filter = self.size_filter_for_height(height);
-            let tmp = std::env::temp_dir().join(format!(
-                "cliprelay-pass-{}",
-                std::process::id()
-            ));
+            let tmp = std::env::temp_dir().join(format!("cliprelay-pass-{}", std::process::id()));
             let _ = std::fs::create_dir_all(&tmp);
             let passlog = tmp.join("passlog");
-            let null_output = if cfg!(target_os = "windows") { "NUL" } else { "/dev/null" };
+            let null_output = if cfg!(target_os = "windows") {
+                "NUL"
+            } else {
+                "/dev/null"
+            };
 
             // Pass 1.
             progress(0.01, "Measuring target size");
@@ -1849,7 +1983,8 @@ impl MediaProcessor {
     fn size_filter_for_height(&self, height: i64) -> String {
         // The full filter chain depends on edits; recompute with the scale
         // height. This is called only after export() stored its edits.
-        (*self.last_edits.lock()).as_ref()
+        (*self.last_edits.lock())
+            .as_ref()
             .map(|edits| build_filter(edits, height))
             .unwrap_or_else(|| build_filter(&EditSpec::default(), height))
     }
@@ -1917,8 +2052,8 @@ fn hardware_profile(
         };
     }
     let source_duration = media.duration.max(0.05).max(duration);
-    let source_kbps = ((media.size_bytes as f64 * 8.0) / source_duration / 1000.0 - 128.0)
-        .max(500.0) as i64;
+    let source_kbps =
+        ((media.size_bytes as f64 * 8.0) / source_duration / 1000.0 - 128.0).max(500.0) as i64;
     match preset {
         "smallest" => HardwareProfile {
             video_kbps: ((source_kbps as f64 * 0.42) as i64).clamp(350, 1600),
@@ -1952,7 +2087,9 @@ mod tests {
         let spec = normalize_edit_spec(&serde_json::json!({"crop": {"enabled": false}}));
         assert!(spec.crop.is_none());
         // Full-frame crop is dropped.
-        let spec = normalize_edit_spec(&serde_json::json!({"crop": {"enabled": true, "x": 0, "y": 0, "width": 1, "height": 1}}));
+        let spec = normalize_edit_spec(
+            &serde_json::json!({"crop": {"enabled": true, "x": 0, "y": 0, "width": 1, "height": 1}}),
+        );
         assert!(spec.crop.is_none());
         // Partial crop kept + clamped.
         let spec = normalize_edit_spec(&serde_json::json!({
@@ -1974,8 +2111,18 @@ mod tests {
     #[test]
     fn filter_chain_shape() {
         let edits = EditSpec {
-            crop: Some(CropSpec { x: 0.0, y: 0.0, width: 0.5, height: 1.0 }),
-            overlays: vec![OverlaySpec { x: 0.1, y: 0.1, width: 0.2, height: 0.2 }],
+            crop: Some(CropSpec {
+                x: 0.0,
+                y: 0.0,
+                width: 0.5,
+                height: 1.0,
+            }),
+            overlays: vec![OverlaySpec {
+                x: 0.1,
+                y: 0.1,
+                width: 0.2,
+                height: 0.2,
+            }],
         };
         let filter = build_filter(&edits, 720);
         assert!(filter.starts_with("crop=w="));
@@ -1989,10 +2136,10 @@ mod tests {
     #[test]
     fn candidate_rules() {
         let indexer = MediaIndexer {
-            database: Arc::new(crate::db::Database::open(
-                tempfile::tempdir().unwrap().path().join("t.sqlite3"),
-            )
-            .unwrap()),
+            database: Arc::new(
+                crate::db::Database::open(tempfile::tempdir().unwrap().path().join("t.sqlite3"))
+                    .unwrap(),
+            ),
             export_dir: PathBuf::from("/tmp/exports"),
         };
         // Hidden files are rejected.

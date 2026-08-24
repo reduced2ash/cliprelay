@@ -1,12 +1,12 @@
 //! Shell chrome: header (command center row), workspace tabs, sidebar nav,
 //! Prepare dock/studio, random-source popup, history menu.
 
+use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
-use crate::settings_import::*;
-use gpui::*;
 use gpui::prelude::*;
+use gpui::*;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -488,11 +488,9 @@ impl crate::App {
             let matched: Vec<CommandAction> = actions
                 .into_iter()
                 .filter(|a| {
-                    let haystack = format!(
-                        "{} {} {} {}",
-                        a.label, a.detail, a.category, a.keywords
-                    )
-                    .to_lowercase();
+                    let haystack =
+                        format!("{} {} {} {}", a.label, a.detail, a.category, a.keywords)
+                            .to_lowercase();
                     haystack.contains(&query)
                 })
                 .collect();
@@ -568,16 +566,13 @@ impl crate::App {
             29 => self.command(Command::RevealSelectedInLibrary),
             30 => self.choose_library_folder(cx),
             31 => {
-                self.page = Page::Library;
-                cx.notify();
+                self.navigate_to(Page::Library, cx);
             }
             32 => {
-                self.page = Page::History;
-                cx.notify();
+                self.navigate_to(Page::History, cx);
             }
             33 => {
-                self.page = Page::Settings;
-                cx.notify();
+                self.navigate_to(Page::Settings, cx);
             }
             34 => self.set_setting(THEME_MODE, serde_json::json!("relay"), cx),
             35 => self.set_setting(THEME_MODE, serde_json::json!("pitch_black"), cx),
@@ -598,30 +593,81 @@ impl crate::App {
         let scope = self.command_scope.clone();
         let mut popup = div()
             .id("command-center-popup")
+            .on_mouse_down_out(cx.listener(|app, _event, _window, cx| {
+                if app.command_open {
+                    app.close_command_center();
+                    cx.notify();
+                }
+            }))
             .absolute()
             .top(px(46.0))
             .left(px(96.0))
             // Match the search field's width (right group ≈ 360px).
-            .w(px((self.window_size.0 - 96.0 - 16.0 - 360.0).clamp(420.0, 860.0)))
-            .rounded(px(10.0))
+            .w(px(
+                (self.window_size.0 - 96.0 - 16.0 - 360.0).clamp(420.0, 860.0)
+            ))
+            .rounded(px(12.0))
             .bg(theme.surface_soft)
             .border_1()
             .border_color(theme.border_strong)
+            .shadow_lg()
             .flex()
             .flex_col()
             .overflow_hidden();
 
-        // Scope chips.
+        popup = popup.child(
+            div()
+                .w_full()
+                .h(px(34.0))
+                .px(px(12.0))
+                .border_b_1()
+                .border_color(theme.border)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(7.0))
+                .child(icon("search", 13.0, theme.accent_text))
+                .child(
+                    div()
+                        .child(if self.command_query.trim().is_empty() {
+                            "Search ClipRelay".to_string()
+                        } else {
+                            format!("Results for “{}”", self.command_needle())
+                        })
+                        .min_w(px(0.0))
+                        .flex_1()
+                        .text_ellipsis()
+                        .text_size(px(11.0))
+                        .text_color(theme.text_soft)
+                        .font_weight(FontWeight::MEDIUM),
+                )
+                .child(
+                    div()
+                        .child("ESC")
+                        .px(px(6.0))
+                        .h(px(20.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.raised)
+                        .flex()
+                        .items_center()
+                        .text_size(px(9.0))
+                        .text_color(theme.muted),
+                ),
+        );
+
+        // Scope tabs.
         let mut chips = div()
             .w_full()
-            .h(px(34.0))
-            .px(px(8.0))
+            .h(px(38.0))
+            .px(px(10.0))
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0));
+            .gap(px(2.0));
         for (value, label) in [
             ("all", "All"),
             ("videos", "Videos"),
@@ -634,28 +680,25 @@ impl crate::App {
             chips = chips.child(
                 div()
                     .id(SharedString::from(format!("scope-{value}")))
-                    .h(px(28.0))
-                    .px(px(12.0))
-                    .rounded(px(10.0))
+                    .h(px(30.0))
+                    .px(px(11.0))
+                    .rounded(px(6.0))
                     .cursor_pointer()
-                    .bg(if active { theme.active } else { theme.transparent() })
+                    .bg(if active {
+                        theme.active
+                    } else {
+                        theme.transparent()
+                    })
+                    .hover(|style| style.bg(theme.hover))
                     .flex()
                     .items_center()
                     .child(label)
                     .text_size(px(12.0))
                     .text_color(if active { theme.text } else { theme.muted })
                     .font_weight(FontWeight::MEDIUM)
-                    .when(active, |this| {
-                        this.border_b_1().border_color(theme.accent)
-                    })
                     .on_click(cx.listener(move |app, _event, _window, cx| {
                         app.command_scope = value.clone();
-                        app.command_searching =
-                            !app.command_query.trim().is_empty() && value != "commands";
-                        app.command(Command::SearchSuggestions {
-                            query: app.command_query.clone(),
-                            scope: app.command_scope.clone(),
-                        });
+                        app.schedule_command_search(cx);
                         cx.notify();
                     })),
             );
@@ -666,16 +709,19 @@ impl crate::App {
         let mut list = div()
             .id("command-results")
             .w_full()
-            .max_h(px(400.0))
+            .max_h(px(420.0))
             .overflow_scroll()
             .scrollbar_width(px(10.0))
             .flex()
             .flex_col()
-            .py(px(6.0));
+            .py(px(7.0));
 
         let selectable_count = entries
             .iter()
-            .filter(|e| matches!(e, CommandEntry::Action(a) if a.enabled) || matches!(e, CommandEntry::Result(_)))
+            .filter(|e| {
+                matches!(e, CommandEntry::Action(a) if a.enabled)
+                    || matches!(e, CommandEntry::Result(_))
+            })
             .count();
         let selected = selected.min(entries.len().saturating_sub(1));
 
@@ -685,12 +731,12 @@ impl crate::App {
                     list = list.child(
                         div()
                             .w_full()
-                            .h(px(24.0))
-                            .px(px(12.0))
+                            .h(px(28.0))
+                            .px(px(14.0))
                             .flex()
                             .items_center()
                             .child(title.to_string().to_uppercase())
-                            .text_size(px(9.0))
+                            .text_size(px(10.0))
                             .text_color(theme.muted)
                             .font_weight(FontWeight::SEMIBOLD),
                     );
@@ -706,28 +752,50 @@ impl crate::App {
                     let mut row = div()
                         .id(SharedString::from(format!("action-{action_id}")))
                         .w_full()
-                        .h(px(46.0))
-                        .px(px(12.0))
+                        .mx(px(6.0))
+                        .h(px(50.0))
+                        .px(px(10.0))
+                        .rounded(px(6.0))
                         .cursor_pointer()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(9.0))
-                        .hover(|style| style.bg(theme.active.opacity(0.5)))
-                        .bg(if is_selected { theme.active } else { theme.transparent() })
+                        .hover(|style| style.bg(theme.hover))
+                        .bg(if is_selected {
+                            theme.active
+                        } else {
+                            theme.transparent()
+                        })
                         .opacity(if enabled { 1.0 } else { 0.45 })
                         .child(
                             div()
                                 .w(px(27.0))
                                 .h(px(27.0))
                                 .rounded(px(4.0))
-                                .bg(if is_selected { theme.accent_soft } else { theme.raised })
+                                .bg(if is_selected {
+                                    theme.accent_soft
+                                } else {
+                                    theme.raised
+                                })
                                 .border_1()
-                                .border_color(if is_selected { theme.accent } else { theme.border })
+                                .border_color(if is_selected {
+                                    theme.accent
+                                } else {
+                                    theme.border
+                                })
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(glyph, 15.0, if is_selected { theme.accent_text } else { theme.muted })),
+                                .child(icon(
+                                    glyph,
+                                    15.0,
+                                    if is_selected {
+                                        theme.accent_text
+                                    } else {
+                                        theme.muted
+                                    },
+                                )),
                         )
                         .child(
                             div()
@@ -739,7 +807,11 @@ impl crate::App {
                                     div()
                                         .child(title.to_string())
                                         .text_size(px(12.0))
-                                        .text_color(if is_selected { theme.text } else { theme.text_soft })
+                                        .text_color(if is_selected {
+                                            theme.text
+                                        } else {
+                                            theme.text_soft
+                                        })
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_ellipsis(),
                                 )
@@ -780,26 +852,49 @@ impl crate::App {
                     let mut row = div()
                         .id(SharedString::from(format!("command-{index}")))
                         .w_full()
-                        .h(px(46.0))
-                        .px(px(12.0))
+                        .mx(px(6.0))
+                        .h(px(50.0))
+                        .px(px(10.0))
+                        .rounded(px(6.0))
                         .cursor_pointer()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
-                        .bg(if is_selected { theme.active } else { theme.transparent() })
+                        .hover(|style| style.bg(theme.hover))
+                        .bg(if is_selected {
+                            theme.active
+                        } else {
+                            theme.transparent()
+                        })
                         .child(
                             div()
                                 .w(px(27.0))
                                 .h(px(27.0))
                                 .rounded(px(4.0))
-                                .bg(if is_selected { theme.accent_soft } else { theme.raised })
+                                .bg(if is_selected {
+                                    theme.accent_soft
+                                } else {
+                                    theme.raised
+                                })
                                 .border_1()
-                                .border_color(if is_selected { theme.accent } else { theme.border })
+                                .border_color(if is_selected {
+                                    theme.accent
+                                } else {
+                                    theme.border
+                                })
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(if kind == "folder" { "▤" } else { "▶" }, 13.0, if is_selected { theme.accent_text } else { theme.muted })),
+                                .child(icon(
+                                    if kind == "folder" { "▤" } else { "▶" },
+                                    13.0,
+                                    if is_selected {
+                                        theme.accent_text
+                                    } else {
+                                        theme.muted
+                                    },
+                                )),
                         )
                         .child(
                             div()
@@ -811,7 +906,11 @@ impl crate::App {
                                     div()
                                         .child(title)
                                         .text_size(px(12.0))
-                                        .text_color(if is_selected { theme.text } else { theme.text_soft })
+                                        .text_color(if is_selected {
+                                            theme.text
+                                        } else {
+                                            theme.text_soft
+                                        })
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_ellipsis(),
                                 )
@@ -961,16 +1060,26 @@ impl crate::App {
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
         let show_explorer = page == Page::Library && has_root && self.show_folders;
         let explorer_width = 204.0;
-        let prepare_width = if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
-            self.prepare_dock_width()
-        } else {
-            0.0
-        };
+        let prepare_width =
+            if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
+                self.prepare_dock_width()
+            } else {
+                0.0
+            };
         let show_prepare = prepare_width > 1.0;
         // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
-        let slot_reserved = activity_width + 1.0
-            + if show_explorer { explorer_width + 1.0 } else { 0.0 }
-            + if show_prepare { prepare_width + 1.0 } else { 0.0 };
+        let slot_reserved = activity_width
+            + 1.0
+            + if show_explorer {
+                explorer_width + 1.0
+            } else {
+                0.0
+            }
+            + if show_prepare {
+                prepare_width + 1.0
+            } else {
+                0.0
+            };
         let slot_width = (width - slot_reserved).max(0.0);
         let compact_actions = slot_width < 680.0;
         let narrow_actions = slot_width < 500.0;
@@ -1111,12 +1220,15 @@ impl crate::App {
                 } else {
                     location
                 };
-                center = center
-                    .child(icon(
-                        "folder",
-                        15.0,
-                        if has_root { theme.accent_text } else { theme.muted },
-                    ));
+                center = center.child(icon(
+                    "folder",
+                    15.0,
+                    if has_root {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
+                ));
                 if !narrow_actions {
                     center = center
                         .child(
@@ -1139,14 +1251,22 @@ impl crate::App {
                         .min_w(px(42.0))
                         .child(location)
                         .text_size(px(12.0))
-                        .text_color(if has_root { theme.text_soft } else { theme.muted })
+                        .text_color(if has_root {
+                            theme.text_soft
+                        } else {
+                            theme.muted
+                        })
                         .text_ellipsis(),
                 );
 
                 if has_root {
                     center = center.child(workbench_button(
                         "toggle-folders",
-                        if self.show_folders { "Hide folders" } else { "Show folders" },
+                        if self.show_folders {
+                            "Hide folders"
+                        } else {
+                            "Show folders"
+                        },
                         "panel",
                         ButtonKind::Ghost,
                         true,
@@ -1172,7 +1292,8 @@ impl crate::App {
                 }
 
                 if !narrow_actions {
-                    center = center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
+                    center =
+                        center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
                 }
 
                 if has_root {
@@ -1198,9 +1319,17 @@ impl crate::App {
                             .h(px(30.0))
                             .px(px(9.0))
                             .rounded(px(4.0))
-                            .bg(if self.sort_menu_open { theme.active } else { theme.raised })
+                            .bg(if self.sort_menu_open {
+                                theme.active
+                            } else {
+                                theme.raised
+                            })
                             .border_1()
-                            .border_color(if self.sort_menu_open { theme.accent } else { theme.border })
+                            .border_color(if self.sort_menu_open {
+                                theme.accent
+                            } else {
+                                theme.border
+                            })
                             .hover(|style| style.bg(theme.hover))
                             .flex()
                             .flex_row()
@@ -1218,11 +1347,21 @@ impl crate::App {
                                     .text_ellipsis(),
                             )
                             .child(icon(
-                                if self.sort_menu_open { "chevron-up" } else { "chevron-down" },
+                                if self.sort_menu_open {
+                                    "chevron-up"
+                                } else {
+                                    "chevron-down"
+                                },
                                 13.0,
-                                if self.sort_menu_open { theme.accent_text } else { theme.muted },
+                                if self.sort_menu_open {
+                                    theme.accent_text
+                                } else {
+                                    theme.muted
+                                },
                             ))
-                            .tooltip(move |_window, cx| crate::tooltip_view(cx, "Sort library".into()))
+                            .tooltip(move |_window, cx| {
+                                crate::tooltip_view(cx, "Sort library".into())
+                            })
                             .on_click(cx.listener(|app, _event, _window, cx| {
                                 if app.sort_menu_open {
                                     app.sort_menu_open = false;
@@ -1236,7 +1375,8 @@ impl crate::App {
                 }
 
                 if !narrow_actions && has_root {
-                    center = center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
+                    center =
+                        center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
                 }
 
                 if has_root {
@@ -1252,7 +1392,11 @@ impl crate::App {
                     center = center.child(workbench_button(
                         "rescan",
                         scanning_label,
-                        if cancelling || scanning { "square" } else { "refresh" },
+                        if cancelling || scanning {
+                            "square"
+                        } else {
+                            "refresh"
+                        },
                         ButtonKind::Ghost,
                         !(scanning && cancelling),
                         compact_actions,
@@ -1399,7 +1543,11 @@ impl crate::App {
                     ButtonKind::Ghost,
                     true,
                     true,
-                    if expanded { "Narrow Prepare" } else { "Widen Prepare" },
+                    if expanded {
+                        "Narrow Prepare"
+                    } else {
+                        "Widen Prepare"
+                    },
                     cx,
                     |app, cx| {
                         app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
@@ -1492,10 +1640,10 @@ impl crate::App {
             ("Fewest videos", "count_asc"),
         ];
         let add_section = |_app: &mut crate::App,
-                               title: &'static str,
-                               options: &[(&'static str, &'static str)],
-                               current: &str,
-                               cx: &mut Context<crate::App>| {
+                           title: &'static str,
+                           options: &[(&'static str, &'static str)],
+                           current: &str,
+                           cx: &mut Context<crate::App>| {
             let mut section = div().w_full().flex().flex_col();
             section = section.child(
                 div()
@@ -1523,7 +1671,11 @@ impl crate::App {
                     .flex_row()
                     .items_center()
                     .gap(px(10.0))
-                    .bg(if selected { theme.active } else { theme.transparent() })
+                    .bg(if selected {
+                        theme.active
+                    } else {
+                        theme.transparent()
+                    })
                     .child(
                         div()
                             .w(px(13.0))
@@ -1535,8 +1687,16 @@ impl crate::App {
                         div()
                             .child(label)
                             .text_size(px(13.0))
-                            .text_color(if selected { theme.text } else { theme.text_soft })
-                            .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }),
+                            .text_color(if selected {
+                                theme.text
+                            } else {
+                                theme.text_soft
+                            })
+                            .font_weight(if selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::MEDIUM
+                            }),
                     );
                 item = item.on_click(cx.listener(move |app, _event, _window, cx| {
                     app.sort_menu_open = false;
@@ -1562,7 +1722,13 @@ impl crate::App {
         menu = menu
             .child(add_section(self, "VIDEOS", &video_options, &sort_mode, cx))
             .child(divider())
-            .child(add_section(self, "EXPLORER FOLDERS", &folder_options, &folder_sort_mode, cx));
+            .child(add_section(
+                self,
+                "EXPLORER FOLDERS",
+                &folder_options,
+                &folder_sort_mode,
+                cx,
+            ));
         popup_fade(menu, "sort-menu-fade")
     }
 
@@ -1626,7 +1792,11 @@ impl crate::App {
                             "IDLE".to_string()
                         })
                         .text_size(px(10.0))
-                        .text_color(if active_count > 0 { theme.accent_text } else { theme.muted_soft })
+                        .text_color(if active_count > 0 {
+                            theme.accent_text
+                        } else {
+                            theme.muted_soft
+                        })
                         .font_weight(FontWeight::SEMIBOLD),
                 ),
         );
@@ -1641,13 +1811,12 @@ impl crate::App {
             .flex_col();
 
         let add_row = |app: &mut crate::App,
-                           title: SharedString,
-                           detail: String,
-                           indeterminate: bool,
-                           progress: f64,
-                           show_stop: bool,
-                           cx: &mut Context<crate::App>| {
-            
+                       title: SharedString,
+                       detail: String,
+                       indeterminate: bool,
+                       progress: f64,
+                       show_stop: bool,
+                       cx: &mut Context<crate::App>| {
             div()
                 .w_full()
                 .h(px(58.0))
@@ -1675,7 +1844,11 @@ impl crate::App {
                         .child(if show_stop {
                             workbench_button(
                                 "activity-stop-scan",
-                                if app.scan.cancelling { "Stopping scan" } else { "Stop scan" },
+                                if app.scan.cancelling {
+                                    "Stopping scan"
+                                } else {
+                                    "Stop scan"
+                                },
                                 "■",
                                 ButtonKind::Ghost,
                                 !app.scan.cancelling,
@@ -1707,7 +1880,11 @@ impl crate::App {
                                 .text_color(theme.muted)
                                 .text_ellipsis(),
                         )
-                        .child(div().w(px(120.0)).child(progress_bar(progress, indeterminate))),
+                        .child(
+                            div()
+                                .w(px(120.0))
+                                .child(progress_bar(progress, indeterminate)),
+                        ),
                 )
         };
 
@@ -1716,7 +1893,11 @@ impl crate::App {
             list = list.child(add_row(
                 self,
                 title,
-                if scan_message.is_empty() { "Updating the index".to_string() } else { scan_message },
+                if scan_message.is_empty() {
+                    "Updating the index".to_string()
+                } else {
+                    scan_message
+                },
                 scan_progress < 0.0,
                 scan_progress.max(0.0),
                 true,
@@ -1825,12 +2006,12 @@ impl crate::App {
             .flex_col();
 
         let add_item = |_app: &mut crate::App,
-                            id: &'static str,
-                            label: &'static str,
-                            glyph: &'static str,
-                            enabled: bool,
-                            command: Option<Command>,
-                            cx: &mut Context<crate::App>| {
+                        id: &'static str,
+                        label: &'static str,
+                        glyph: &'static str,
+                        enabled: bool,
+                        command: Option<Command>,
+                        cx: &mut Context<crate::App>| {
             let mut item = div()
                 .id(id)
                 .h(px(40.0))
@@ -1867,24 +2048,24 @@ impl crate::App {
             let can_close_others = workspace_count > 1;
             let can_close_right = index < workspace_count - 1;
             menu = menu
-                .child(add_item(
-                    self,
-                    "ws-rename",
-                    "Rename workspace",
-                    "✎",
-                    true,
-                    None,
-                    cx,
-                ).on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.workspace_menu_open = false;
-                    app.renaming_workspace = Some(index);
-                    let title = app.workspaces.get(index).map(|w| w.title.clone()).unwrap_or_default();
-                    let state = app.field_state_mut("workspace-rename");
-                    state.text = title;
-                    state.caret = state.text.chars().count();
-                    app.focused_field = Some("workspace-rename".to_string());
-                    cx.notify();
-                })))
+                .child(
+                    add_item(self, "ws-rename", "Rename workspace", "✎", true, None, cx).on_click(
+                        cx.listener(move |app, _event, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.renaming_workspace = Some(index);
+                            let title = app
+                                .workspaces
+                                .get(index)
+                                .map(|w| w.title.clone())
+                                .unwrap_or_default();
+                            let state = app.field_state_mut("workspace-rename");
+                            state.text = title;
+                            state.caret = state.text.chars().count();
+                            app.focused_field = Some("workspace-rename".to_string());
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(add_item(
                     self,
                     "ws-duplicate",
@@ -1907,7 +2088,11 @@ impl crate::App {
                     add_item(
                         self,
                         "ws-stop-scan",
-                        if cancelling { "Stopping scan…" } else { "Stop library scan" },
+                        if cancelling {
+                            "Stopping scan…"
+                        } else {
+                            "Stop library scan"
+                        },
                         "■",
                         !cancelling,
                         Some(Command::CancelScan),
@@ -1946,18 +2131,14 @@ impl crate::App {
                     cx,
                 ))
                 .child(divider())
-                .child(add_item(
-                    self,
-                    "ws-new",
-                    "New workspace…",
-                    "+",
-                    true,
-                    None,
-                    cx,
-                ).on_click(cx.listener(|app, _event, _window, cx| {
-                    app.workspace_menu_open = false;
-                    app.choose_new_workspace_folder(cx);
-                })))
+                .child(
+                    add_item(self, "ws-new", "New workspace…", "+", true, None, cx).on_click(
+                        cx.listener(|app, _event, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.choose_new_workspace_folder(cx);
+                        }),
+                    ),
+                )
                 .child(add_item(
                     self,
                     "ws-reopen",
@@ -1986,13 +2167,17 @@ impl crate::App {
             multiple: false,
             prompt: Some("Open a folder in a new workspace".into()),
         });
-        cx.spawn(move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
-            if let Ok(Ok(Some(mut paths))) = folder.await {
-                if let Some(path) = paths.pop() {
-                    let _ = controller.send(Command::CreateWorkspace(path.to_string_lossy().into_owned()));
+        cx.spawn(
+            move |_this: WeakEntity<crate::App>, _cx: &mut AsyncApp| async move {
+                if let Ok(Ok(Some(mut paths))) = folder.await {
+                    if let Some(path) = paths.pop() {
+                        let _ = controller.send(Command::CreateWorkspace(
+                            path.to_string_lossy().into_owned(),
+                        ));
+                    }
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -2003,8 +2188,12 @@ impl crate::App {
         let width = self.window_size.0;
         let compact = width < 1120.0;
         let very_compact = width < 1000.0;
-        let titlebar_leading = if cfg!(target_os = "macos") { 116.0 } else { 8.0 };
-        let titlebar_trailing = if cfg!(target_os = "macos") { 8.0 } else { 8.0 };
+        let titlebar_leading = if cfg!(target_os = "macos") {
+            116.0
+        } else {
+            8.0
+        };
+        let titlebar_trailing = 8.0;
         let mut header = div()
             .id("header")
             .w_full()
@@ -2022,25 +2211,38 @@ impl crate::App {
             .gap(px(5.0))
             .overflow_hidden();
 
-        header = header.child(
-            div()
-                .id("titlebar-drag")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .on_mouse_down(gpui::MouseButton::Left, cx.listener(|_app, _event, window, _cx| {
-                    if !window.is_fullscreen() {
-                        window.start_window_move();
-                    }
-                }))
-                .on_click(cx.listener(|_app, event: &gpui::ClickEvent, window, _cx| {
-                    if event.click_count() >= 2 && !window.is_fullscreen() {
-                        window.zoom_window();
-                    }
-                })),
-        );
+        // Linux compositors own modifier-drag move/resize gestures. A full-header
+        // `xdg_toplevel.move` listener competes with that contract and, because
+        // GPUI bubbles through overlapping hitboxes, also turns presses on the
+        // search field into window moves. Keep the legacy custom-titlebar path
+        // only on platforms that do not delegate this interaction to Wayland/X11.
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        {
+            header = header.child(
+                div()
+                    .id("titlebar-drag")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_app, _event, window, _cx| {
+                            if !window.is_fullscreen() {
+                                window.start_window_move();
+                            }
+                        }),
+                    )
+                    .on_click(cx.listener(
+                        |_app, event: &gpui::ClickEvent, window, _cx| {
+                            if event.click_count() >= 2 && !window.is_fullscreen() {
+                                window.zoom_window();
+                            }
+                        },
+                    )),
+            );
+        }
 
         header = header.child(
             workbench_button(
@@ -2122,7 +2324,11 @@ impl crate::App {
         header = header.child(div().w(px(if compact { 2.0 } else { 8.0 })).flex_none());
 
         let empty_field = FieldState::default();
-        let search_hint = if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl K" };
+        let search_hint = if cfg!(target_os = "macos") {
+            "⌘K"
+        } else {
+            "Ctrl K"
+        };
         let show_hint = !very_compact;
         header = header.child(
             crate::widgets::field_with_icon_hint(
@@ -2143,7 +2349,7 @@ impl crate::App {
                 cx,
             )
             .flex_1()
-            .min_w(px(if very_compact { 230.0 } else if compact { 280.0 } else { 280.0 }))
+            .min_w(px(if very_compact { 230.0 } else { 280.0 }))
             .max_w(px(860.0))
             .h(px(30.0))
             .px(px(10.0))
@@ -2202,7 +2408,11 @@ impl crate::App {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(if self.activity_open { theme.active } else { theme.transparent() })
+                .bg(if self.activity_open {
+                    theme.active
+                } else {
+                    theme.transparent()
+                })
                 .hover(|style| style.bg(theme.hover))
                 .child(icon("activity", 15.0, theme.muted))
                 .when(activity_active, |this| {
@@ -2267,7 +2477,11 @@ impl crate::App {
                     theme.transparent()
                 })
                 .border_1()
-                .border_color(if self.random_popup_open { theme.accent } else { theme.transparent() })
+                .border_color(if self.random_popup_open {
+                    theme.accent
+                } else {
+                    theme.transparent()
+                })
                 .hover(|style| style.bg(theme.hover))
                 .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
                 .when(!has_root, |this| this.opacity(0.42).cursor_default())
@@ -2282,7 +2496,11 @@ impl crate::App {
                         .text_ellipsis(),
                 )
                 .child(icon(
-                    if self.random_popup_open { "chevron-up" } else { "chevron-down" },
+                    if self.random_popup_open {
+                        "chevron-up"
+                    } else {
+                        "chevron-down"
+                    },
                     12.0,
                     theme.muted,
                 ));
@@ -2393,7 +2611,11 @@ impl crate::App {
                 .flex_row()
                 .items_center()
                 .gap(px(7.0))
-                .bg(if active { theme.raised } else { theme.transparent() })
+                .bg(if active {
+                    theme.raised
+                } else {
+                    theme.transparent()
+                })
                 .border_r_1()
                 .border_color(theme.border)
                 .hover(|style| style.bg(theme.hover))
@@ -2422,7 +2644,11 @@ impl crate::App {
                         "folder"
                     },
                     14.0,
-                    if active || scanning { theme.accent_text } else { theme.muted },
+                    if active || scanning {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
                 ));
             if is_renaming {
                 tab = tab.child(
@@ -2601,7 +2827,11 @@ impl crate::App {
         let theme = self.theme.clone();
         let collapsed = self.sidebar_collapsed || self.window_size.0 < 1080.0;
         let narrow = self.window_size.0 < 1080.0;
-        let width = if collapsed { SIDEBAR_COLLAPSED_WIDTH } else { SIDEBAR_EXPANDED_WIDTH };
+        let width = if collapsed {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_EXPANDED_WIDTH
+        };
         let page = self.page;
         let mut sidebar = div()
             .id("sidebar")
@@ -2636,12 +2866,22 @@ impl crate::App {
                 .justify_center()
                 .gap(px(9.0))
                 .cursor_pointer()
-                .bg(if selected { theme.active } else { theme.transparent() })
+                .tab_index(0)
+                .focus(|style| style.border_2().border_color(theme.accent))
+                .bg(if selected {
+                    theme.active
+                } else {
+                    theme.transparent()
+                })
                 .hover(|style| style.bg(theme.hover))
                 .child(icon(
                     glyph,
                     17.0,
-                    if selected { theme.accent_text } else { theme.muted },
+                    if selected {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
                 ));
             if !collapsed {
                 item = item.child(
@@ -2672,15 +2912,45 @@ impl crate::App {
                 );
             }
             item.on_click(cx.listener(move |app, _event, _window, cx| {
-                app.page = target;
-                cx.notify();
+                app.navigate_to(target, cx);
             }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                app.navigate_to(target, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(
+                move |app, _: &crate::ActivateSpace, _window, cx| {
+                    app.navigate_to(target, cx);
+                    cx.stop_propagation();
+                },
+            ))
         };
 
         sidebar = sidebar
-            .child(nav_item(self, "nav-library", "Library", "library", Page::Library, cx))
-            .child(nav_item(self, "nav-history", "History", "history", Page::History, cx))
-            .child(nav_item(self, "nav-settings", "Settings", "settings", Page::Settings, cx))
+            .child(nav_item(
+                self,
+                "nav-library",
+                "Library",
+                "library",
+                Page::Library,
+                cx,
+            ))
+            .child(nav_item(
+                self,
+                "nav-history",
+                "History",
+                "history",
+                Page::History,
+                cx,
+            ))
+            .child(nav_item(
+                self,
+                "nav-settings",
+                "Settings",
+                "settings",
+                Page::Settings,
+                cx,
+            ))
             .child(div().flex_1())
             .child(
                 div()
@@ -2690,6 +2960,10 @@ impl crate::App {
                     .px(if collapsed { px(0.0) } else { px(12.0) })
                     .rounded(px(6.0))
                     .cursor_pointer()
+                    .when(!narrow, |this| {
+                        this.tab_index(0)
+                            .focus(|style| style.border_2().border_color(theme.accent))
+                    })
                     .flex()
                     .flex_row()
                     .items_center()
@@ -2697,7 +2971,11 @@ impl crate::App {
                     .gap(px(9.0))
                     .hover(|style| style.bg(theme.hover))
                     .child(icon(
-                        if collapsed { "chevron-right" } else { "chevron-left" },
+                        if collapsed {
+                            "chevron-right"
+                        } else {
+                            "chevron-left"
+                        },
                         16.0,
                         theme.muted,
                     ))
@@ -2725,7 +3003,23 @@ impl crate::App {
                         if app.window_size.0 >= 1080.0 {
                             app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
                         }
-                    })),
+                    }))
+                    .when(!narrow, |this| {
+                        this.on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                            app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                            cx.stop_propagation();
+                        }))
+                        .on_action(cx.listener(
+                            |app, _: &crate::ActivateSpace, _window, cx| {
+                                app.set_setting(
+                                    SIDEBAR_COLLAPSED,
+                                    json!(!app.sidebar_collapsed),
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            },
+                        ))
+                    }),
             );
         sidebar
     }
@@ -2766,11 +3060,7 @@ impl crate::App {
                             .font_weight(FontWeight::MEDIUM),
                     )
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .w(px(58.0))
-                            .child(progress_bar(0.0, true)),
-                    ),
+                    .child(div().w(px(58.0)).child(progress_bar(0.0, true))),
             );
         }
 
@@ -2829,12 +3119,7 @@ impl crate::App {
                         .text_color(theme.text)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(
-                    div()
-                        .child("/")
-                        .text_size(px(12.0))
-                        .text_color(theme.muted),
-                )
+                .child(div().child("/").text_size(px(12.0)).text_color(theme.muted))
                 .child(
                     div()
                         .flex_1()
@@ -2929,22 +3214,20 @@ impl crate::App {
                     .cursor_ew_resize()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(
-                            move |app, event: &MouseDownEvent, _window, cx| {
-                                app.prepare.drag = crate::prepare::DragHandle::StudioSplit;
-                                app.prepare.drag_start_x = f64::from(event.position.x);
-                                app.prepare.drag_start_value = app.prepare.studio_width;
-                                cx.notify();
-                            },
-                        ),
+                        cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
+                            app.prepare.drag = crate::prepare::DragHandle::StudioSplit;
+                            app.prepare.drag_start_x = f64::from(event.position.x);
+                            app.prepare.drag_start_value = app.prepare.studio_width;
+                            cx.notify();
+                        }),
                     )
-                    .on_mouse_move(cx.listener(
-                        move |app, event: &MouseMoveEvent, _window, cx| {
+                    .on_mouse_move(
+                        cx.listener(move |app, event: &MouseMoveEvent, _window, cx| {
                             let x: f32 = event.position.x.into();
                             let y: f32 = event.position.y.into();
                             app.prepare_drag_move(x, y, 0.0, 1.0, 1.0, cx);
-                        },
-                    ))
+                        }),
+                    )
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(|app, _event: &MouseUpEvent, _window, cx| {
@@ -3026,7 +3309,6 @@ impl crate::App {
             .bg(theme.surface)
             .border_1()
             .border_color(theme.border_strong)
-            
             .flex()
             .flex_col()
             .overflow_hidden();
@@ -3132,8 +3414,16 @@ impl crate::App {
                         .h(px(15.0))
                         .rounded(px(3.0))
                         .border_1()
-                        .border_color(if all_selected { theme.accent } else { theme.border_strong })
-                        .bg(if all_selected { theme.accent } else { theme.raised })
+                        .border_color(if all_selected {
+                            theme.accent
+                        } else {
+                            theme.border_strong
+                        })
+                        .bg(if all_selected {
+                            theme.accent
+                        } else {
+                            theme.raised
+                        })
                         .flex()
                         .items_center()
                         .justify_center()
@@ -3154,9 +3444,17 @@ impl crate::App {
                 )
                 .child(
                     div()
-                        .child(if all_selected { "SELECTED" } else { "SELECT ALL" })
+                        .child(if all_selected {
+                            "SELECTED"
+                        } else {
+                            "SELECT ALL"
+                        })
                         .text_size(px(10.0))
-                        .text_color(if all_selected { theme.accent_text } else { theme.muted_soft })
+                        .text_color(if all_selected {
+                            theme.accent_text
+                        } else {
+                            theme.muted_soft
+                        })
                         .font_weight(FontWeight::SEMIBOLD),
                 )
                 .on_click(cx.listener(|app, _event, _window, cx| {
@@ -3226,7 +3524,11 @@ impl crate::App {
                                     filter_text.clone()
                                 })
                                 .text_size(px(12.0))
-                                .text_color(if filter_text.is_empty() { theme.muted } else { theme.text }),
+                                .text_color(if filter_text.is_empty() {
+                                    theme.muted
+                                } else {
+                                    theme.text
+                                }),
                         )
                         .cursor_text()
                         .on_click(cx.listener(|app, _event, _window, cx| {
@@ -3241,14 +3543,26 @@ impl crate::App {
                         .px(px(10.0))
                         .rounded(px(10.0))
                         .cursor_pointer()
-                        .bg(if selected_only { theme.active } else { theme.transparent() })
+                        .bg(if selected_only {
+                            theme.active
+                        } else {
+                            theme.transparent()
+                        })
                         .border_1()
-                        .border_color(if selected_only { theme.accent } else { theme.transparent() })
+                        .border_color(if selected_only {
+                            theme.accent
+                        } else {
+                            theme.transparent()
+                        })
                         .flex()
                         .items_center()
                         .child("Selected only")
                         .text_size(px(11.0))
-                        .text_color(if selected_only { theme.text } else { theme.muted_soft })
+                        .text_color(if selected_only {
+                            theme.text
+                        } else {
+                            theme.muted_soft
+                        })
                         .on_click(cx.listener(|app, _event, _window, cx| {
                             app.random_selected_only = !app.random_selected_only;
                             cx.notify();
@@ -3263,11 +3577,17 @@ impl crate::App {
                         .cursor_pointer()
                         .flex()
                         .items_center()
-                        .opacity(if self.random_filter.is_empty() { 0.0 } else { 1.0 })
+                        .opacity(if self.random_filter.is_empty() {
+                            0.0
+                        } else {
+                            1.0
+                        })
                         .child("✕")
                         .text_size(px(11.0))
                         .text_color(theme.muted)
-                        .tooltip(move |_window, cx| crate::tooltip_view(cx, "Clear folder search".into()))
+                        .tooltip(move |_window, cx| {
+                            crate::tooltip_view(cx, "Clear folder search".into())
+                        })
                         .on_click(cx.listener(|app, _event, _window, cx| {
                             app.random_filter.clear();
                             if let Some(field) = app.fields.get_mut("random-filter") {
@@ -3354,7 +3674,11 @@ impl crate::App {
                 .pl(px(indent))
                 .pr(px(8.0))
                 .cursor_pointer()
-                .bg(if cursor_hit { theme.active } else { theme.transparent() })
+                .bg(if cursor_hit {
+                    theme.active
+                } else {
+                    theme.transparent()
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -3371,7 +3695,11 @@ impl crate::App {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(icon(if expanded { "▾" } else { "▸" }, 11.0, theme.muted_soft))
+                        .child(icon(
+                            if expanded { "▾" } else { "▸" },
+                            11.0,
+                            theme.muted_soft,
+                        ))
                         .on_click(cx.listener(move |app, _event, _window, cx| {
                             if !app.random_expanded.remove(&folder_for_toggle) {
                                 app.random_expanded.insert(folder_for_toggle.clone());
@@ -3389,7 +3717,11 @@ impl crate::App {
                         .h(px(15.0))
                         .rounded(px(3.0))
                         .border_1()
-                        .border_color(if state > 0 { theme.accent } else { theme.border_strong })
+                        .border_color(if state > 0 {
+                            theme.accent
+                        } else {
+                            theme.border_strong
+                        })
                         .bg(if state == 2 {
                             theme.accent
                         } else if state == 1 {
@@ -3408,21 +3740,41 @@ impl crate::App {
                             div().into_any()
                         }),
                 )
-                .child(icon("▸", 14.0, if state > 0 { theme.accent_text } else { theme.muted }))
+                .child(icon(
+                    "▸",
+                    14.0,
+                    if state > 0 {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
+                ))
                 .child(
                     div()
                         .flex_1()
                         .child(name)
                         .text_size(px(12.0))
-                        .text_color(if state > 0 { theme.text } else { theme.text_soft })
-                        .font_weight(if state > 0 { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                        .text_color(if state > 0 {
+                            theme.text
+                        } else {
+                            theme.text_soft
+                        })
+                        .font_weight(if state > 0 {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
                         .text_ellipsis(),
                 )
                 .child(
                     div()
                         .child(format!("{count}"))
                         .text_size(px(10.0))
-                        .text_color(if state > 0 { theme.accent_text } else { theme.muted_soft }),
+                        .text_color(if state > 0 {
+                            theme.accent_text
+                        } else {
+                            theme.muted_soft
+                        }),
                 )
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.command(Command::SetRandomFolderEnabled(folder.clone(), state == 0));
@@ -3454,7 +3806,10 @@ impl crate::App {
                             .text_color(theme.muted),
                     )
                     .child(if self.random_loading {
-                        div().w(px(120.0)).child(crate::widgets::progress_bar(0.0, true)).into_any()
+                        div()
+                            .w(px(120.0))
+                            .child(crate::widgets::progress_bar(0.0, true))
+                            .into_any()
                     } else {
                         div().into_any()
                     }),
@@ -3560,18 +3915,17 @@ impl crate::App {
             .bg(theme.surface_soft)
             .border_1()
             .border_color(theme.border_strong)
-            
             .py(px(6.0))
             .flex()
             .flex_col();
 
         let add_item = |_app: &mut crate::App,
-                            id: &'static str,
-                            label: &str,
-                            glyph: &'static str,
-                            enabled: bool,
-                            command: Option<Command>,
-                            cx: &mut Context<crate::App>| {
+                        id: &'static str,
+                        label: &str,
+                        glyph: &'static str,
+                        enabled: bool,
+                        command: Option<Command>,
+                        cx: &mut Context<crate::App>| {
             let mut item = div()
                 .id(id)
                 .h(px(40.0))
@@ -3619,56 +3973,58 @@ impl crate::App {
             }
             if has_telegram_url {
                 let link = post.telegram_message_link.clone();
-                menu = menu.child(add_item(
-                    self,
-                    "menu-open-tg",
-                    "Open Telegram post",
-                    "↗",
-                    true,
-                    None,
-                    cx,
-                ).on_click(cx.listener(move |app, _event, _window, cx| {
-                    let _ = std::process::Command::new("open").arg(&link).spawn();
-                    app.history_more_menu_post = None;
-                    cx.notify();
-                })));
+                menu = menu.child(
+                    add_item(
+                        self,
+                        "menu-open-tg",
+                        "Open Telegram post",
+                        "↗",
+                        true,
+                        None,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        let _ = std::process::Command::new("open").arg(&link).spawn();
+                        app.history_more_menu_post = None;
+                        cx.notify();
+                    })),
+                );
             }
             if has_x_url {
                 let link = post.x_url.clone();
-                menu = menu.child(add_item(
-                    self,
-                    "menu-open-x",
-                    "Open X post",
-                    "↗",
-                    true,
-                    None,
-                    cx,
-                ).on_click(cx.listener(move |app, _event, _window, cx| {
-                    let _ = std::process::Command::new("open").arg(&link).spawn();
-                    app.history_more_menu_post = None;
-                    cx.notify();
-                })));
+                menu = menu.child(
+                    add_item(self, "menu-open-x", "Open X post", "↗", true, None, cx).on_click(
+                        cx.listener(move |app, _event, _window, cx| {
+                            let _ = std::process::Command::new("open").arg(&link).spawn();
+                            app.history_more_menu_post = None;
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             let path = post
                 .export_path
                 .clone()
                 .or_else(|| post.source_path.clone())
                 .unwrap_or_default();
-            menu = menu.child(add_item(
-                self,
-                "menu-reveal",
-                "Show video in folder",
-                "▤",
-                !path.is_empty(),
-                None,
-                cx,
-            ).on_click(cx.listener(move |app, _event, _window, cx| {
-                if !path.is_empty() {
-                    let _ = cliprelay_core::x::XAssistant::reveal(std::path::Path::new(&path));
-                }
-                app.history_more_menu_post = None;
-                cx.notify();
-            })));
+            menu = menu.child(
+                add_item(
+                    self,
+                    "menu-reveal",
+                    "Show video in folder",
+                    "▤",
+                    !path.is_empty(),
+                    None,
+                    cx,
+                )
+                .on_click(cx.listener(move |app, _event, _window, cx| {
+                    if !path.is_empty() {
+                        let _ = cliprelay_core::x::XAssistant::reveal(std::path::Path::new(&path));
+                    }
+                    app.history_more_menu_post = None;
+                    cx.notify();
+                })),
+            );
             if can_trash {
                 menu = menu.child(add_item(
                     self,

@@ -6,10 +6,10 @@
 
 use crate::secrets::SecretStore;
 use anyhow::{anyhow, Result};
+use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 use std::time::Duration;
 
 pub const BOT_SESSION_KEY: &str = "telegram_bot_token";
@@ -71,7 +71,9 @@ impl TelegramBotService {
             .client(Some(Duration::from_secs(30)))
             .get(&url)
             .send()
-            .map_err(|e| telegram_error(format!("Telegram could not validate this bot token. ({e})")))?;
+            .map_err(|e| {
+                telegram_error(format!("Telegram could not validate this bot token. ({e})"))
+            })?;
         let payload: serde_json::Value = response.json().unwrap_or(serde_json::Value::Null);
         if !payload.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
             let description = payload
@@ -81,7 +83,10 @@ impl TelegramBotService {
             return Err(telegram_error(description).into());
         }
         self.secrets.set(BOT_SESSION_KEY, token)?;
-        Ok(payload.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(payload
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// Resolve a destination via `getChat`; returns the chat object.
@@ -99,7 +104,9 @@ impl TelegramBotService {
             .post(&url)
             .form(&[("chat_id", destination)])
             .send()
-            .map_err(|e| telegram_error(format!("Telegram could not find that destination. ({e})")))?;
+            .map_err(|e| {
+                telegram_error(format!("Telegram could not find that destination. ({e})"))
+            })?;
         let payload: serde_json::Value = response.json().unwrap_or(serde_json::Value::Null);
         if !payload.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
             let description = payload
@@ -108,7 +115,10 @@ impl TelegramBotService {
                 .unwrap_or("Telegram could not find that destination.");
             return Err(telegram_error(description).into());
         }
-        Ok(payload.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(payload
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// Send a video through `sendVideo` (multipart, streamed, no timeout).
@@ -164,8 +174,14 @@ impl TelegramBotService {
                 .unwrap_or("Telegram could not send this video.");
             return Err(telegram_error(description).into());
         }
-        let message = payload.get("result").cloned().unwrap_or(serde_json::Value::Null);
-        let chat = message.get("chat").cloned().unwrap_or(serde_json::Value::Null);
+        let message = payload
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let chat = message
+            .get("chat")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let username = chat.get("username").and_then(|v| v.as_str()).unwrap_or("");
         let message_id = message
             .get("message_id")
@@ -288,8 +304,14 @@ impl grammers_client::session::Session for JsonSession {
     fn peer(
         &self,
         peer: grammers_client::session::types::PeerId,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<grammers_client::session::types::PeerInfo>, Self::Error>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Option<grammers_client::session::types::PeerInfo>, Self::Error>,
+                > + Send
+                + '_,
+        >,
+    > {
         Box::pin(async move { Ok(self.0.lock().peer_infos.get(&peer).cloned()) })
     }
 
@@ -300,7 +322,9 @@ impl grammers_client::session::Session for JsonSession {
     {
         let peer = peer.clone();
         Box::pin(async move {
-            self.0.lock().peer_infos
+            self.0
+                .lock()
+                .peer_infos
                 .entry(peer.id())
                 .or_insert_with(|| peer.clone())
                 .extend_info(&peer);
@@ -310,8 +334,14 @@ impl grammers_client::session::Session for JsonSession {
 
     fn updates_state(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<grammers_client::session::types::UpdatesState, Self::Error>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<grammers_client::session::types::UpdatesState, Self::Error>,
+                > + Send
+                + '_,
+        >,
+    > {
         Box::pin(async move { Ok(self.0.lock().updates_state.clone()) })
     }
 
@@ -415,7 +445,11 @@ impl LoopState {
             .unwrap_or_default()
     }
 
-    fn connect(&mut self, session: Arc<JsonSession>, api_id: i32) -> Result<grammers_client::Client> {
+    fn connect(
+        &mut self,
+        session: Arc<JsonSession>,
+        api_id: i32,
+    ) -> Result<grammers_client::Client> {
         let pool = grammers_client::sender::SenderPool::new(session.clone(), api_id);
         let client = grammers_client::Client::new(pool.handle);
         self.session = Some(session);
@@ -447,10 +481,18 @@ impl TelegramPersonalService {
                 .expect("tokio runtime");
             runtime.block_on(personal_loop(rx, exit_tx));
         });
-        Self { tx, handle: Some(handle), exit_rx: Some(exit_rx) }
+        Self {
+            tx,
+            handle: Some(handle),
+            exit_rx: Some(exit_rx),
+        }
     }
 
-    fn request<T>(&self, command: Command, reply_rx: std::sync::mpsc::Receiver<Result<T>>) -> Result<T> {
+    fn request<T>(
+        &self,
+        command: Command,
+        reply_rx: std::sync::mpsc::Receiver<Result<T>>,
+    ) -> Result<T> {
         self.tx
             .send(command)
             .map_err(|_| anyhow!("Telegram service is shutting down."))?;
@@ -593,13 +635,24 @@ async fn personal_loop(
     let mut state = LoopState::new();
     while let Some(command) = tokio_rx.recv().await {
         match command {
-            Command::BeginLogin { api_id, api_hash, phone, reply } => {
+            Command::BeginLogin {
+                api_id,
+                api_hash,
+                phone,
+                reply,
+            } => {
                 let result = async {
                     let session = Arc::new(JsonSession::default());
                     let client = state.connect(session, api_id)?;
-                    let token = client.request_login_code(&phone, &api_hash).await.map_err(|e| {
-                        telegram_error(format!("Telegram could not send the sign-in code. ({e})"))
-                    })?;
+                    let token =
+                        client
+                            .request_login_code(&phone, &api_hash)
+                            .await
+                            .map_err(|e| {
+                                telegram_error(format!(
+                                    "Telegram could not send the sign-in code. ({e})"
+                                ))
+                            })?;
                     state.client = Some(client);
                     state.phone = phone.clone();
                     state.api_id = api_id;
@@ -612,12 +665,14 @@ async fn personal_loop(
                 .await;
                 let _ = reply.send(result);
             }
-            Command::CompleteLogin { code, password, reply } => {
+            Command::CompleteLogin {
+                code,
+                password,
+                reply,
+            } => {
                 let result = async {
                     let Some(client) = state.client.as_ref() else {
-                        return Err(
-                            telegram_error("Request a Telegram sign-in code first.").into(),
-                        );
+                        return Err(telegram_error("Request a Telegram sign-in code first.").into());
                     };
                     if state.awaiting_password {
                         if password.trim().is_empty() {
@@ -631,7 +686,7 @@ async fn personal_loop(
                         // returns a fresh token inside InvalidPassword.
                         let Some(password_token) = state.password_token.take() else {
                             return Err(
-                                telegram_error("Request a Telegram sign-in code first.").into(),
+                                telegram_error("Request a Telegram sign-in code first.").into()
                             );
                         };
                         match client
@@ -663,9 +718,7 @@ async fn personal_loop(
                     // result consumes it: the code was correct and the flow
                     // moves to the password step.
                     let Some(token) = state.token.take() else {
-                        return Err(
-                            telegram_error("Request a Telegram sign-in code first.").into(),
-                        );
+                        return Err(telegram_error("Request a Telegram sign-in code first.").into());
                     };
                     match client.sign_in(&token, &code).await {
                         Ok(user) => Ok((display_name(&user), state.session_json())),
@@ -680,27 +733,54 @@ async fn personal_loop(
                         }
                         Err(e) => {
                             state.token = Some(token);
-                            Err(telegram_error(format!(
-                                "Telegram sign-in did not complete. ({e})"
-                            ))
-                            .into())
+                            Err(
+                                telegram_error(format!("Telegram sign-in did not complete. ({e})"))
+                                    .into(),
+                            )
                         }
                     }
                 }
                 .await;
                 let _ = reply.send(result);
             }
-            Command::Dialogs { api_id, api_hash, session_json, reply } => {
+            Command::Dialogs {
+                api_id,
+                api_hash,
+                session_json,
+                reply,
+            } => {
                 let result = dialogs_impl(&mut state, api_id, &api_hash, &session_json).await;
                 let _ = reply.send(result);
             }
-            Command::SendVideo { api_id, api_hash, session_json, destination, path, caption, progress, reply } => {
-                let result =
-                    send_video_impl(&mut state, api_id, &api_hash, &session_json, &destination, &path, &caption, progress)
-                        .await;
+            Command::SendVideo {
+                api_id,
+                api_hash,
+                session_json,
+                destination,
+                path,
+                caption,
+                progress,
+                reply,
+            } => {
+                let result = send_video_impl(
+                    &mut state,
+                    api_id,
+                    &api_hash,
+                    &session_json,
+                    &destination,
+                    &path,
+                    &caption,
+                    progress,
+                )
+                .await;
                 let _ = reply.send(result);
             }
-            Command::SignOut { api_id, api_hash, session_json, reply } => {
+            Command::SignOut {
+                api_id,
+                api_hash,
+                session_json,
+                reply,
+            } => {
                 let result = sign_out_impl(&mut state, api_id, &api_hash, &session_json).await;
                 let _ = reply.send(result);
             }
@@ -746,7 +826,9 @@ async fn connect_authorized(
     let session = require_session(session_json, api_id, api_hash)?;
     let client = state.connect(session, api_id)?;
     let authorized = client.is_authorized().await.map_err(|e| {
-        telegram_error(format!("The personal Telegram account is not signed in. ({e})"))
+        telegram_error(format!(
+            "The personal Telegram account is not signed in. ({e})"
+        ))
     })?;
     if !authorized {
         return Err(
@@ -825,14 +907,15 @@ async fn send_video_impl(
         let Some(peer) = client
             .resolve_username(destination.trim_start_matches('@'))
             .await
-            .map_err(|e| telegram_error(format!("Telegram could not find that destination. ({e})")))?
+            .map_err(|e| {
+                telegram_error(format!("Telegram could not find that destination. ({e})"))
+            })?
         else {
             return Err(telegram_error("Telegram could not find that destination.").into());
         };
-        let Some(peer_ref) = peer
-            .to_ref()
-            .await
-            .map_err(|e| telegram_error(format!("Telegram could not find that destination. ({e})")))?
+        let Some(peer_ref) = peer.to_ref().await.map_err(|e| {
+            telegram_error(format!("Telegram could not find that destination. ({e})"))
+        })?
         else {
             return Err(telegram_error("Telegram could not find that destination.").into());
         };
@@ -850,7 +933,9 @@ async fn send_video_impl(
     };
 
     progress(0.05, "Uploading to Telegram");
-    let size = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+    let size = std::fs::metadata(path)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
     let file = tokio::fs::File::open(path).await?;
     let name = path
         .file_name()
@@ -1044,9 +1129,15 @@ impl PersonalTelegram {
     ) -> Result<TelegramDelivery> {
         let api_hash = self.api_hash()?;
         let session_json = self.secrets.get(PERSONAL_SESSION_KEY, "");
-        let (delivery, session_json) =
-            self.service
-                .send_video(api_id, &api_hash, &session_json, destination, path, caption, progress)?;
+        let (delivery, session_json) = self.service.send_video(
+            api_id,
+            &api_hash,
+            &session_json,
+            destination,
+            path,
+            caption,
+            progress,
+        )?;
         self.secrets.set(PERSONAL_SESSION_KEY, &session_json)?;
         Ok(delivery)
     }
@@ -1091,11 +1182,13 @@ mod tests {
 
     #[test]
     fn service_survives_user_sign_out() {
-        let _guard = KEYCHAIN_LOCK.lock().unwrap();
+        let _guard = KEYCHAIN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let secrets = SecretStore::new(Some(dir.path().to_path_buf()));
         secrets.force_fallback_for_tests();
-        let mut personal = PersonalTelegram::new(secrets);
+        let personal = PersonalTelegram::new(secrets);
         // A user-initiated sign-out (no session) must not kill the service.
         let _ = personal.service.sign_out(0, "", "");
         // The service must still answer subsequent requests.
@@ -1108,9 +1201,12 @@ mod tests {
 
     #[test]
     fn api_hash_reads_persisted_value() {
-        let _guard = KEYCHAIN_LOCK.lock().unwrap();
+        let _guard = KEYCHAIN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let secrets = SecretStore::new(Some(dir.path().to_path_buf()));
+        secrets.force_fallback_for_tests();
         let hash = "0123456789abcdef0123456789abcdef";
         secrets.set(PERSONAL_API_HASH_KEY, hash).unwrap();
         let mut personal = PersonalTelegram::new(secrets);

@@ -2,8 +2,10 @@
 //! (44px targets, 2px focus rings, flat tonal surfaces).
 
 use crate::theme::*;
-use gpui::*;
 use gpui::prelude::*;
+use gpui::*;
+use std::ops::Range;
+use std::rc::Rc;
 use std::time::Duration;
 
 /// A tiny text-field state kept on the App view.
@@ -12,6 +14,7 @@ pub struct FieldState {
     pub text: String,
     pub caret: usize,
     pub committed: bool,
+    pub marked_range: Option<Range<usize>>,
 }
 
 pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
@@ -23,18 +26,9 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         .items_center()
         .justify_center();
     if let Some(path) = crate::icons::icon_path(glyph) {
-        container.child(
-            svg()
-                .path(path)
-                .w(px(size))
-                .h(px(size))
-                .text_color(color),
-        )
+        container.child(svg().path(path).w(px(size)).h(px(size)).text_color(color))
     } else {
-        container
-            .child(glyph)
-            .text_size(px(size))
-            .text_color(color)
+        container.child(glyph).text_size(px(size)).text_color(color)
     }
 }
 
@@ -49,11 +43,27 @@ pub fn label(text: impl Into<SharedString>, size: f32, color: Hsla, weight: Font
 
 impl FieldState {
     /// Byte offset of the `char_index`-th character (caret is a char index).
-    fn char_to_byte(text: &str, char_index: usize) -> usize {
+    pub(crate) fn char_to_byte(text: &str, char_index: usize) -> usize {
         text.char_indices()
             .nth(char_index)
             .map(|(i, _)| i)
             .unwrap_or(text.len())
+    }
+
+    pub(crate) fn char_to_utf16(text: &str, char_index: usize) -> usize {
+        text.chars().take(char_index).map(char::len_utf16).sum()
+    }
+
+    pub(crate) fn utf16_to_char(text: &str, utf16_index: usize) -> usize {
+        let mut units = 0;
+        for (index, ch) in text.chars().enumerate() {
+            let next = units + ch.len_utf16();
+            if next > utf16_index {
+                return index;
+            }
+            units = next;
+        }
+        text.chars().count()
     }
 
     pub fn insert(&mut self, ch: char) {
@@ -106,6 +116,84 @@ impl FieldState {
     }
 }
 
+/// Transparent element that registers the focused App field with GPUI's
+/// platform input bridge. This enables native IME/composition without adding
+/// another visible layout node or a second field state model.
+struct PlatformInputElement {
+    app: Entity<crate::App>,
+}
+
+impl IntoElement for PlatformInputElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for PlatformInputElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.0).into();
+        style.size.height = relative(1.0).into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        let current_focus = window.focused(cx);
+        self.app.update(cx, |app, _cx| {
+            app.platform_input_bounds = Some(bounds);
+            if app.platform_input_focus.is_none() {
+                app.platform_input_focus = current_focus;
+            }
+        });
+        if let Some(focus_handle) = self.app.read(cx).platform_input_focus.clone() {
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, self.app.clone()),
+                cx,
+            );
+        }
+    }
+}
+
 /// Standard action button (44px target; compact variant 40px).
 pub fn button(
     id: impl Into<SharedString>,
@@ -116,8 +204,23 @@ pub fn button(
     cx: &mut Context<crate::App>,
     on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
+    let on_click = Rc::new(on_click);
+    let click = Rc::clone(&on_click);
+    let activate = Rc::clone(&on_click);
     button_base(id, label, kind, icon, enabled).when(enabled, |this| {
-        this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx)))
+        this.tab_index(0)
+            .focus(|style| style.border_2().border_color(current_theme().accent))
+            .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                activate(app, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(
+                cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                    on_click(app, cx);
+                    cx.stop_propagation();
+                }),
+            )
     })
 }
 
@@ -248,7 +351,9 @@ pub fn workbench_button(
         .id(id)
         .flex_none()
         .h(px(WORKBENCH_CONTROL_HEIGHT))
-        .when(icon_only, |this| this.w(px(WORKBENCH_CONTROL_HEIGHT)).px(px(0.0)))
+        .when(icon_only, |this| {
+            this.w(px(WORKBENCH_CONTROL_HEIGHT)).px(px(0.0))
+        })
         .when(!icon_only, |this| this.px(px(9.0)))
         .rounded(px(4.0))
         .flex()
@@ -291,10 +396,27 @@ pub fn workbench_button(
     if !icon_only {
         element = element.child(div().min_w(px(0.0)).text_ellipsis().child(label.into()));
     }
+    let on_click = Rc::new(on_click);
+    let click = Rc::clone(&on_click);
+    let activate = Rc::clone(&on_click);
     element
         .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
         .when(!enabled, |this| this.opacity(0.42).cursor_default())
-        .when(enabled, |this| this.on_click(cx.listener(move |app, _event, _window, cx| on_click(app, cx))))
+        .when(enabled, |this| {
+            this.tab_index(0)
+                .focus(|style| style.border_2().border_color(current_theme().accent))
+                .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    activate(app, cx);
+                    cx.stop_propagation();
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        on_click(app, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+        })
 }
 
 /// Text input field (44px, raised, 2px accent focus ring). Keyboard input is
@@ -343,7 +465,17 @@ pub fn field_with_icon(
     icon_glyph: Option<&'static str>,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
-    field_with_icon_hint(id, placeholder, state, focused, enabled, password, icon_glyph, None, cx)
+    field_with_icon_hint(
+        id,
+        placeholder,
+        state,
+        focused,
+        enabled,
+        password,
+        icon_glyph,
+        None,
+        cx,
+    )
 }
 
 /// `field_with_icon` plus an optional right-side hint chip (e.g. ⌘K).
@@ -377,6 +509,14 @@ pub fn field_with_icon_hint(
         .text_color(theme.text)
         .cursor_text();
     if focused {
+        element = element.relative().child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(PlatformInputElement { app: cx.entity() }),
+        );
+    }
+    if focused {
         element = element.border_2().border_color(theme.accent);
     }
     if let Some(glyph) = icon_glyph {
@@ -392,7 +532,11 @@ pub fn field_with_icon_hint(
     element = element.child(
         div()
             .child(display)
-            .text_color(if state.text.is_empty() { theme.muted } else { theme.text })
+            .text_color(if state.text.is_empty() {
+                theme.muted
+            } else {
+                theme.text
+            })
             .text_ellipsis(),
     );
     if let Some(hint) = hint {
@@ -413,9 +557,30 @@ pub fn field_with_icon_hint(
     element
         .when(!enabled, |this| this.opacity(0.46).cursor_default())
         .when(enabled, |this| {
-            this.on_click(cx.listener(move |app, _event, _window, cx| {
-                app.focus_field(id, cx);
-            }))
+            this.tab_index(0)
+                .focus(|style| style.border_2().border_color(current_theme().accent))
+                .on_click(cx.listener(move |app, _event, _window, cx| {
+                    app.focus_field(id, cx);
+                }))
+                .on_key_down(cx.listener(move |app, event, window, cx| {
+                    if app.focused_field.as_deref() != Some(id) {
+                        app.focus_field(id, cx);
+                    }
+                    app.on_key_down(event, window, cx);
+                    cx.stop_propagation();
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    app.focus_field(id, cx);
+                    app.handle_field_key(id, "enter", None, false, cx);
+                    cx.stop_propagation();
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        app.focus_field(id, cx);
+                        app.handle_field_key(id, "space", Some(" "), false, cx);
+                        cx.stop_propagation();
+                    }),
+                )
         })
 }
 
@@ -443,6 +608,14 @@ pub fn text_area(
         .text_color(theme.text)
         .cursor_text();
     if focused {
+        element = element.relative().child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(PlatformInputElement { app: cx.entity() }),
+        );
+    }
+    if focused {
         element = element.border_2().border_color(theme.accent);
     }
     let display = if state.text.is_empty() {
@@ -454,13 +627,37 @@ pub fn text_area(
         div()
             .w_full()
             .child(display)
-            .text_color(if state.text.is_empty() { theme.muted } else { theme.text }),
+            .text_color(if state.text.is_empty() {
+                theme.muted
+            } else {
+                theme.text
+            }),
     );
-    element.when(!focused, |this| {
-        this.on_click(cx.listener(move |app, _event, _window, cx| {
+    element
+        .tab_index(0)
+        .focus(|style| style.border_2().border_color(current_theme().accent))
+        .on_click(cx.listener(move |app, _event, _window, cx| {
             app.focus_field(id, cx);
         }))
-    })
+        .on_key_down(cx.listener(move |app, event, window, cx| {
+            if app.focused_field.as_deref() != Some(id) {
+                app.focus_field(id, cx);
+            }
+            app.on_key_down(event, window, cx);
+            cx.stop_propagation();
+        }))
+        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+            app.focus_field(id, cx);
+            app.handle_field_key(id, "enter", None, false, cx);
+            cx.stop_propagation();
+        }))
+        .on_action(
+            cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                app.focus_field(id, cx);
+                app.handle_field_key(id, "space", Some(" "), false, cx);
+                cx.stop_propagation();
+            }),
+        )
 }
 
 /// Checkbox with label (21px indicator, 44px min target).
@@ -492,6 +689,9 @@ pub fn checkbox(
             this.bg(theme.accent)
                 .child(icon("check", 13.0, theme.accent_content))
         });
+    let on_toggle = Rc::new(on_toggle);
+    let click = Rc::clone(&on_toggle);
+    let activate = Rc::clone(&on_toggle);
     div()
         .id(id)
         .h(px(CONTROL_HEIGHT))
@@ -506,19 +706,31 @@ pub fn checkbox(
         .text_size(px(13.0))
         .text_color(theme.text)
         .font_weight(FontWeight::MEDIUM)
+        .when(enabled, |this| {
+            this.tab_index(0)
+                .focus(|style| style.border_2().border_color(current_theme().accent))
+        })
         .on_click(cx.listener(move |app, _event, _window, cx| {
             if enabled {
-                on_toggle(app, cx, !checked)
+                click(app, cx, !checked)
             }
         }))
+        .when(enabled, |this| {
+            this.on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                activate(app, cx, !checked);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(
+                move |app, _: &crate::ActivateSpace, _window, cx| {
+                    on_toggle(app, cx, !checked);
+                    cx.stop_propagation();
+                },
+            ))
+        })
 }
 
 /// Status pill (28px, icon + label).
-pub fn status_pill(
-    id: &'static str,
-    label: &str,
-    state: PillState,
-) -> impl Element {
+pub fn status_pill(id: &'static str, label: &str, state: PillState) -> impl Element {
     let theme = current_theme();
     let (bg, color, glyph) = match state {
         PillState::Neutral => (theme.raised, theme.text_soft, "i"),
@@ -592,7 +804,6 @@ pub fn popup_fade<E: Styled + IntoElement + 'static>(
 pub fn divider() -> Div {
     div().h(px(1.0)).w_full().bg(current_theme().border)
 }
-
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
@@ -678,9 +889,11 @@ mod tests {
 
     #[test]
     fn caret_clamps_to_char_count() {
-        let mut state = FieldState::default();
-        state.text = "abc🙂".into();
-        state.caret = 99;
+        let mut state = FieldState {
+            text: "abc🙂".into(),
+            caret: 99,
+            ..Default::default()
+        };
         state.insert('z');
         assert_eq!(state.text, "abc🙂z");
         assert_renders(&state);
@@ -688,5 +901,17 @@ mod tests {
         state.backspace();
         assert_eq!(state.text, "abc🙂");
         assert_renders(&state);
+    }
+
+    #[test]
+    fn utf16_offsets_preserve_surrogate_pairs() {
+        let text = "a🙂b";
+        assert_eq!(FieldState::char_to_utf16(text, 0), 0);
+        assert_eq!(FieldState::char_to_utf16(text, 1), 1);
+        assert_eq!(FieldState::char_to_utf16(text, 2), 3);
+        assert_eq!(FieldState::char_to_utf16(text, 3), 4);
+        assert_eq!(FieldState::utf16_to_char(text, 1), 1);
+        assert_eq!(FieldState::utf16_to_char(text, 2), 1);
+        assert_eq!(FieldState::utf16_to_char(text, 3), 2);
     }
 }

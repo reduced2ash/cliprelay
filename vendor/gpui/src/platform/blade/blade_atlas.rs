@@ -115,6 +115,12 @@ impl PlatformAtlas for BladeAtlas {
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
+                // Dynamic images (notably video frames) can be inserted and
+                // evicted between scene paint and the next Blade submission.
+                // Do not leave a destroyed texture queued for initialization
+                // or upload: `before_frame` would index an empty atlas slot.
+                lock.initializations.retain(|pending| *pending != id);
+                lock.uploads.retain(|pending| pending.id != id);
                 lock.storage[id.kind]
                     .free_list
                     .push(texture.id.index as usize);

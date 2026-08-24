@@ -34,7 +34,10 @@ impl SecretStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.fallback_path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(
+                &self.fallback_path,
+                std::fs::Permissions::from_mode(0o600),
+            );
         }
     }
 
@@ -49,7 +52,10 @@ impl SecretStore {
                 }
             }
         }
-        self.read_fallback().get(key).cloned().unwrap_or_else(|| default.to_string())
+        self.read_fallback()
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| default.to_string())
     }
 
     /// Which backend is in use: "system keychain" or "restricted local file".
@@ -79,7 +85,9 @@ impl SecretStore {
     }
 
     pub fn delete(&self, key: &str) {
-        let _ = keyring::Entry::new(APP_NAME, key).and_then(|entry| entry.delete_credential());
+        if self.backend.get() == "system keychain" {
+            let _ = keyring::Entry::new(APP_NAME, key).and_then(|entry| entry.delete_credential());
+        }
         let mut values = self.read_fallback();
         values.remove(key);
         self.write_fallback(&values);
