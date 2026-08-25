@@ -11,7 +11,7 @@ rust-version = "1.96"
 [workspace.dependencies]
 cliprelay-core = { path = "crates/core" }
 gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "macos-blade", "wayland", "x11", "windows-manifest"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
