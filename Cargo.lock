@@ -1023,7 +1023,7 @@ dependencies = [
  "cliprelay-core",
  "crossbeam-channel",
  "env_logger",
- "flume",
+ "flume 0.12.0",
  "gpui",
  "gpui-video-player",
  "gstreamer-video",
@@ -1992,6 +1992,9 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+dependencies = [
+ "getrandom 0.4.3",
+]
 
 [[package]]
 name = "fax"
@@ -2072,6 +2075,18 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
+ "spin",
+]
+
+[[package]]
+name = "flume"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
+dependencies = [
+ "fastrand 2.5.0",
+ "futures-core",
+ "futures-sink",
  "spin",
 ]
 
@@ -2575,7 +2590,7 @@ dependencies = [
  "embed-resource",
  "etagere",
  "filedescriptor",
- "flume",
+ "flume 0.11.1",
  "foreign-types 0.5.0",
  "futures",
  "gpui-macros",
