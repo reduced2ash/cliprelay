@@ -55,7 +55,8 @@ artifacts.
 
 ## Pull requests
 
-1. Branch from `main` and keep the change narrowly scoped.
+1. Branch from `rustgpui` and keep the change narrowly scoped while the native
+   rewrite remains separate from the legacy `main` branch.
 2. Add focused tests for changed domain or interaction behavior.
 3. Verify UI changes at compact and default window sizes.
 4. Preserve source-video immutability and generated-file boundaries.

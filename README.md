@@ -1,6 +1,6 @@
 # ClipRelay
 
-[![CI](https://github.com/reduced2ash/cliprelay/actions/workflows/ci.yml/badge.svg)](https://github.com/reduced2ash/cliprelay/actions/workflows/ci.yml)
+[![CI](https://github.com/reduced2ash/cliprelay/actions/workflows/ci.yml/badge.svg?branch=rustgpui)](https://github.com/reduced2ash/cliprelay/actions/workflows/ci.yml?query=branch%3Arustgpui)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ClipRelay is a local-first desktop workspace for selecting videos from large
