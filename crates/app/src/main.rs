@@ -2531,7 +2531,7 @@ impl EntityInputHandler for App {
 
 #[cfg(test)]
 mod time_tests {
-    use super::{parse_time, preview_request_is_current, App};
+    use super::{bundled_gstreamer_plugin_candidates, parse_time, preview_request_is_current, App};
     use gpui_video_player::VideoOptions;
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
@@ -2557,6 +2557,22 @@ mod time_tests {
         assert!(!preview_request_is_current(0, 7, true, 42, 7));
         assert!(!preview_request_is_current(42, 7, false, 42, 7));
         assert!(!preview_request_is_current(42, 7, true, 99, 7));
+    }
+
+    #[test]
+    fn bundle_candidates_include_private_macos_framework() {
+        let candidates = bundled_gstreamer_plugin_candidates(
+            Some(std::path::Path::new(
+                "/Applications/ClipRelay.app/Contents/MacOS",
+            )),
+            std::path::Path::new("/source/crates/app"),
+        );
+        assert_eq!(
+            candidates.first().unwrap(),
+            std::path::Path::new(
+                "/Applications/ClipRelay.app/Contents/Frameworks/GStreamer.framework/Versions/Current/lib/gstreamer-1.0"
+            )
+        );
     }
 
     #[test]
@@ -2884,48 +2900,85 @@ fn configure_linux_backend() {
 #[cfg(not(target_os = "linux"))]
 fn configure_linux_backend() {}
 
+fn bundled_gstreamer_plugin_candidates(
+    exe_dir: Option<&std::path::Path>,
+    manifest_dir: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(exe_dir) = exe_dir {
+        if let Some(contents_dir) = exe_dir.parent() {
+            candidates.push(
+                contents_dir
+                    .join("Frameworks/GStreamer.framework/Versions/Current/lib/gstreamer-1.0"),
+            );
+        }
+        candidates.push(exe_dir.join("gst-plugins"));
+        candidates.push(exe_dir.join("lib/gstreamer-1.0"));
+        candidates.push(exe_dir.join("../lib/gstreamer-1.0"));
+        candidates.push(exe_dir.join("../lib64/gstreamer-1.0"));
+    }
+    candidates.push(manifest_dir.join("../../target/debug/gst-plugins"));
+    candidates.push(manifest_dir.join("../../target/release/gst-plugins"));
+    candidates.push(std::path::PathBuf::from(
+        "/tmp/gst_extract/usr/lib/gstreamer-1.0",
+    ));
+    candidates
+}
+
+fn prepend_env_search_path(key: &str, value: &std::path::Path) {
+    let mut paths = vec![value.to_path_buf()];
+    if let Some(existing) = std::env::var_os(key) {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(paths) {
+        unsafe { std::env::set_var(key, joined) };
+    }
+}
+
 fn init_bundled_gstreamer() {
-    use std::path::PathBuf;
     let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let manifest_plugins =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/gst-plugins");
-    let manifest_plugins_release =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/gst-plugins");
-    let candidates = [
-        exe_dir.clone().map(|d| d.join("gst-plugins")),
-        exe_dir.clone().map(|d| d.join("lib/gstreamer-1.0")),
-        exe_dir.clone().map(|d| d.join("../lib/gstreamer-1.0")),
-        exe_dir.map(|d| d.join("../lib64/gstreamer-1.0")),
-        Some(manifest_plugins),
-        Some(manifest_plugins_release),
-        Some(PathBuf::from("/tmp/gst_extract/usr/lib/gstreamer-1.0")),
-    ];
-    for cand in candidates.into_iter().flatten() {
-        if cand.exists() {
-            let existing = std::env::var("GST_PLUGIN_PATH").unwrap_or_default();
-            let new_path = if existing.is_empty() {
-                cand.to_string_lossy().to_string()
-            } else {
-                format!("{}:{}", cand.display(), existing)
-            };
-            unsafe { std::env::set_var("GST_PLUGIN_PATH", &new_path) };
-            log::info!("Using bundled GStreamer plugins from {}", cand.display());
-            let scanner_candidates = [
-                cand.join("../../libexec/gstreamer-1.0/gst-plugin-scanner"),
-                PathBuf::from("/tmp/gst_extract/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
-                PathBuf::from("/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
-                PathBuf::from("/usr/libexec/gstreamer-1.0/gst-plugin-scanner"),
-            ];
-            for sc in scanner_candidates {
-                if sc.exists() {
-                    unsafe { std::env::set_var("GST_PLUGIN_SCANNER", sc) };
-                    break;
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let candidates = bundled_gstreamer_plugin_candidates(exe_dir.as_deref(), manifest_dir);
+
+    for candidate in candidates {
+        if !candidate.is_dir() {
+            continue;
+        }
+
+        prepend_env_search_path("GST_PLUGIN_PATH", &candidate);
+        prepend_env_search_path("GST_PLUGIN_PATH_1_0", &candidate);
+        let private_framework = candidate
+            .to_string_lossy()
+            .contains("GStreamer.framework/Versions/");
+        if private_framework {
+            unsafe { std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &candidate) };
+            if let Some(lib_dir) = candidate.parent() {
+                let gio_modules = lib_dir.join("gio/modules");
+                if gio_modules.is_dir() {
+                    unsafe { std::env::set_var("GIO_EXTRA_MODULES", gio_modules) };
                 }
             }
-            break;
         }
+
+        let scanner_candidates = [
+            candidate.join("../../libexec/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/tmp/gst_extract/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/libexec/gstreamer-1.0/gst-plugin-scanner"),
+        ];
+        for scanner in scanner_candidates {
+            if scanner.is_file() {
+                unsafe { std::env::set_var("GST_PLUGIN_SCANNER", scanner) };
+                break;
+            }
+        }
+        log::info!(
+            "Using bundled GStreamer plugins from {}",
+            candidate.display()
+        );
+        break;
     }
 }
 

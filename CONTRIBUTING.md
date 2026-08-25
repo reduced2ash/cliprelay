@@ -24,6 +24,21 @@ sudo apt-get install ffmpeg libgstreamer1.0-dev \
   gstreamer1.0-plugins-good gstreamer1.0-libav
 ```
 
+On macOS, install both the runtime and development packages from the official
+GStreamer SDK. Configure the shell before invoking Cargo:
+
+```bash
+export GST_ROOT=/Library/Frameworks/GStreamer.framework/Versions/1.0
+export PATH="$GST_ROOT/bin:$PATH"
+export PKG_CONFIG_PATH="$GST_ROOT/lib/pkgconfig"
+pkg-config --modversion gstreamer-1.0
+pkg-config --modversion gstreamer-app-1.0
+```
+
+Homebrew's consolidated `gstreamer` formula is suitable for local development.
+The native release packager deliberately uses the official relocatable
+`GStreamer.framework` so the installed application has no Homebrew dependency.
+
 Then build and run the GPUI app:
 
 ```bash

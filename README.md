@@ -23,8 +23,10 @@ Get the newest build from [GitHub Releases](https://github.com/reduced2ash/clipr
 | Portable Windows | `ClipRelay-Windows-x64.zip` |
 
 The downloads currently published by the legacy release workflow are for the
-older Python/Qt implementation. Native GPUI packaging is being replaced and
-must bundle or install both FFmpeg and GStreamer before a new public release.
+older Python/Qt implementation. The native macOS packager now creates a
+self-contained GPUI app with FFmpeg and GStreamer; a public native release
+remains gated on signed, notarized clean-machine validation and equivalent
+Windows runtime deployment.
 
 ## What it does
 
@@ -78,6 +80,21 @@ The current application is a native Rust app on top of
   directory containing both binaries)
 - GStreamer runtime and development files, including the base, good, and
   libav plugins used for common video formats
+
+On macOS, local compilation still needs an SDK, but packaged users do not.
+Install both official GStreamer runtime and development packages, then use:
+
+```bash
+export GST_ROOT=/Library/Frameworks/GStreamer.framework/Versions/1.0
+export PATH="$GST_ROOT/bin:$PATH"
+export PKG_CONFIG_PATH="$GST_ROOT/lib/pkgconfig"
+```
+
+`packaging/build-macos.sh` builds the Rust application and embeds the complete
+GStreamer framework, plugin scanner, plugins, FFmpeg, and FFprobe inside
+`ClipRelay.app`. The resulting ZIP and DMG do not require a separate
+GStreamer or FFmpeg installation. Set `CLIPRELAY_FFMPEG_DIR` to a directory
+containing distributable, self-contained `ffmpeg` and `ffprobe` binaries.
 
 ```bash
 cargo build --release

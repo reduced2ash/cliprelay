@@ -68,20 +68,30 @@ The workflow signs `ClipRelay.exe` before building the installer, then signs
 the installer. Without these secrets, the installer is suitable for
 pre-release testing but can trigger SmartScreen.
 
-## FFmpeg redistribution
+## Native media redistribution
 
-Release jobs record `ffmpeg -version` and `ffmpeg -L` for every platform.
-Review those files before promoting a release. Builds with GPL-enabled codecs
-must retain the appropriate GPL notices and corresponding-source obligations.
-See `THIRD_PARTY_NOTICES.md`.
+macOS packages embed the official relocatable `GStreamer.framework`, including
+its plugin scanner and runtime plugins. Release jobs record the exact
+GStreamer version alongside `ffmpeg -version` and `ffmpeg -L`. Review that
+manifest before promotion. FFmpeg builds with GPL-enabled codecs must retain
+the appropriate GPL notices and corresponding-source obligations. GStreamer
+and every loaded plugin retain their own license terms. See
+`THIRD_PARTY_NOTICES.md`.
 
 ## Local packaging
 
-macOS:
+macOS requires the official GStreamer runtime and development SDK plus
+distributable FFmpeg/FFprobe binaries:
 
 ```bash
-CLIPRELAY_REQUIRE_FFMPEG=1 packaging/build-macos.sh
+CLIPRELAY_FFMPEG_DIR=/path/to/distributable-media-bin packaging/build-macos.sh
 ```
+
+The script builds the Rust GPUI binary, embeds the private GStreamer framework
+and media tools, rejects unresolved non-system Mach-O dependencies, signs
+nested code before the app, and creates architecture-specific ZIP and DMG
+artifacts. `CLIPRELAY_GSTREAMER_FRAMEWORK` overrides the default
+`/Library/Frameworks/GStreamer.framework` source.
 
 Windows PowerShell:
 
@@ -96,9 +106,12 @@ $env:CLIPRELAY_REQUIRE_FFMPEG = "1"
 Before publishing:
 
 1. Run the complete test suite.
-2. Confirm both media binaries are inside every application bundle.
-3. Verify macOS code signatures and notarization tickets.
-4. Verify Windows Authenticode signatures.
-5. Install on clean target machines without Python or FFmpeg.
-6. Test nested library discovery, editing, Telegram delivery, and X handoff.
-7. Compare all release files with `SHA256SUMS.txt`.
+2. Confirm `GStreamer.framework`, `gst-plugin-scanner`, FFmpeg, and FFprobe are
+   inside every macOS application bundle.
+3. Confirm `otool -L` reports only bundle-relative or macOS system libraries.
+4. Verify macOS code signatures and notarization tickets.
+5. Verify Windows Authenticode signatures.
+6. Install on clean target machines without Python, FFmpeg, Homebrew, or a
+   system GStreamer installation.
+7. Test nested library discovery, editing, Telegram delivery, and X handoff.
+8. Compare all release files with `SHA256SUMS.txt`.

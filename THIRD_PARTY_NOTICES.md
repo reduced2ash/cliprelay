@@ -6,7 +6,7 @@ document is informational and does not replace those license terms.
 Copies of the GNU GPL version 3 and GNU LGPL version 3 are included in the
 repository's `LICENSES` directory and in every packaged application.
 
-## Qt for Python
+## Qt for Python (legacy package only)
 
 ClipRelay uses PySide6, Shiboken6, and dynamically loaded Qt libraries from
 the Qt for Python community distribution.
@@ -41,7 +41,23 @@ Redistributors are responsible for providing the complete corresponding
 source for the exact FFmpeg build and its enabled external libraries. Stable
 ClipRelay releases should not be mirrored without reviewing those obligations.
 
-## Python runtime and direct Python dependencies
+## GStreamer
+
+Native ClipRelay packages use GStreamer for in-process video playback. macOS
+packages embed a private copy of the official `GStreamer.framework`, its
+plugin scanner, and runtime plugins; users do not need a system installation.
+
+- Project and source: [GStreamer](https://gstreamer.freedesktop.org/)
+- Core license: GNU LGPL version 2.1 or later
+- Plugin licenses: recorded by the upstream framework and dependent on the
+  exact plugin set
+- Packaged version: recorded in `Media-build-info-macOS-*` beside each release
+
+The framework remains dynamically linked and replaceable inside the
+application bundle. Redistributors must review the exact plugin inventory:
+some codec plugins have terms beyond GStreamer's core LGPL license.
+
+## Python runtime and direct Python dependencies (legacy package only)
 
 Packaged builds include the Python runtime and the runtime dependencies locked
 in `uv.lock`. Principal projects and license families include:
