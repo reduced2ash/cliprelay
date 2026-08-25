@@ -3,13 +3,15 @@
 
 use cliprelay_core::db::Database;
 use cliprelay_core::media::{
-    normalize_edit_spec, EditSpec, MediaIndexer, MediaProcessor, ScanResult,
+    ensure_playback_proxy, normalize_edit_spec, EditSpec, MediaIndexer, MediaProcessor, ScanResult,
 };
 use cliprelay_core::paths::ffmpeg_path;
 use cliprelay_core::utils::media_cache_key;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 type ProgressCallback = Arc<dyn Fn(f64, &str) + Send + Sync>;
 
@@ -101,6 +103,92 @@ impl Fixture {
 }
 
 #[test]
+fn large_manifest_streams_the_first_batch_before_discovery_finishes() {
+    let fixture = Fixture::new();
+    let total = 5_000usize;
+    for folder in 0..20 {
+        let dir = fixture.root.join(format!("folder-{folder:02}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in 0..(total / 20) {
+            std::fs::write(dir.join(format!("clip-{file:04}.mp4")), b"manifest-only").unwrap();
+        }
+    }
+
+    let started = Instant::now();
+    let mut first_batch = None;
+    let mut callbacks = 0usize;
+    let mut batch_ready = |_added: usize| {
+        callbacks += 1;
+        if first_batch.is_none() {
+            first_batch = Some((fixture.db.media_count("", "").unwrap(), started.elapsed()));
+        }
+    };
+    let progress: &mut dyn FnMut(usize, &str) = &mut |_discovered, _name| {};
+    let result = fixture
+        .indexer
+        .refresh_manifest(
+            &fixture.root,
+            128,
+            true,
+            None,
+            progress,
+            Some(&mut batch_ready),
+        )
+        .unwrap();
+    let total_elapsed = started.elapsed();
+    let (first_count, first_elapsed) = first_batch.expect("first manifest callback");
+    eprintln!(
+        "manifest timing: first item in {:?}, all {total} in {:?}",
+        first_elapsed, total_elapsed
+    );
+
+    assert_eq!(
+        first_count, 1,
+        "the first commit must not wait for the walk"
+    );
+    assert_eq!(result.discovered, total);
+    assert_eq!(fixture.db.media_count("", "").unwrap(), total);
+    assert!(callbacks > 2, "expected bounded incremental batches");
+    assert!(first_elapsed < total_elapsed);
+    assert!(
+        first_elapsed.as_secs_f64() < 2.0,
+        "first batch took {first_elapsed:?}"
+    );
+}
+
+#[test]
+fn cancelling_manifest_keeps_committed_items_and_stops_stale_work() {
+    let fixture = Fixture::new();
+    for file in 0..500 {
+        std::fs::write(
+            fixture.root.join(format!("clip-{file:04}.mp4")),
+            b"candidate",
+        )
+        .unwrap();
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_from_callback = Arc::clone(&cancel);
+    let mut batch_ready = move |_added: usize| {
+        cancel_from_callback.store(true, Ordering::Relaxed);
+    };
+    let progress: &mut dyn FnMut(usize, &str) = &mut |_discovered, _name| {};
+    let result = fixture.indexer.refresh_manifest(
+        &fixture.root,
+        128,
+        true,
+        Some(&cancel),
+        progress,
+        Some(&mut batch_ready),
+    );
+
+    assert!(matches!(
+        result,
+        Err(cliprelay_core::media::MediaError::ScanCancelled)
+    ));
+    assert_eq!(fixture.db.media_count("", "").unwrap(), 1);
+}
+
+#[test]
 fn manifest_probe_thumbnail_preview_timeline_flow() {
     let fixture = Fixture::new();
     let video = fixture.video("clip.mp4", 3);
@@ -182,14 +270,106 @@ fn preview_and_export_round_odd_dimensions_to_even() {
         .expect("probe");
     let media_id = fixture.db.upsert_media(&metadata).unwrap();
 
-    // The preview must produce a valid, even-dimensioned mp4.
+    // The preview must produce a tightly packable NV12 width and even height.
     let preview = fixture.indexer.ensure_preview(media_id).expect("preview");
     assert!(preview.is_file());
     let dims = probe_dimensions(&preview);
     assert!(
-        dims.0 % 2 == 0 && dims.1 % 2 == 0,
-        "preview dims {dims:?} not even"
+        dims.0 % 4 == 0 && dims.1 % 2 == 0,
+        "preview dims {dims:?} are not tightly packable"
     );
+
+    std::fs::write(&preview, b"truncated preview cache").unwrap();
+    let repaired = fixture
+        .indexer
+        .ensure_preview(media_id)
+        .expect("corrupted preview should be regenerated");
+    assert_eq!(repaired, preview);
+    assert!(std::fs::metadata(&repaired).unwrap().len() > 100);
+    assert!(probe_dimensions(&repaired).0 > 0);
+}
+
+#[test]
+fn preview_resets_non_square_source_pixels() {
+    let fixture = Fixture::new();
+    let Some(ffmpeg) = ffmpeg_path() else {
+        panic!("ffmpeg required for media integration tests");
+    };
+    let video = fixture.root.join("non-square-sar.mp4");
+    let status = Command::new(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=562x1024:rate=24",
+            "-vf",
+            "setsar=1408/1405",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&video)
+        .status()
+        .expect("create non-square-pixel video");
+    assert!(status.success());
+
+    fixture.refresh();
+    let metadata = fixture
+        .indexer
+        .probe(&video, &fixture.root, None)
+        .expect("probe");
+    let media_id = fixture.db.upsert_media(&metadata).unwrap();
+    let preview = fixture.indexer.ensure_preview(media_id).expect("preview");
+    assert_eq!(probe_sample_aspect_ratio(&preview), "1:1");
+}
+
+#[test]
+fn playback_proxy_is_full_length_tightly_packable_and_cached() {
+    let fixture = Fixture::new();
+    let video = make_test_video_at(&fixture.root, "prepare-source.mp4", 2, "586x232");
+
+    let proxy = ensure_playback_proxy(&video, None).expect("playback proxy");
+    assert!(proxy.is_file());
+    assert_ne!(proxy, video);
+    let dims = probe_dimensions(&proxy);
+    assert_eq!(dims.0 % 4, 0, "proxy width must not require NV12 padding");
+    assert_eq!(dims.1 % 2, 0, "proxy height must be even");
+
+    let cached = ensure_playback_proxy(&video, None).expect("cached playback proxy");
+    assert_eq!(cached, proxy);
+}
+
+#[test]
+fn playback_proxy_encode_cancels_for_a_new_source() {
+    let fixture = Fixture::new();
+    let video = make_test_video_at(&fixture.root, "cancelled-prepare.mp4", 6, "1280x720");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_from_switch = Arc::clone(&cancel);
+    let switch = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cancel_from_switch.store(true, Ordering::Release);
+    });
+
+    let started = Instant::now();
+    let error = ensure_playback_proxy(&video, Some(&cancel))
+        .expect_err("stale Prepare proxy should be cancelled");
+    switch.join().unwrap();
+    assert!(error.to_string().to_lowercase().contains("cancel"));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "stale proxy encode did not stop promptly"
+    );
+
+    cancel.store(false, Ordering::Release);
+    let replacement =
+        ensure_playback_proxy(&video, Some(&cancel)).expect("replacement proxy should proceed");
+    assert!(replacement.is_file());
 }
 
 fn probe_dimensions(path: &std::path::Path) -> (i64, i64) {
@@ -215,6 +395,27 @@ fn probe_dimensions(path: &std::path::Path) -> (i64, i64) {
     let w: i64 = it.next().unwrap_or("0").trim().parse().unwrap_or(0);
     let h: i64 = it.next().unwrap_or("0").trim().parse().unwrap_or(0);
     (w, h)
+}
+
+fn probe_sample_aspect_ratio(path: &Path) -> String {
+    let Some(ffprobe) = cliprelay_core::paths::ffprobe_path() else {
+        panic!("ffprobe required");
+    };
+    let output = Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=sample_aspect_ratio",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .expect("run ffprobe");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
 #[test]
@@ -435,6 +636,42 @@ fn full_scan_with_verify_and_thumbnails() {
     // Folder derived from relative path.
     let s2 = rows.iter().find(|r| r.name == "s2.mp4").unwrap();
     assert_eq!(s2.folder, "sub");
+}
+
+#[test]
+fn verified_scan_does_not_generate_thumbnails_when_disabled() {
+    let fixture = Fixture::new();
+    fixture.video("lazy.mp4", 2);
+    fixture.refresh();
+    let mut ready = 0usize;
+    let mut item_ready = |_media_id: i64| ready += 1;
+    let progress: &mut dyn FnMut(usize, usize, &str) = &mut |_done, _total, _name| {};
+    let result = fixture
+        .indexer
+        .scan(
+            &fixture.root,
+            false,
+            true,
+            false,
+            2,
+            None,
+            progress,
+            Some(&mut item_ready),
+        )
+        .unwrap();
+    assert_eq!(result.discovered, 1);
+    assert_eq!(result.failed, 0);
+    assert_eq!(
+        ready, 1,
+        "metadata should publish once without eager asset work"
+    );
+    let row = fixture
+        .db
+        .list_media("", "", "name", 1, 0)
+        .unwrap()
+        .remove(0);
+    assert!(row.duration > 0.0);
+    assert!(row.thumbnail_path.is_none());
 }
 
 #[test]

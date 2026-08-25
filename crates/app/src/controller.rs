@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const PAGE_SIZE_LIBRARY: i64 = 240;
 pub const PAGE_SIZE_HISTORY: i64 = 200;
@@ -98,6 +98,14 @@ struct ScanJob {
     generation: u64,
 }
 
+fn scan_job_matches(scan: Option<&ScanJob>, workspace_id: &str, generation: u64) -> bool {
+    scan.is_some_and(|job| job.workspace_id == workspace_id && job.generation == generation)
+}
+
+fn scan_generation_matches(current: &AtomicU64, generation: u64) -> bool {
+    current.load(Ordering::Relaxed) == generation
+}
+
 #[allow(dead_code)]
 pub struct Controller {
     db: Arc<Database>,
@@ -133,6 +141,7 @@ pub struct Controller {
     draft_save_pending: bool,
     nav_restoring: bool,
     random_picking: bool,
+    random_retry_media_id: Option<i64>,
     preview_pending: Arc<Mutex<HashSet<i64>>>,
     preview_slots: Arc<std::sync::atomic::AtomicUsize>,
     library_generation: u64,
@@ -221,6 +230,7 @@ pub fn spawn_controller(
                 draft_save_pending: false,
                 nav_restoring: false,
                 random_picking: false,
+                random_retry_media_id: None,
                 preview_pending: Arc::new(Mutex::new(HashSet::new())),
                 preview_slots: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 library_generation: 0,
@@ -244,7 +254,22 @@ pub fn spawn_controller(
             std::thread::Builder::new()
                 .name("cliprelay-thumbs".into())
                 .spawn(move || {
-                    while let Ok(media_id) = thumb_rx.recv() {
+                    let mut pending = Vec::new();
+                    loop {
+                        if pending.is_empty() {
+                            let Ok(media_id) = thumb_rx.recv() else {
+                                break;
+                            };
+                            pending.push(media_id);
+                        }
+                        // Visible tiles enqueue as the viewport changes. Drain
+                        // new arrivals and take the newest first so work from
+                        // a viewport the user already left cannot starve the
+                        // current one. Older requests remain in the backlog.
+                        pending.extend(thumb_rx.try_iter());
+                        let Some(media_id) = pending.pop() else {
+                            continue;
+                        };
                         let result = thumb_indexer.ensure_thumbnail(media_id, None);
                         let _ = thumb_events.send(Event::ThumbnailReady(media_id, result));
                     }
@@ -911,23 +936,34 @@ impl Controller {
     }
 
     fn refresh_library(&mut self) {
+        self.refresh_library_page(PAGE_SIZE_LIBRARY as usize);
+    }
+
+    fn refresh_library_preserving_loaded(&mut self) {
+        self.refresh_library_page(self.library_offset.max(PAGE_SIZE_LIBRARY as usize));
+    }
+
+    fn refresh_library_page(&mut self, page_size: usize) {
         let (search, folder, sort_mode) = self.active_library_filter();
         let generation = self.library_generation;
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
             let rows = db
-                .list_media(&search, &folder, &sort_mode, PAGE_SIZE_LIBRARY + 1, 0)
+                .list_media(&search, &folder, &sort_mode, page_size as i64 + 1, 0)
                 .unwrap_or_default();
-            let has_more = rows.len() as i64 > PAGE_SIZE_LIBRARY;
-            let rows = rows.into_iter().take(PAGE_SIZE_LIBRARY as usize).collect();
+            let has_more = rows.len() > page_size;
+            let rows: Vec<_> = rows.into_iter().take(page_size).collect();
+            let loaded = rows.len();
             let _ = events.send(Event::LibraryPage(LibraryPage {
                 rows,
                 has_more,
                 offset: 0,
                 generation,
             }));
-            let _ = events.send(Event::LoadMoreFinished(true, generation, has_more, 0));
+            let _ = events.send(Event::LoadMoreFinished(
+                true, generation, has_more, 0, loaded,
+            ));
         });
     }
 
@@ -955,14 +991,17 @@ impl Controller {
                 )
                 .unwrap_or_default();
             let has_more = rows.len() as i64 > PAGE_SIZE_LIBRARY;
-            let rows = rows.into_iter().take(PAGE_SIZE_LIBRARY as usize).collect();
+            let rows: Vec<_> = rows.into_iter().take(PAGE_SIZE_LIBRARY as usize).collect();
+            let loaded = rows.len();
             let _ = events.send(Event::LibraryPage(LibraryPage {
                 rows,
                 has_more,
                 offset,
                 generation,
             }));
-            let _ = events.send(Event::LoadMoreFinished(true, generation, has_more, offset));
+            let _ = events.send(Event::LoadMoreFinished(
+                true, generation, has_more, offset, loaded,
+            ));
         });
     }
 
@@ -1074,14 +1113,17 @@ impl Controller {
                 .list_history(&search, PAGE_SIZE_HISTORY + 1, 0)
                 .unwrap_or_default();
             let has_more = rows.len() as i64 > PAGE_SIZE_HISTORY;
-            let rows = rows.into_iter().take(PAGE_SIZE_HISTORY as usize).collect();
+            let rows: Vec<_> = rows.into_iter().take(PAGE_SIZE_HISTORY as usize).collect();
+            let loaded = rows.len();
             let _ = events.send(Event::HistoryPage(HistoryPage {
                 rows,
                 has_more,
                 offset: 0,
                 generation,
             }));
-            let _ = events.send(Event::LoadMoreFinished(false, generation, has_more, 0));
+            let _ = events.send(Event::LoadMoreFinished(
+                false, generation, has_more, 0, loaded,
+            ));
         });
     }
 
@@ -1103,14 +1145,17 @@ impl Controller {
                 .list_history(&search, PAGE_SIZE_HISTORY + 1, offset as i64)
                 .unwrap_or_default();
             let has_more = rows.len() as i64 > PAGE_SIZE_HISTORY;
-            let rows = rows.into_iter().take(PAGE_SIZE_HISTORY as usize).collect();
+            let rows: Vec<_> = rows.into_iter().take(PAGE_SIZE_HISTORY as usize).collect();
+            let loaded = rows.len();
             let _ = events.send(Event::HistoryPage(HistoryPage {
                 rows,
                 has_more,
                 offset,
                 generation,
             }));
-            let _ = events.send(Event::LoadMoreFinished(false, generation, has_more, offset));
+            let _ = events.send(Event::LoadMoreFinished(
+                false, generation, has_more, offset, loaded,
+            ));
         });
     }
 
@@ -1180,9 +1225,6 @@ impl Controller {
                     // Route through the controller so a newer selection
                     // wins over a stale in-flight check.
                     let _ = events.send(Event::SelectionVerified(media_id, row));
-                    if let Some(thumb) = indexer.ensure_thumbnail(media_id, None) {
-                        let _ = events.send(Event::ThumbnailReady(media_id, Some(thumb)));
-                    }
                 }
                 None => {
                     // The controller clears the selection only if it still
@@ -1289,6 +1331,7 @@ impl Controller {
         let indexer = Arc::clone(&self.indexer);
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
+        let current_scan_generation = Arc::clone(&self.next_scan_generation);
         let settings_values = self.settings.as_map().unwrap_or_default();
         std::thread::spawn(move || {
             let verify_during_index = settings_values
@@ -1308,14 +1351,15 @@ impl Controller {
                 &indexer,
                 &db,
                 &events,
+                &current_scan_generation,
                 verify_during_index,
                 thumbnails_during_index,
                 deep_scan,
             );
             if let Some(result) = scan {
-                let _ = events.send(Event::LibraryRefreshed);
-                let _ = events.send(Event::FoldersUpdated(Vec::new()));
-                if result.failed > 0 {
+                if result.failed > 0
+                    && scan_generation_matches(&current_scan_generation, job.generation)
+                {
                     let _ = events.send(Event::Toast(
                         ToastKind::Warning,
                         format!(
@@ -1324,7 +1368,6 @@ impl Controller {
                         ),
                     ));
                 }
-                let _ = events.send(Event::CountsChanged(result.discovered as i64, 0, 0));
             }
         });
     }
@@ -1364,59 +1407,40 @@ impl Controller {
             return;
         }
         let avoid_repeats = self.settings.get_bool(AVOID_REPEATS).unwrap_or(true);
-        let fast_random = self.settings.get_bool(FAST_RANDOM).unwrap_or(true);
         let folders = workspace.random_folders.clone();
+        let wait_for_manifest = self.scan.is_some();
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
-        let indexer = Arc::clone(&self.indexer);
         let _ = events.send(Event::PickingChanged(true));
         std::thread::spawn(move || {
-            let mut attempts = 0;
-            loop {
-                attempts += 1;
-                if attempts > 60 {
-                    break;
-                }
-                match db.random_media(avoid_repeats, !fast_random, &folders) {
+            let mut attempts = 0usize;
+            let result = loop {
+                match db.random_media(avoid_repeats, false, &folders) {
                     Ok(Some(row)) => {
-                        events.send(Event::RecordNavigationOrigin).ok();
-                        let _ = events.send(Event::SelectedMediaChanged(Some(row.clone())));
-                        if row.duration <= 0.0 {
-                            // Verify the chosen clip (mirrors fast-random flow).
-                            if let Some(checked) = indexer.ensure_metadata(row.id) {
-                                let _ = events.send(Event::SelectedMediaChanged(Some(checked)));
-                            } else {
-                                let _ = events.send(Event::Toast(
-                                    ToastKind::Warning,
-                                    "That file is not a readable video.".to_string(),
-                                ));
-                                continue;
-                            }
-                        } else if let Some(thumb) = indexer.ensure_thumbnail(row.id, None) {
-                            let _ = events.send(Event::ThumbnailReady(row.id, Some(thumb)));
-                        }
-                        let _ = events.send(Event::SelectionNavigationChanged(true, true));
-                        break;
+                        break Ok(Some(row.id));
                     }
-                    Ok(None) => {
-                        let message = if fast_random {
-                            if folders.is_empty() {
-                                "No video filenames were found in this library."
-                            } else {
-                                "No video filenames were found in the selected folders."
-                            }
-                        } else if folders.is_empty() {
-                            "No fully checked videos are available yet."
-                        } else {
-                            "No fully checked videos are available in the selected folders."
-                        };
-                        let _ = events.send(Event::Toast(ToastKind::Warning, message.to_string()));
-                        break;
+                    Ok(None) if wait_for_manifest && attempts < 60 => {
+                        attempts += 1;
+                        std::thread::sleep(Duration::from_millis(50));
                     }
-                    Err(e) => {
-                        let _ = events.send(Event::Toast(ToastKind::Error, e.to_string()));
-                        break;
-                    }
+                    Ok(None) => break Ok(None),
+                    Err(error) => break Err(error),
+                }
+            };
+            match result {
+                Ok(Some(media_id)) => {
+                    let _ = events.send(Event::RandomPicked(media_id));
+                }
+                Ok(None) => {
+                    let message = if folders.is_empty() {
+                        "No video filenames were found in this library."
+                    } else {
+                        "No video filenames were found in the selected folders."
+                    };
+                    let _ = events.send(Event::Toast(ToastKind::Warning, message.to_string()));
+                }
+                Err(error) => {
+                    let _ = events.send(Event::Toast(ToastKind::Error, error.to_string()));
                 }
             }
             let _ = events.send(Event::PickingChanged(false));
@@ -2365,9 +2389,7 @@ impl Controller {
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
-            let index = db
-                .media_index(media_id, "", &folder, &sort_mode)
-                .unwrap_or(None);
+            let index = reveal_index(&db, media_id, &folder, &sort_mode);
             if index.is_none() {
                 let _ = events.send(Event::Toast(
                     ToastKind::Error,
@@ -2376,9 +2398,10 @@ impl Controller {
             }
             let _ = events.send(Event::RevealRequested {
                 folder,
-                media_index: index.map(|i| i as i64).unwrap_or(-1),
+                media_index: index.unwrap_or(-1),
                 folder_index: -1,
             });
+            log::info!("library reveal resolved media {media_id} to index {index:?}");
             let _ = root;
         });
         self.library_generation += 1;
@@ -2399,12 +2422,10 @@ impl Controller {
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
-            let index = db
-                .media_index(media_id, "", &folder, &sort_mode)
-                .unwrap_or(None);
+            let index = reveal_index(&db, media_id, &folder, &sort_mode);
             let _ = events.send(Event::RevealRequested {
                 folder,
-                media_index: index.map(|i| i as i64).unwrap_or(-1),
+                media_index: index.unwrap_or(-1),
                 folder_index: -1,
             });
         });
@@ -2703,12 +2724,13 @@ impl Controller {
                 self.request_scan("manual", true);
             }
             Command::CancelScan => self.cancel_scan("user"),
+            Command::ScanBatchReady(id, generation) => {
+                if scan_job_matches(self.scan.as_ref(), &id, generation) && self.active_id == id {
+                    self.refresh_library_preserving_loaded();
+                }
+            }
             Command::ScanFinished(id, generation) => {
-                if self
-                    .scan
-                    .as_ref()
-                    .is_some_and(|s| s.workspace_id == id && s.generation == generation)
-                {
+                if scan_job_matches(self.scan.as_ref(), &id, generation) {
                     self.scan = None;
                     self.emit_workspaces();
                     // The scan changed the manifest: refresh the library
@@ -2722,7 +2744,10 @@ impl Controller {
                     self.refresh_folders();
                 }
             }
-            Command::SelectMedia(id) => self.select_media_row(id),
+            Command::SelectMedia(id) => {
+                self.random_retry_media_id = None;
+                self.select_media_row(id);
+            }
             Command::ClearSelection => {
                 self.selected = None;
                 self.emit(Event::SelectedMediaChanged(None));
@@ -2734,6 +2759,10 @@ impl Controller {
             Command::RevealMedia(media_id) => self.reveal_media_index(media_id),
             Command::ViewHistoryPost(post_id) => self.view_history_post(post_id),
             Command::PickRandom => self.pick_random(),
+            Command::RandomPicked(id) => {
+                self.random_retry_media_id = Some(id);
+                self.select_media_row(id);
+            }
             Command::SetRandomFolderEnabled(folder, enabled) => {
                 self.set_random_folder_enabled(&folder, enabled)
             }
@@ -2764,7 +2793,7 @@ impl Controller {
                 self.thumb_queue.remove(&id);
             }
             Command::EnsurePreview(id) => self.ensure_preview(id),
-            Command::LoadMoreFinished(library, generation, has_more, offset) => {
+            Command::LoadMoreFinished(library, generation, has_more, offset, loaded) => {
                 // Always clear the in-flight flag (a refresh mid-flight
                 // supersedes the page); apply state only when the marker
                 // still belongs to the current generation.
@@ -2773,9 +2802,7 @@ impl Controller {
                     if generation == self.library_generation {
                         self.library_has_more = has_more;
                         if offset == 0 {
-                            // A fresh page was served; the next page starts
-                            // at the full-page boundary.
-                            self.library_offset = PAGE_SIZE_LIBRARY as usize;
+                            self.library_offset = loaded;
                         }
                     }
                 } else {
@@ -2783,7 +2810,7 @@ impl Controller {
                     if generation == self.history_generation {
                         self.history_has_more = has_more;
                         if offset == 0 {
-                            self.history_offset = PAGE_SIZE_HISTORY as usize;
+                            self.history_offset = loaded;
                         }
                     }
                 }
@@ -2796,14 +2823,32 @@ impl Controller {
             }
             Command::SelectionVerified(media_id, row) => {
                 if self.selected.as_ref().map(|m| m.id) == Some(media_id) {
+                    if self.random_retry_media_id == Some(media_id) {
+                        self.random_retry_media_id = None;
+                    }
                     self.selected = Some(row.clone());
                     self.emit(Event::SelectedMediaChanged(Some(row)));
+                    self.ensure_thumbnail(media_id);
+                    self.ensure_timeline(media_id);
+                    if self
+                        .settings
+                        .get_string(PERFORMANCE_MODE)
+                        .unwrap_or_default()
+                        == "maximum"
+                        && self.settings.get_bool(HOVER_PREVIEWS).unwrap_or(true)
+                    {
+                        self.ensure_preview(media_id);
+                    }
                 }
             }
             Command::SelectionVerifyFailed(media_id) => {
                 if self.selected.as_ref().map(|s| s.id) == Some(media_id) {
                     self.selected = None;
                     self.emit(Event::SelectedMediaChanged(None));
+                }
+                if self.random_retry_media_id == Some(media_id) {
+                    self.random_retry_media_id = None;
+                    self.pick_random();
                 }
             }
             Command::PickingFinished => {
@@ -3006,6 +3051,7 @@ fn run_scan_job(
     indexer: &MediaIndexer,
     _db: &Database,
     events: &flume::Sender<Event>,
+    current_generation: &AtomicU64,
     verify_during_index: bool,
     thumbnails_during_index: bool,
     deep_scan: bool,
@@ -3017,13 +3063,29 @@ fn run_scan_job(
         } else {
             format!("Found {} video filenames: {name}", discovered)
         };
-        let _ = events.send(Event::ScanStateChanged(ScanState {
-            active: true,
-            cancelling: false,
-            progress: -1.0,
-            message,
-            root_name: job.root.clone(),
-        }));
+        if scan_generation_matches(current_generation, job.generation) {
+            let _ = events.send(Event::ScanStateChanged(ScanState {
+                active: true,
+                cancelling: false,
+                progress: -1.0,
+                message,
+                root_name: job.root.clone(),
+            }));
+        }
+    };
+    let mut sent_manifest_refresh = false;
+    let mut last_manifest_refresh = Instant::now() - Duration::from_secs(1);
+    let mut manifest_batch_ready = |_added: usize| {
+        if (!sent_manifest_refresh || last_manifest_refresh.elapsed() >= Duration::from_millis(150))
+            && scan_generation_matches(current_generation, job.generation)
+        {
+            sent_manifest_refresh = true;
+            last_manifest_refresh = Instant::now();
+            let _ = events.send(Event::ScanBatchReady(
+                job.workspace_id.clone(),
+                job.generation,
+            ));
+        }
     };
     let manifest = indexer.refresh_manifest(
         &root,
@@ -3031,68 +3093,84 @@ fn run_scan_job(
         job.include_index && verify_during_index,
         Some(&job.cancel),
         &mut manifest_progress,
-        None,
+        Some(&mut manifest_batch_ready),
     );
     let manifest = match manifest {
         Ok(result) => result,
         Err(_) => {
-            let _ = events.send(Event::ScanStateChanged(ScanState {
-                active: false,
-                cancelling: false,
-                progress: -1.0,
-                message: "Scan failed".into(),
-                root_name: job.root.clone(),
-            }));
+            if scan_generation_matches(current_generation, job.generation) {
+                let _ = events.send(Event::ScanStateChanged(ScanState {
+                    active: false,
+                    cancelling: false,
+                    progress: -1.0,
+                    message: "Scan failed".into(),
+                    root_name: job.root.clone(),
+                }));
+                let _ = events.send(Event::Toast(
+                    ToastKind::Info,
+                    "Scan stopped. Videos found so far are still available.".to_string(),
+                ));
+            }
             let _ = events.send(Event::ScanFinished(
                 job.workspace_id.clone(),
                 job.generation,
             ));
+            return None;
+        }
+    };
+    if scan_generation_matches(current_generation, job.generation) {
+        log::info!(
+            "library filename manifest ready: {} discovered, {} added, {} skipped",
+            manifest.discovered,
+            manifest.indexed,
+            manifest.skipped
+        );
+    }
+    if job.cancel.load(Ordering::Relaxed) {
+        if scan_generation_matches(current_generation, job.generation) {
+            let _ = events.send(Event::ScanStateChanged(ScanState {
+                active: false,
+                cancelling: false,
+                progress: -1.0,
+                message: "Scan stopped".into(),
+                root_name: job.root.clone(),
+            }));
             let _ = events.send(Event::Toast(
                 ToastKind::Info,
                 "Scan stopped. Videos found so far are still available.".to_string(),
             ));
-            return None;
         }
-    };
-    if job.cancel.load(Ordering::Relaxed) {
-        let _ = events.send(Event::ScanStateChanged(ScanState {
-            active: false,
-            cancelling: false,
-            progress: -1.0,
-            message: "Scan stopped".into(),
-            root_name: job.root.clone(),
-        }));
         let _ = events.send(Event::ScanFinished(
             job.workspace_id.clone(),
             job.generation,
-        ));
-        let _ = events.send(Event::Toast(
-            ToastKind::Info,
-            "Scan stopped. Videos found so far are still available.".to_string(),
         ));
         return Some(manifest);
     }
     if !job.include_index {
-        let _ = events.send(Event::ScanStateChanged(ScanState {
-            active: false,
-            cancelling: false,
-            progress: 1.0,
-            message: format!("{:?} filenames ready", manifest.discovered),
-            root_name: job.root.clone(),
-        }));
+        if scan_generation_matches(current_generation, job.generation) {
+            let _ = events.send(Event::ScanStateChanged(ScanState {
+                active: false,
+                cancelling: false,
+                progress: 1.0,
+                message: format!("{} filenames ready", manifest.discovered),
+                root_name: job.root.clone(),
+            }));
+        }
         let _ = events.send(Event::ScanFinished(
             job.workspace_id.clone(),
             job.generation,
         ));
         return Some(manifest);
     }
-    let _ = events.send(Event::ScanStateChanged(ScanState {
-        active: true,
-        cancelling: false,
-        progress: 0.0,
-        message: "Checking library details".into(),
-        root_name: job.root.clone(),
-    }));
+    if scan_generation_matches(current_generation, job.generation) {
+        let _ = events.send(Event::ScanStateChanged(ScanState {
+            active: true,
+            cancelling: false,
+            progress: 0.0,
+            message: "Checking library details".into(),
+            root_name: job.root.clone(),
+        }));
+    }
     let mut progress = |completed: usize, total: usize, name: &str| {
         let verb = if verify_during_index && thumbnails_during_index {
             "Processing"
@@ -3108,17 +3186,31 @@ fn run_scan_job(
         } else {
             format!("{verb} {}: {name}", completed)
         };
-        let _ = events.send(Event::ScanStateChanged(ScanState {
-            active: true,
-            cancelling: false,
-            progress: if total > 0 {
-                completed as f64 / total as f64
-            } else {
-                -1.0
-            },
-            message,
-            root_name: job.root.clone(),
-        }));
+        if scan_generation_matches(current_generation, job.generation) {
+            let _ = events.send(Event::ScanStateChanged(ScanState {
+                active: true,
+                cancelling: false,
+                progress: if total > 0 {
+                    completed as f64 / total as f64
+                } else {
+                    -1.0
+                },
+                message,
+                root_name: job.root.clone(),
+            }));
+        }
+    };
+    let mut last_item_refresh = Instant::now() - Duration::from_secs(1);
+    let mut item_ready = |_media_id: i64| {
+        if last_item_refresh.elapsed() >= Duration::from_millis(250)
+            && scan_generation_matches(current_generation, job.generation)
+        {
+            last_item_refresh = Instant::now();
+            let _ = events.send(Event::ScanBatchReady(
+                job.workspace_id.clone(),
+                job.generation,
+            ));
+        }
     };
     let scan = indexer.scan(
         &root,
@@ -3128,7 +3220,7 @@ fn run_scan_job(
         4,
         Some(&job.cancel),
         &mut progress,
-        None,
+        Some(&mut item_ready),
     );
     match scan {
         Ok(result) => {
@@ -3137,13 +3229,15 @@ fn run_scan_job(
             } else {
                 format!("{} filenames ready", result.discovered)
             };
-            let _ = events.send(Event::ScanStateChanged(ScanState {
-                active: false,
-                cancelling: false,
-                progress: 1.0,
-                message,
-                root_name: job.root.clone(),
-            }));
+            if scan_generation_matches(current_generation, job.generation) {
+                let _ = events.send(Event::ScanStateChanged(ScanState {
+                    active: false,
+                    cancelling: false,
+                    progress: 1.0,
+                    message,
+                    root_name: job.root.clone(),
+                }));
+            }
             let _ = events.send(Event::ScanFinished(
                 job.workspace_id.clone(),
                 job.generation,
@@ -3151,20 +3245,22 @@ fn run_scan_job(
             Some(result)
         }
         Err(_) => {
-            let _ = events.send(Event::ScanStateChanged(ScanState {
-                active: false,
-                cancelling: false,
-                progress: -1.0,
-                message: "Scan failed".into(),
-                root_name: job.root.clone(),
-            }));
+            if scan_generation_matches(current_generation, job.generation) {
+                let _ = events.send(Event::ScanStateChanged(ScanState {
+                    active: false,
+                    cancelling: false,
+                    progress: -1.0,
+                    message: "Scan failed".into(),
+                    root_name: job.root.clone(),
+                }));
+                let _ = events.send(Event::Toast(
+                    ToastKind::Info,
+                    "Scan stopped. Videos found so far are still available.".to_string(),
+                ));
+            }
             let _ = events.send(Event::ScanFinished(
                 job.workspace_id.clone(),
                 job.generation,
-            ));
-            let _ = events.send(Event::Toast(
-                ToastKind::Info,
-                "Scan stopped. Videos found so far are still available.".to_string(),
             ));
             None
         }
@@ -3729,11 +3825,74 @@ fn same_root(a: &str, b: &str) -> bool {
     resolve(a) == resolve(b)
 }
 
+fn reveal_index(db: &Database, media_id: i64, folder: &str, sort_mode: &str) -> Option<i64> {
+    db.media_index(media_id, "", folder, sort_mode)
+        .ok()
+        .flatten()
+        .map(|index| index as i64)
+}
+
 #[cfg(test)]
 mod controller_tests {
-    use super::{build_random_options, resolve_target};
-    use cliprelay_core::db::RandomFolder;
+    use super::{
+        build_random_options, resolve_target, reveal_index, scan_generation_matches,
+        scan_job_matches, ScanJob,
+    };
+    use cliprelay_core::db::{Database, ManifestEntry, RandomFolder};
     use std::collections::HashSet;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{atomic::AtomicBool, Arc};
+
+    #[test]
+    fn stale_scan_events_are_rejected() {
+        let job = ScanJob {
+            cancel: Arc::new(AtomicBool::new(false)),
+            workspace_id: "workspace-new".into(),
+            root: "/library/new".into(),
+            include_index: false,
+            generation: 7,
+        };
+        assert!(scan_job_matches(Some(&job), "workspace-new", 7));
+        assert!(!scan_job_matches(Some(&job), "workspace-old", 7));
+        assert!(!scan_job_matches(Some(&job), "workspace-new", 6));
+        assert!(!scan_job_matches(None, "workspace-new", 7));
+
+        let latest = AtomicU64::new(7);
+        assert!(scan_generation_matches(&latest, 7));
+        assert!(!scan_generation_matches(&latest, 6));
+    }
+
+    #[test]
+    fn reveal_index_finds_a_nested_source_in_library_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Database::open(directory.path().join("reveal.sqlite3")).unwrap();
+        let root = directory
+            .path()
+            .join("library")
+            .to_string_lossy()
+            .into_owned();
+        let entries = ["c.mp4", "a.mp4", "b.mp4"]
+            .into_iter()
+            .map(|name| ManifestEntry {
+                root_path: root.clone(),
+                path: format!("{root}/nested/{name}"),
+                name: name.into(),
+                relative_path: format!("nested/{name}"),
+                folder: "nested".into(),
+                size_bytes: 1,
+                mtime: 1.0,
+            })
+            .collect::<Vec<_>>();
+        db.upsert_manifest_batch(&entries).unwrap();
+        db.activate_root(Some(&root)).unwrap();
+        let target = db
+            .get_media_by_path(&format!("{root}/nested/b.mp4"))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reveal_index(&db, target.id, "nested", "name"), Some(1));
+        assert_eq!(reveal_index(&db, target.id, "other", "name"), None);
+    }
 
     fn folder(path: &str, total: i64, direct: i64) -> RandomFolder {
         RandomFolder {

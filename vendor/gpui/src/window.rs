@@ -1755,8 +1755,8 @@ impl Window {
     }
 
     /// Dev-only: request the next rendered frame to be written as a PNG.
-    /// Works even while the physical display is asleep (reads the Metal
-    /// drawable back after the frame completes). No-op off macOS.
+    /// Supported by the vendored Blade macOS and Linux X11 backends; other
+    /// platforms may ignore the request.
     pub fn request_surface_capture(&self, path: std::path::PathBuf) {
         self.platform_window.set_capture_path(path);
     }

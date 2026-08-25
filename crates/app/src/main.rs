@@ -15,6 +15,7 @@ mod prepare;
 mod settings_page;
 mod state;
 mod theme;
+mod video_element;
 mod widgets;
 
 use crate::controller::spawn_controller;
@@ -22,6 +23,7 @@ use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
 use cliprelay_core::db::MediaRow;
+use cliprelay_core::media::CancelFlag;
 
 use cliprelay_core::telegram::DialogInfo;
 use gpui::*;
@@ -29,7 +31,9 @@ use gpui_video_player::{Video, VideoOptions};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 actions!(
     cliprelay,
@@ -89,6 +93,7 @@ pub struct App {
     preview_video_load_task: Option<Task<()>>,
     prepare_video_generation: u64,
     prepare_video_load_task: Option<Task<()>>,
+    prepare_video_cancel: Option<CancelFlag>,
     pub prepare_video_loading: bool,
     pub prepare_video_error: Option<String>,
     pub active_preview_id: i64,
@@ -140,6 +145,8 @@ pub struct App {
     platform_input_bounds: Option<Bounds<Pixels>>,
     platform_input_focus: Option<FocusHandle>,
     focus_handle: FocusHandle,
+    library_item_focus: FocusHandle,
+    focus_library_selection: bool,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
     pub workspace_menu_open: bool,
@@ -168,6 +175,10 @@ impl App {
 
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (event_tx, event_rx) = flume::unbounded::<Event>();
+        // Read boot settings before the controller thread opens the same
+        // database. On a fresh profile both connections otherwise race the
+        // WAL/schema initialization and one can fail with SQLITE_BUSY.
+        let boot_settings_values = boot_settings().unwrap_or_default();
         let controller = spawn_controller(None, event_tx.clone());
         // `--library PATH` overrides the stored library root on launch.
         if let Ok(library) = std::env::var("CLIPRELAY_LIBRARY") {
@@ -200,7 +211,8 @@ impl App {
                 },
             );
         }
-        if let Ok(settings) = boot_settings() {
+        {
+            let settings = &boot_settings_values;
             let seeds = [
                 ("tg-destination", "telegram_destination"),
                 ("tg-destination-field", "telegram_destination"),
@@ -233,7 +245,8 @@ impl App {
             }
         }
         let mut prepare_state = prepare::PrepareState::default();
-        if let Ok(settings) = boot_settings() {
+        {
+            let settings = &boot_settings_values;
             if let Some(value) = settings
                 .get("telegram_destination")
                 .and_then(|v| v.as_str())
@@ -256,6 +269,7 @@ impl App {
         let open_sort_at_boot = std::env::var("CLIPRELAY_OPEN_SORT").is_ok();
         let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
         let open_workspace_menu_at_boot = std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
+        let exercise_workflow_at_boot = std::env::var("CLIPRELAY_EXERCISE_WORKFLOW").is_ok();
         let settings_scroll_boot: f32 = std::env::var("CLIPRELAY_SETTINGS_SCROLL")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -275,6 +289,8 @@ impl App {
                 None
             },
             focus_handle: cx.focus_handle(),
+            library_item_focus: cx.focus_handle(),
+            focus_library_selection: false,
             theme_mode: ThemeMode::Relay,
             ui_scale: 1.0,
             sidebar_collapsed: false,
@@ -325,6 +341,7 @@ impl App {
             preview_video_load_task: None,
             prepare_video_generation: 0,
             prepare_video_load_task: None,
+            prepare_video_cancel: None,
             prepare_video_loading: false,
             prepare_video_error: None,
             active_preview_id: 0,
@@ -413,6 +430,83 @@ impl App {
             }
         })
         .detach();
+
+        if exercise_workflow_at_boot {
+            let controller = app.controller.clone();
+            cx.spawn(async move |this, cx| {
+                // The isolated GUI harness uses this deterministic path to
+                // cover paging/scroll recovery, Random, playback, and source
+                // reveal without synthesizing host input.
+                smol::Timer::after(Duration::from_millis(1_400)).await;
+                let _ = controller.send(Command::LoadMoreLibrary);
+                smol::Timer::after(Duration::from_millis(500)).await;
+                let _ = this.update(cx, |app, cx| {
+                    if !app.library.rows.is_empty() {
+                        app.reveal_target_row = Some(app.library.rows.len().saturating_sub(1));
+                        app.apply_reveal_scroll();
+                        log::info!("ui-test workflow applied a one-shot Library reveal");
+                        cx.notify();
+                    }
+                });
+                smol::Timer::after(Duration::from_millis(300)).await;
+                let _ = this.update(cx, |app, cx| {
+                    app.library_scroll
+                        .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                    log::info!("ui-test workflow returned to the top of the Library");
+                    cx.notify();
+                });
+                smol::Timer::after(Duration::from_millis(300)).await;
+                let _ = this.update(cx, |app, _cx| {
+                    let base_handle = app.library_scroll.0.borrow().base_handle.clone();
+                    if base_handle.logical_scroll_top().0 == 0 {
+                        log::info!("ui-test workflow retained user scroll after Library reveal");
+                    }
+                });
+                let _ = this.update(cx, |app, cx| {
+                    if let Some(media_id) = app.library.rows.first().map(|row| row.id) {
+                        app.preview_hover_generation = app.preview_hover_generation.wrapping_add(1);
+                        app.active_preview_id = media_id;
+                        app.hovered_tiles.insert(media_id, true);
+                        app.command(Command::EnsurePreview(media_id));
+                        cx.notify();
+                    }
+                });
+                for _ in 0..30 {
+                    smol::Timer::after(Duration::from_millis(100)).await;
+                    if this
+                        .update(cx, |app, _cx| app.preview_video.is_some())
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
+                }
+                let _ = this.update(cx, |app, cx| {
+                    if app.preview_video.is_some() {
+                        log::info!("ui-test workflow played a real hover preview");
+                    }
+                    app.stop_hover_preview(None, cx);
+                });
+                let _ = controller.send(Command::PickRandom);
+                for _ in 0..30 {
+                    smol::Timer::after(Duration::from_millis(100)).await;
+                    let autoplaying = this
+                        .update(cx, |app, _cx| {
+                            app.prepare
+                                .video
+                                .as_ref()
+                                .is_some_and(|video| app.prepare.playing && !video.paused())
+                        })
+                        .unwrap_or(false);
+                    if autoplaying {
+                        log::info!("ui-test workflow observed Prepare autoplay");
+                        break;
+                    }
+                }
+                let _ = controller.send(Command::RevealSelectedInLibrary);
+                smol::Timer::after(Duration::from_millis(900)).await;
+            })
+            .detach();
+        }
 
         let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
         if initial_page != Page::Library || settings_scroll_boot > 0.0 || open_command_at_boot_2 {
@@ -534,8 +628,7 @@ impl App {
                 let media_source_changed = self.prepare.media_id != next_media_id
                     || self.prepare.media_path.as_ref() != next_media_path.as_ref();
                 if media_source_changed {
-                    self.prepare_video_generation = self.prepare_video_generation.wrapping_add(1);
-                    self.prepare_video_load_task.take();
+                    self.cancel_prepare_video_load();
                     if let Some(video) = self.prepare.video.take() {
                         Self::retire_video(video, cx);
                     }
@@ -561,14 +654,8 @@ impl App {
                         self.thumbnail_states
                             .entry(media_id)
                             .or_insert_with(|| "queued".into());
-                        self.command(Command::EnsureThumbnail(media_id));
-                        self.command(Command::EnsureTimeline(media_id));
                         if duration > 0.0 {
                             self.prepare.seek(0.0, duration);
-                            // Selection is intentionally paused: background
-                            // browsing must never surprise the user with
-                            // sound or decoder work.
-                            self.prepare.playing = false;
                         }
                         // Apply a pending draft when its media becomes selected.
                         if let Some(draft) = self.pending_draft.take() {
@@ -606,7 +693,15 @@ impl App {
                 cx.notify();
             }
             Event::LibraryPage(page) => {
-                if page.offset == 0 && page.generation >= self.library.generation {
+                if page.offset == 0
+                    && page_zero_replaceable(
+                        self.library.generation,
+                        self.library.rows.len(),
+                        page.generation,
+                        page.rows.len(),
+                    )
+                {
+                    let reset_scroll = page.generation > self.library.generation;
                     let visible_ids: std::collections::HashSet<i64> =
                         page.rows.iter().map(|row| row.id).collect();
                     self.thumbnail_states
@@ -617,7 +712,9 @@ impl App {
                     self.library = page;
                     // Next expected DB offset (the page's own offset is 0).
                     self.library.offset = loaded;
-                    self.reset_library_scroll();
+                    if reset_scroll {
+                        self.reset_library_scroll();
+                    }
                 } else if page_appendable(
                     self.library.generation,
                     self.library.offset,
@@ -632,7 +729,6 @@ impl App {
                 if let Some(target) = self.reveal_target_row {
                     if target < self.library.rows.len() {
                         self.apply_reveal_scroll();
-                        self.reveal_target_row = None;
                     } else if self.library.has_more {
                         self.command(Command::LoadMoreLibrary);
                     } else {
@@ -786,7 +882,11 @@ impl App {
                 media_index,
                 folder_index,
             } => {
+                self.search_text.clear();
+                self.active_folder = folder.clone();
+                self.explorer_selected = folder.clone();
                 self.reveal_request = Some((folder, media_index, folder_index));
+                self.focus_library_selection = media_index >= 0;
                 self.page = Page::Library;
                 cx.notify();
             }
@@ -814,9 +914,9 @@ impl App {
             Event::SelectionVerified(media_id, row) => {
                 self.command(Command::SelectionVerified(media_id, row));
             }
-            Event::LoadMoreFinished(library, generation, has_more, offset) => {
+            Event::LoadMoreFinished(library, generation, has_more, offset, loaded) => {
                 self.command(Command::LoadMoreFinished(
-                    library, generation, has_more, offset,
+                    library, generation, has_more, offset, loaded,
                 ));
             }
             Event::NeighborPreload(previous, next) => {
@@ -908,6 +1008,9 @@ impl App {
                 }
                 cx.notify();
             }
+            Event::RandomPicked(media_id) => {
+                self.command(Command::RandomPicked(media_id));
+            }
             Event::ClosedCountChanged(count) => {
                 self.closed_count = count;
                 cx.notify();
@@ -947,6 +1050,9 @@ impl App {
             }
             Event::SelectionVerifyFailed(media_id) => {
                 self.command(Command::SelectionVerifyFailed(media_id));
+            }
+            Event::ScanBatchReady(id, generation) => {
+                self.command(Command::ScanBatchReady(id, generation));
             }
         }
     }
@@ -1331,6 +1437,79 @@ impl App {
             .map_err(|error| format!("failed to open {}: {error:?}", path.display()))
     }
 
+    fn wait_for_renderable_frame(video: &Video, cancel: &CancelFlag) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                return Err("video loading cancelled".into());
+            }
+            if let Some((data, width, height)) = video.current_frame_data() {
+                if crate::video_element::frame_is_renderable(video, data.len()) {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "decoder returned an unsupported NV12 layout for {width}x{height} ({} bytes)",
+                    data.len()
+                ));
+            }
+            if video.eos() {
+                return Err("decoder reached the end before producing a frame".into());
+            }
+            if Instant::now() >= deadline {
+                return Err("decoder did not produce a frame".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn load_prepare_video(
+        path: PathBuf,
+        options: VideoOptions,
+        cancel: &CancelFlag,
+    ) -> Result<(Video, Option<PathBuf>), String> {
+        if cancel.load(Ordering::Acquire) {
+            return Err("video loading cancelled".into());
+        }
+        let direct_error = match Self::load_video(path.clone(), options.clone()) {
+            Ok(video) => match Self::wait_for_renderable_frame(&video, cancel) {
+                Ok(()) => return Ok((video, None)),
+                Err(error) => error,
+            },
+            Err(error) => error,
+        };
+
+        let proxy =
+            cliprelay_core::media::ensure_playback_proxy(&path, Some(cancel)).map_err(|error| {
+                format!(
+                    "{direct_error}; failed to create a compatible preview for {}: {error}",
+                    path.display()
+                )
+            })?;
+        if cancel.load(Ordering::Acquire) {
+            return Err("video loading cancelled".into());
+        }
+        let video = Self::load_video(proxy.clone(), options).map_err(|error| {
+            format!(
+                "{direct_error}; failed to open compatible preview {}: {error}",
+                proxy.display()
+            )
+        })?;
+        Self::wait_for_renderable_frame(&video, cancel).map_err(|error| {
+            format!(
+                "{direct_error}; compatible preview {} is not renderable: {error}",
+                proxy.display()
+            )
+        })?;
+        Ok((video, Some(proxy)))
+    }
+
+    fn cancel_prepare_video_load(&mut self) {
+        if let Some(cancel) = self.prepare_video_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.prepare_video_load_task.take();
+    }
+
     fn retire_video(video: Video, cx: &Context<Self>) {
         cx.background_spawn(async move {
             // Keep one non-UI owner until the previous element tree has been
@@ -1351,24 +1530,27 @@ impl App {
     }
 
     fn start_prepare_video(&mut self, media_id: i64, media_path: PathBuf, cx: &mut Context<Self>) {
+        self.cancel_prepare_video_load();
         self.prepare_video_generation = self.prepare_video_generation.wrapping_add(1);
         let generation = self.prepare_video_generation;
-        self.prepare_video_load_task.take();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.prepare_video_cancel = Some(Arc::clone(&cancel));
         self.prepare_video_loading = true;
         self.prepare_video_error = None;
         let expected_path = media_path.clone();
         let load = cx.background_spawn(async move {
-            Self::load_video(
+            Self::load_prepare_video(
                 media_path,
                 VideoOptions {
                     frame_buffer_capacity: Some(0),
                     looping: Some(false),
                     speed: Some(1.0),
                 },
+                &cancel,
             )
         });
         self.prepare_video_load_task = Some(cx.spawn(async move |this, cx| match load.await {
-            Ok(video) => {
+            Ok((video, proxy_path)) => {
                 let retired = this.update(cx, move |app, cx| {
                     let current = app.prepare_video_generation == generation
                         && app.prepare.media_id == media_id
@@ -1376,15 +1558,25 @@ impl App {
                     if !current {
                         return Some(video);
                     }
+                    app.prepare_video_cancel.take();
                     video.set_muted(false);
                     video.set_volume(0.65);
                     video.set_looping(false);
-                    video.set_paused(!app.prepare.playing);
+                    app.prepare.playing = true;
+                    video.set_paused(false);
                     app.prepare.position = 0.0;
                     app.prepare_video_loading = false;
                     app.prepare_video_error = None;
                     let previous = app.prepare.video.replace(video);
-                    log::info!("gpui-video-player ready for {:?}", expected_path);
+                    if let Some(proxy_path) = proxy_path {
+                        log::info!(
+                            "gpui-video-player ready for {:?} through compatible preview {:?}",
+                            expected_path,
+                            proxy_path
+                        );
+                    } else {
+                        log::info!("gpui-video-player ready for {:?}", expected_path);
+                    }
                     cx.notify();
                     previous
                 });
@@ -1397,6 +1589,7 @@ impl App {
                     if app.prepare_video_generation == generation
                         && app.prepare.media_id == media_id
                     {
+                        app.prepare_video_cancel.take();
                         log::warn!("{error}");
                         app.prepare_video_loading = false;
                         app.prepare_video_error = Some("Video playback unavailable".into());
@@ -1965,10 +2158,9 @@ impl App {
                 )),
             ));
         }
-        // Dev-only surface capture: after ~40 rendered frames (the layout is
-        // settled), ask the window to save its rendered surface as a PNG.
-        // Works with the physical display asleep (the Metal drawable is
-        // read back after the GPU finishes).
+        // Dev-only surface capture: after the layout settles, ask the window
+        // to save its rendered surface as a PNG. Supported Blade backends read
+        // the surface back after the GPU finishes.
         if let Some(path) = self.capture_path.clone() {
             // Wall-clock based: the boot envs (the page switch ~2.5s in)
             // settle well before the threshold. Frames are unreliable
@@ -2073,6 +2265,19 @@ impl App {
         });
 
         root = root.child(body);
+        if self.focus_library_selection
+            && self.page == Page::Library
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|selected| self.library.rows.iter().any(|row| row.id == selected.id))
+        {
+            self.focus_library_selection = false;
+            let focus = self.library_item_focus.clone();
+            cx.on_next_frame(window, move |_app, window, _cx| {
+                window.focus(&focus);
+            });
+        }
         // Workspace tabs at the window bottom (mirrors the original).
         root = root.child(self.render_workspace_tabs(cx));
 
@@ -2326,7 +2531,12 @@ impl EntityInputHandler for App {
 
 #[cfg(test)]
 mod time_tests {
-    use super::{parse_time, preview_request_is_current};
+    use super::{parse_time, preview_request_is_current, App};
+    use gpui_video_player::VideoOptions;
+    use std::process::Command;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn parse_time_rejects_non_finite() {
@@ -2347,6 +2557,138 @@ mod time_tests {
         assert!(!preview_request_is_current(0, 7, true, 42, 7));
         assert!(!preview_request_is_current(42, 7, false, 42, 7));
         assert!(!preview_request_is_current(42, 7, true, 99, 7));
+    }
+
+    #[test]
+    fn gstreamer_opens_representative_library_formats() {
+        let Some(ffmpeg) = cliprelay_core::paths::ffmpeg_path() else {
+            panic!("ffmpeg required for playback integration test");
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let formats = [
+            ("clip.mp4", "libx264"),
+            ("clip.mkv", "libx264"),
+            ("clip.mov", "mpeg4"),
+            ("clip.avi", "mpeg4"),
+            ("clip.webm", "libvpx-vp9"),
+            ("clip.ts", "mpeg2video"),
+            ("clip.wmv", "wmv2"),
+        ];
+
+        for (name, codec) in formats {
+            let path = directory.path().join(name);
+            let status = Command::new(&ffmpeg)
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=0.35:size=128x96:rate=25",
+                    "-an",
+                    "-c:v",
+                    codec,
+                    "-pix_fmt",
+                    "yuv420p",
+                ])
+                .arg(&path)
+                .status()
+                .unwrap_or_else(|error| panic!("failed to run ffmpeg for {name}: {error}"));
+            assert!(status.success(), "ffmpeg failed to create {name}");
+
+            let video = App::load_video(
+                path,
+                VideoOptions {
+                    frame_buffer_capacity: Some(0),
+                    looping: Some(false),
+                    speed: Some(1.0),
+                },
+            )
+            .unwrap_or_else(|error| panic!("could not play {name}: {error}"));
+            assert_eq!(video.size(), (128, 96), "wrong decoded size for {name}");
+            let data = (0..100)
+                .find_map(|_| {
+                    let frame = video.current_frame_data().map(|(data, _, _)| data);
+                    if frame.is_none() {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    frame
+                })
+                .unwrap_or_else(|| panic!("no decoded frame for {name}"));
+            assert!(
+                crate::video_element::frame_converts(&video, &data),
+                "decoded frame cannot be rendered for {name}"
+            );
+            // Some valid transport streams do not expose a duration. They
+            // are still playable, which is why playback availability is not
+            // gated on probe/player duration.
+            if !name.ends_with(".ts") {
+                assert!(
+                    video.duration().as_secs_f64() > 0.0,
+                    "no duration for {name}"
+                );
+            }
+            video.set_paused(true);
+            drop(video);
+        }
+    }
+
+    #[test]
+    fn prepare_loader_produces_renderable_frames_for_padded_source_widths() {
+        let Some(ffmpeg) = cliprelay_core::paths::ffmpeg_path() else {
+            panic!("ffmpeg required for playback integration test");
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("padded-width.mp4");
+        let status = Command::new(ffmpeg)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=0.5:size=562x1024:rate=25",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-vf",
+                "setsar=1408/1405",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (video, proxy_path) = App::load_prepare_video(
+            path,
+            VideoOptions {
+                frame_buffer_capacity: Some(0),
+                looping: Some(false),
+                speed: Some(1.0),
+            },
+            &cancel,
+        )
+        .expect("Prepare loader should provide a compatible video");
+        assert!(
+            proxy_path.is_none(),
+            "stride-aware rendering should not transcode a supported H.264 source"
+        );
+        let (data, _, _) = video
+            .current_frame_data()
+            .expect("compatible video should have a decoded frame");
+        assert!(crate::video_element::frame_is_renderable(
+            &video,
+            data.len()
+        ));
+        assert!(crate::video_element::frame_converts(&video, &data));
+        video.set_paused(true);
     }
 }
 
@@ -2675,9 +3017,21 @@ fn page_appendable(
     page_generation == current_generation && page_offset == current_offset
 }
 
+/// Same-generation scan refreshes are monotonic. An older, slower page-zero
+/// query must not replace a newer page and collapse the user's scroll range.
+fn page_zero_replaceable(
+    current_generation: u64,
+    current_len: usize,
+    page_generation: u64,
+    page_len: usize,
+) -> bool {
+    page_generation > current_generation
+        || (page_generation == current_generation && page_len >= current_len)
+}
+
 #[cfg(test)]
 mod page_tests {
-    use super::page_appendable;
+    use super::{page_appendable, page_zero_replaceable};
 
     #[test]
     fn pages_apply_in_order_and_dedupe() {
@@ -2689,6 +3043,16 @@ mod page_tests {
         assert!(!page_appendable(3, 100, 3, 200));
         // Stale generation is rejected.
         assert!(!page_appendable(4, 100, 3, 100));
+    }
+
+    #[test]
+    fn incremental_refresh_never_collapses_the_loaded_scroll_range() {
+        assert!(page_zero_replaceable(4, 240, 4, 241));
+        assert!(page_zero_replaceable(4, 240, 4, 240));
+        assert!(!page_zero_replaceable(4, 240, 4, 128));
+        // A filter/final-scan generation may legitimately contain fewer rows.
+        assert!(page_zero_replaceable(4, 240, 5, 12));
+        assert!(!page_zero_replaceable(5, 12, 4, 240));
     }
 }
 

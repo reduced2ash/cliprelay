@@ -534,7 +534,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
-    /// Dev-only: request the next rendered frame as a PNG (macOS only).
+    /// Dev-only: request the next rendered frame as a PNG when supported.
     fn set_capture_path(&self, _path: std::path::PathBuf) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn window_decorations(&self) -> Decorations {

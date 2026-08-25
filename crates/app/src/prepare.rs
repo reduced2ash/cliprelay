@@ -177,8 +177,11 @@ impl PrepareState {
             self.selected_shape = None;
             self.timeline_ready = false;
             self.video = None;
-        } else if duration > 0.0 && self.trim_end <= 0.0 {
-            self.trim_end = duration;
+        } else if duration > 0.0 {
+            self.duration = duration;
+            if self.trim_end <= 0.0 {
+                self.trim_end = duration;
+            }
         }
     }
 
@@ -434,9 +437,34 @@ impl PrepareState {
     }
 }
 
+pub(crate) fn playback_control_availability(video_ready: bool, duration: f64) -> (bool, bool) {
+    (video_ready, video_ready && duration > 0.0)
+}
+
 #[cfg(test)]
 mod prepare_tests {
     use super::*;
+
+    #[test]
+    fn metadata_arrival_updates_the_existing_selection() {
+        let mut prepare = PrepareState::default();
+        prepare.on_media_changed(42, 0.0);
+        assert_eq!(prepare.duration, 0.0);
+        assert_eq!(prepare.trim_end, 0.0);
+
+        prepare.on_media_changed(42, 12.5);
+        assert_eq!(prepare.duration, 12.5);
+        assert_eq!(prepare.trim_end, 12.5);
+        assert_eq!(prepare.media_id, 42);
+    }
+
+    #[test]
+    fn playback_can_start_before_probe_metadata_finishes() {
+        assert_eq!(playback_control_availability(false, 0.0), (false, false));
+        assert_eq!(playback_control_availability(true, 0.0), (true, false));
+        assert_eq!(playback_control_availability(true, 8.0), (true, true));
+        assert_eq!(playback_control_availability(false, 8.0), (false, false));
+    }
 
     #[test]
     fn enable_crop_starts_from_free_crop() {

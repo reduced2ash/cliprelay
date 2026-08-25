@@ -13,12 +13,17 @@ make ui-test
 ```
 
 The command validates the Compose model, builds the Rust 1.96.0 image, and
-launches four app-level states: library, history, settings, and command center.
+launches five app-level states: library, history, settings, command center, and
+an exercised library workflow (paging, scroll recovery, hover preview, Random,
+GPUI playback, and source reveal).
 State selection uses ClipRelay's boot environment hooks; the runner never sends
 screen-coordinate input. Each state must create a visible `ClipRelay` X11
-window of the requested size and remain alive through capture. The resulting
-history, settings, and command-center images must also differ materially from
-the library image, so ignored boot hooks cannot pass as four duplicate tests.
+window of the requested size and remain alive through capture. Screenshots are
+read back from GPUI's rendered Blade surface rather than from the X11 drawable,
+so Vulkan presentation remains visible under Xvfb. The resulting
+history, settings, command-center, and workflow images must also differ
+materially from the library image, so ignored boot hooks cannot pass as five
+duplicate tests.
 
 The terminal result is intentionally short. Every run writes:
 

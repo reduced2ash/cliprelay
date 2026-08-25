@@ -302,18 +302,8 @@ impl crate::App {
                         },
                     )),
             )
-            .child(sub_label(&theme, "FAST PICKING"))
-            .child(checkbox(
-                "fast-random",
-                "Make Random available before indexing finishes",
-                self.settings_bool(FAST_RANDOM),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(FAST_RANDOM, json!(value), cx);
-                },
-            ))
-            .child(help_text(&theme, "ClipRelay keeps a lightweight filename list and checks only the clip Random chooses. This stays fast without allowing unreadable files into preparation."))
+            .child(sub_label(&theme, "RANDOM"))
+            .child(help_text(&theme, "Random uses the lightweight filename list immediately, then checks only the clip it picks."))
             .child(checkbox(
                 "avoid-repeats",
                 "Avoid repeats until every video has been picked",

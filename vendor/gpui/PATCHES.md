@@ -28,9 +28,10 @@ headless-ish screenshot sweeps.
 ## 3. Dev surface capture (`src/platform/blade/blade_renderer.rs`)
 
 The Blade renderer accepts an optional output path and reads the rendered
-surface back to a PNG after GPU completion. The macOS window passes its pending
-capture request; Wayland and X11 pass `None` so the shared renderer API remains
-valid when Linux backends are enabled.
+surface back to a PNG after GPU completion. The macOS and X11 windows pass a
+one-shot pending capture request; Wayland still passes `None`. Linux Blade
+surfaces include copy usage so Vulkan swapchain images are valid transfer
+sources for readback.
 
 To regenerate from a fresh registry download: apply the same edits to
 `~/.cargo/registry/src/*/gpui-0.2.2/` and copy the directory here, or

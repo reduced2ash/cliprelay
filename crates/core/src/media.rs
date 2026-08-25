@@ -8,10 +8,11 @@ use crate::utils::{clamp, media_cache_key, safe_stem};
 use anyhow::Result;
 
 use parking_lot::Mutex;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Progress callback: `progress(fraction 0..1, stage)`.
@@ -464,16 +465,19 @@ impl MediaIndexer {
 
     /// Iterative DFS discovery (LIFO), dirs not followed through symlinks,
     /// hidden dirs and the export dir skipped when inside the root.
-    pub fn iter_candidate_paths(
+    ///
+    /// The visitor runs while discovery is still in progress so callers can
+    /// commit useful work without first collecting the entire filesystem.
+    fn visit_candidate_paths(
         &self,
         root: &Path,
         deep_scan: bool,
         cancel: Option<&CancelFlag>,
-    ) -> Result<Vec<PathBuf>, MediaError> {
+        mut visit: impl FnMut(PathBuf) -> Result<(), MediaError>,
+    ) -> Result<(), MediaError> {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let export_inside_root = crate::paths::is_within(&self.export_dir, &root);
         let mut pending: Vec<PathBuf> = vec![root];
-        let mut results = Vec::new();
         while let Some(current) = pending.pop() {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(MediaError::ScanCancelled);
@@ -504,11 +508,25 @@ impl MediaIndexer {
                     }
                     dirs.push(path);
                 } else if self._is_candidate(&path, deep_scan) {
-                    results.push(path);
+                    visit(path)?;
                 }
             }
             pending.extend(dirs);
         }
+        Ok(())
+    }
+
+    pub fn iter_candidate_paths(
+        &self,
+        root: &Path,
+        deep_scan: bool,
+        cancel: Option<&CancelFlag>,
+    ) -> Result<Vec<PathBuf>, MediaError> {
+        let mut results = Vec::new();
+        self.visit_candidate_paths(root, deep_scan, cancel, |path| {
+            results.push(path);
+            Ok(())
+        })?;
         Ok(results)
     }
 
@@ -712,7 +730,6 @@ impl MediaIndexer {
         let mut present_paths: Vec<String> = Vec::new();
         let mut first_committed = false;
         let mut last_progress = Instant::now() - Duration::from_secs(1);
-        let candidates = self.iter_candidate_paths(&root, false, cancel)?;
         let state_map = self
             .database
             .media_state_map(&root.to_string_lossy())
@@ -738,7 +755,7 @@ impl MediaIndexer {
             batch.clear();
             Ok(())
         };
-        for path in candidates {
+        self.visit_candidate_paths(&root, false, cancel, |path| {
             result.discovered += 1;
             if result.discovered == 1 || last_progress.elapsed() >= Duration::from_millis(250) {
                 last_progress = Instant::now();
@@ -768,7 +785,7 @@ impl MediaIndexer {
                         Some(entry) => entry,
                         None => {
                             result.failed += 1;
-                            continue;
+                            return Ok(());
                         }
                     }
                 }
@@ -777,7 +794,7 @@ impl MediaIndexer {
                     Some(entry) => entry,
                     None => {
                         result.failed += 1;
-                        continue;
+                        return Ok(());
                     }
                 }
             };
@@ -791,7 +808,8 @@ impl MediaIndexer {
                     &self.database,
                 )?;
             }
-        }
+            Ok(())
+        })?;
         flush(
             &mut batch,
             &mut result,
@@ -935,9 +953,11 @@ impl MediaIndexer {
                         if let Some(callback) = item_ready.as_mut() {
                             callback(id);
                         }
-                        let _ = self.ensure_thumbnail(id, cancel);
-                        if let Some(callback) = item_ready.as_mut() {
-                            callback(id);
+                        if generate_thumbnails {
+                            let _ = self.ensure_thumbnail(id, cancel);
+                            if let Some(callback) = item_ready.as_mut() {
+                                callback(id);
+                            }
                         }
                     }
                     Err(_) => {
@@ -1008,9 +1028,11 @@ impl MediaIndexer {
                                 if let Some(callback) = item_ready.as_mut() {
                                     callback(id);
                                 }
-                                let _ = self.ensure_thumbnail(id, cancel);
-                                if let Some(callback) = item_ready.as_mut() {
-                                    callback(id);
+                                if generate_thumbnails {
+                                    let _ = self.ensure_thumbnail(id, cancel);
+                                    if let Some(callback) = item_ready.as_mut() {
+                                        callback(id);
+                                    }
                                 }
                             }
                             None => {
@@ -1189,15 +1211,19 @@ impl MediaIndexer {
 
     pub fn ensure_preview(&self, media_id: i64) -> Option<PathBuf> {
         let media = self.ensure_metadata(media_id)?;
+        let ffmpeg = self.ffmpeg().ok()?;
+        let key = media_cache_key(Path::new(&media.path), media.size_bytes as u64, media.mtime);
+        // v3 resets non-square source pixels before GStreamer converts the
+        // preview to NV12. Earlier caches could negotiate odd padded widths
+        // and were rendered as if tightly packed.
+        let output = preview_dir().join(format!("{key}-v3.mp4"));
         if let Some(existing) = media.preview_path.as_deref() {
-            if Path::new(existing).is_file() {
+            let existing_path = Path::new(existing);
+            if existing_path == output && remove_invalid_cached_video(existing_path) {
                 return Some(PathBuf::from(existing));
             }
         }
-        let ffmpeg = self.ffmpeg().ok()?;
-        let key = media_cache_key(Path::new(&media.path), media.size_bytes as u64, media.mtime);
-        let output = preview_dir().join(format!("{key}.mp4"));
-        if output.is_file() && media_path_size(&output) > 0 {
+        if remove_invalid_cached_video(&output) {
             let _ =
                 self.database
                     .set_media_asset(media_id, "preview_path", &output.to_string_lossy());
@@ -1220,7 +1246,7 @@ impl MediaIndexer {
             .arg("-t")
             .arg(format!("{preview_length:.3}"))
             .arg("-vf")
-            .arg("scale=640:360:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2")
+            .arg("scale=640:360:force_original_aspect_ratio=decrease,scale=trunc(iw/4)*4:trunc(ih/2)*2,setsar=1")
             .arg("-an")
             .arg("-c:v")
             .arg("libx264")
@@ -1236,7 +1262,7 @@ impl MediaIndexer {
         let result = run_command(command, Duration::from_secs(120), None);
         match result {
             Ok(status)
-                if status.success() && partial.is_file() && media_path_size(&partial) > 0 =>
+                if status.success() && partial.is_file() && cached_video_is_decodable(&partial) =>
             {
                 let _ = std::fs::rename(&partial, &output);
                 let _ = self.database.set_media_asset(
@@ -1396,6 +1422,167 @@ impl MediaIndexer {
 
 fn media_path_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn cached_video_is_decodable(path: &Path) -> bool {
+    static VALIDATED: LazyLock<Mutex<HashSet<(PathBuf, u64, u128)>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if metadata.len() == 0 {
+        return false;
+    }
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let signature = (path.to_path_buf(), metadata.len(), modified);
+    if VALIDATED.lock().contains(&signature) {
+        return true;
+    }
+
+    let Some(ffmpeg) = ffmpeg_path() else {
+        return false;
+    };
+    let mut command = Command::new(ffmpeg);
+    command
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(path)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-frames:v")
+        .arg("1")
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let valid =
+        run_command(command, Duration::from_secs(30), None).is_ok_and(|status| status.success());
+    if valid {
+        let mut validated = VALIDATED.lock();
+        if validated.len() >= 4096 {
+            validated.clear();
+        }
+        validated.insert(signature);
+    }
+    valid
+}
+
+fn remove_invalid_cached_video(path: &Path) -> bool {
+    if cached_video_is_decodable(path) {
+        true
+    } else {
+        if path.is_file() {
+            let _ = std::fs::remove_file(path);
+        }
+        false
+    }
+}
+
+/// Build a full-length, broadly decodable Prepare proxy when the native
+/// GStreamer pipeline cannot decode a source or produce an NV12 frame.
+///
+/// The source remains untouched. Successful proxies are content-keyed and
+/// reused from ClipRelay's preview cache.
+pub fn ensure_playback_proxy(path: &Path, cancel: Option<&CancelFlag>) -> Result<PathBuf> {
+    static PROXY_GENERATION: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    let cancelled = || cancel.is_some_and(|flag| flag.load(Ordering::Acquire));
+    if cancelled() {
+        return Err(MediaError::ProcessingCancelled.into());
+    }
+
+    let metadata = std::fs::metadata(path)?;
+    let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_secs_f64())
+        .unwrap_or(0.0);
+    let key = media_cache_key(path, metadata.len(), mtime);
+    let output = preview_dir().join(format!("{key}-prepare-v2.mp4"));
+    if remove_invalid_cached_video(&output) {
+        return Ok(output);
+    }
+
+    let _generation = loop {
+        if cancelled() {
+            return Err(MediaError::ProcessingCancelled.into());
+        }
+        if let Some(guard) = PROXY_GENERATION.try_lock() {
+            break guard;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    if cancelled() {
+        return Err(MediaError::ProcessingCancelled.into());
+    }
+    if remove_invalid_cached_video(&output) {
+        return Ok(output);
+    }
+
+    let ffmpeg = ffmpeg_path().ok_or_else(|| anyhow::anyhow!("FFmpeg is unavailable"))?;
+    let partial = output.with_extension("partial.mp4");
+    let mut command = Command::new(ffmpeg);
+    command
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-y")
+        .arg("-i")
+        .arg(path)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("0:a:0?")
+        .arg("-sn")
+        .arg("-dn")
+        .arg("-vf")
+        .arg("scale=960:540:force_original_aspect_ratio=decrease,scale=trunc(iw/4)*4:trunc(ih/2)*2,setsar=1")
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("veryfast")
+        .arg("-crf")
+        .arg("25")
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("128k")
+        .arg("-ac")
+        .arg("2")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg(&partial);
+    let result = run_command(command, Duration::from_secs(600), cancel);
+    if cancelled() {
+        let _ = std::fs::remove_file(&partial);
+        return Err(MediaError::ProcessingCancelled.into());
+    }
+    match result {
+        Ok(status) if status.success() && cached_video_is_decodable(&partial) => {
+            std::fs::rename(&partial, &output)?;
+            Ok(output)
+        }
+        Ok(status) => {
+            let _ = std::fs::remove_file(&partial);
+            anyhow::bail!("FFmpeg could not create a playback proxy ({status})")
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&partial);
+            Err(error.into())
+        }
+    }
 }
 
 /// Lightweight ffprobe used for Telegram upload attributes: returns

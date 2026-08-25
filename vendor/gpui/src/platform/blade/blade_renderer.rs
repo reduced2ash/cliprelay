@@ -351,9 +351,17 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
+        // Linux visual tests read the rendered swapchain image back before it
+        // is presented. Vulkan requires swapchain images used as transfer
+        // sources to be created with copy usage; TARGET alone leaves that
+        // copy undefined even when the driver happens to accept it.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let surface_usage = gpu::TextureUsage::TARGET | gpu::TextureUsage::COPY;
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let surface_usage = gpu::TextureUsage::TARGET;
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
-            usage: gpu::TextureUsage::TARGET,
+            usage: surface_usage,
             display_sync: gpu::DisplaySync::Recent,
             color_space: gpu::ColorSpace::Srgb,
             allow_exclusive_full_screen: false,

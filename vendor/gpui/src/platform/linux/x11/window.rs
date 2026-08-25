@@ -258,6 +258,7 @@ pub struct X11WindowState {
     bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
+    pending_capture: Option<std::path::PathBuf>,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
@@ -674,6 +675,7 @@ impl X11WindowState {
                 bounds: bounds.to_pixels(scale_factor),
                 scale_factor,
                 renderer,
+                pending_capture: None,
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
@@ -1472,7 +1474,8 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene, None);
+        let capture = inner.pending_capture.take();
+        inner.renderer.draw(scene, capture);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1519,6 +1522,10 @@ impl PlatformWindow for X11Window {
     fn start_window_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
         self.send_moveresize(MOVERESIZE_MOVE).log_err();
+    }
+
+    fn set_capture_path(&self, path: std::path::PathBuf) {
+        self.0.state.borrow_mut().pending_capture = Some(path);
     }
 
     fn start_window_resize(&self, edge: ResizeEdge) {

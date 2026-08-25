@@ -1807,6 +1807,20 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rows_are_random_eligible_before_metadata_or_thumbnails() {
+        let db = open_tmp();
+        let root = "/tmp/root";
+        db.upsert_manifest_batch(&[entry(root, "/tmp/root/immediate.mkv", "")])
+            .unwrap();
+
+        let picked = db.random_media(false, false, &[]).unwrap().unwrap();
+        assert_eq!(picked.name, "immediate.mkv");
+        assert_eq!(picked.duration, 0.0);
+        assert!(picked.thumbnail_path.is_none());
+        assert!(db.random_media(false, true, &[]).unwrap().is_none());
+    }
+
+    #[test]
     fn random_folder_scopes() {
         let db = open_tmp();
         let root = "/tmp/root";

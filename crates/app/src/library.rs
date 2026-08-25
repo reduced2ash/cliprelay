@@ -4,11 +4,12 @@
 use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
+use crate::video_element::video as video_element;
 use crate::widgets::*;
 use cliprelay_core::db::MediaRow;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_video_player::{video as video_element, Video};
+use gpui_video_player::Video;
 use std::path::PathBuf;
 
 /// Layout helpers shared by the pages.
@@ -429,6 +430,9 @@ impl crate::App {
             .flex()
             .flex_col()
             .tab_index(0)
+            .when(is_selected, |tile| {
+                tile.track_focus(&self.library_item_focus)
+            })
             .focus(|style| style.border_2().border_color(theme.accent))
             .on_click(cx.listener(move |app, _event, _window, cx| {
                 app.explorer_focus = false;
@@ -490,11 +494,12 @@ impl crate::App {
             });
         if is_active_preview {
             if let Some(video) = preview_video {
-                poster = poster.child(
-                    video_element(video)
-                        .id(SharedString::from(format!("hover-video-{media_id}")))
-                        .size(px(tile_width), px(poster_height)),
-                );
+                poster = poster.child(video_element(
+                    video,
+                    SharedString::from(format!("hover-video-{media_id}")),
+                    px(tile_width),
+                    px(poster_height),
+                ));
             } else if thumbnail_ok {
                 // Keep the thumbnail stable while the debounced preview encode
                 // and off-thread GStreamer startup complete.
@@ -955,13 +960,14 @@ impl crate::App {
     /// the page holding it is not loaded yet). Contains-style: only scrolls
     /// when the row is outside the viewport.
     pub fn apply_reveal_scroll(&mut self) {
-        let Some(target) = self.reveal_target_row else {
+        let columns = self.library_columns();
+        let Some(row_index) = take_loaded_reveal_grid_row(
+            &mut self.reveal_target_row,
+            self.library.rows.len(),
+            columns,
+        ) else {
             return;
         };
-        if target >= self.library.rows.len() {
-            return;
-        }
-        let row_index = target / self.library_columns().max(1);
         self.library_scroll
             .scroll_to_item(row_index, gpui::ScrollStrategy::Top);
     }
@@ -1040,9 +1046,35 @@ impl crate::App {
     }
 }
 
+fn library_grid_row_count(item_count: usize, columns: usize) -> usize {
+    item_count.div_ceil(columns.max(1))
+}
+
+fn take_loaded_reveal_grid_row(
+    target: &mut Option<usize>,
+    loaded_items: usize,
+    columns: usize,
+) -> Option<usize> {
+    let media_index = (*target)?;
+    if media_index >= loaded_items {
+        return None;
+    }
+    target.take();
+    Some(media_index / columns.max(1))
+}
+
+fn library_should_prefetch(
+    offset_y: Pixels,
+    max_offset_y: Pixels,
+    lead: Pixels,
+    has_more: bool,
+) -> bool {
+    has_more && max_offset_y + offset_y <= lead.max(px(0.0))
+}
+
 #[cfg(test)]
 mod grid_tests {
-    use super::{library_grid_row_count, library_should_prefetch};
+    use super::{library_grid_row_count, library_should_prefetch, take_loaded_reveal_grid_row};
     use gpui::px;
 
     #[test]
@@ -1072,6 +1104,17 @@ mod grid_tests {
     }
 
     #[test]
+    fn reveal_scroll_is_consumed_once_after_target_loads() {
+        let mut pending = Some(17);
+        assert_eq!(take_loaded_reveal_grid_row(&mut pending, 12, 4), None);
+        assert_eq!(pending, Some(17));
+
+        assert_eq!(take_loaded_reveal_grid_row(&mut pending, 20, 4), Some(4));
+        assert_eq!(pending, None);
+        assert_eq!(take_loaded_reveal_grid_row(&mut pending, 20, 4), None);
+    }
+
+    #[test]
     fn prefetch_uses_negative_gpui_offsets_and_a_bounded_lead() {
         assert!(!library_should_prefetch(
             px(-200.0),
@@ -1098,17 +1141,4 @@ mod grid_tests {
             false
         ));
     }
-}
-
-fn library_grid_row_count(item_count: usize, columns: usize) -> usize {
-    item_count.div_ceil(columns.max(1))
-}
-
-fn library_should_prefetch(
-    offset_y: Pixels,
-    max_offset_y: Pixels,
-    lead: Pixels,
-    has_more: bool,
-) -> bool {
-    has_more && max_offset_y + offset_y <= lead.max(px(0.0))
 }

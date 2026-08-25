@@ -54,6 +54,20 @@ wait_for_window() {
     return 1
 }
 
+wait_for_capture() {
+    local path="$1" attempt
+    for attempt in $(seq 1 200); do
+        if [[ -s "${path}" ]]; then
+            return 0
+        fi
+        if ! kill -0 "${app_pid}" >/dev/null 2>&1; then
+            return 1
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
 assert_image() {
     local path="$1" dimensions mean
     dimensions="$(identify -format '%w %h' "${path}" 2>/dev/null)" || return 1
@@ -105,8 +119,11 @@ capture_case() {
     local window_id geometry width height
 
     mkdir -p "${case_data}" /tmp/library
+    rm -f "${screenshot}"
     env \
         CLIPRELAY_DATA_DIR="${case_data}" \
+        CLIPRELAY_CAPTURE="${screenshot}" \
+        CLIPRELAY_CAPTURE_AFTER="${GUI_TEST_CAPTURE_AFTER:-35}" \
         RUST_LOG=info \
         "$@" \
         /usr/local/bin/cliprelay \
@@ -142,9 +159,13 @@ capture_case() {
         return 1
     fi
 
-    if ! import -display "${DISPLAY}" -window "${window_id}" "${screenshot}" 2>>"${app_log}"; then
+    if ! wait_for_capture "${screenshot}"; then
+        if kill -0 "${app_pid}" >/dev/null 2>&1; then
+            record_failure "${case_name}: GPUI did not produce a renderer capture within 20 seconds."
+        else
+            record_failure "${case_name}: ClipRelay exited before renderer capture completed."
+        fi
         stop_app
-        record_failure "${case_name}: X11 window capture failed."
         return 1
     fi
     if ! assert_image "${screenshot}"; then
@@ -163,6 +184,18 @@ capture_case() {
 
 run_suite() {
     start_x_session || return 1
+    rm -rf /tmp/library
+    mkdir -p /tmp/library/nested
+    if ! ffmpeg -hide_banner -loglevel error -y \
+        -f lavfi -i 'color=c=red:s=562x1024:r=24:d=1.2' \
+        -vf 'setsar=1408/1405' \
+        -an -c:v libx264 -pix_fmt yuv420p /tmp/library/nested/clip-000.mp4; then
+        record_failure "fixture: ffmpeg could not create the workflow video."
+        return 1
+    fi
+    for index in $(seq -w 1 280); do
+        cp /tmp/library/nested/clip-000.mp4 "/tmp/library/nested/clip-${index}.mp4"
+    done
     {
         echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "display=${DISPLAY}"
@@ -181,6 +214,20 @@ run_suite() {
     capture_case history CLIPRELAY_PAGE=history || return 1
     capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
     capture_case command CLIPRELAY_OPEN_COMMAND=1 CLIPRELAY_QUERY=library || return 1
+    capture_case workflow CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    if [[ "$(convert /artifacts/screenshots/workflow.png -crop 1x1+1025+270 \
+        -format '%[fx:r>b+0.2]' info:)" != "1" ]]; then
+        record_failure "workflow: Prepare rendered a known red video with swapped color channels."
+        return 1
+    fi
+    if ! grep -q 'gpui-video-player ready' /artifacts/logs/app-workflow.log \
+        || ! grep -q 'ui-test workflow played a real hover preview' /artifacts/logs/app-workflow.log \
+        || ! grep -q 'ui-test workflow observed Prepare autoplay' /artifacts/logs/app-workflow.log \
+        || ! grep -q 'ui-test workflow retained user scroll after Library reveal' /artifacts/logs/app-workflow.log \
+        || ! grep -q 'library reveal resolved media' /artifacts/logs/app-workflow.log; then
+        record_failure "workflow: scroll recovery, hover preview, Random, Prepare autoplay, or source reveal did not complete."
+        return 1
+    fi
     assert_distinct_states library history || {
         record_failure "library/history: semantic states produced no meaningful visual change."
         return 1
@@ -193,11 +240,15 @@ run_suite() {
         record_failure "library/command: semantic states produced no meaningful visual change."
         return 1
     }
+    assert_distinct_states library workflow || {
+        record_failure "library/workflow: the exercised playback state produced no meaningful visual change."
+        return 1
+    }
     return 0
 }
 
 if run_suite; then
-    echo "PASS isolated ClipRelay GUI smoke test (4 semantic states). Artifacts: /artifacts" > /artifacts/summary.txt
+    echo "PASS isolated ClipRelay GUI smoke test (5 semantic states, including Random/playback/reveal). Artifacts: /artifacts" > /artifacts/summary.txt
     exit 0
 fi
 

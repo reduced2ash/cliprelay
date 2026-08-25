@@ -606,8 +606,8 @@ impl crate::App {
             .w(px(
                 (self.window_size.0 - 96.0 - 16.0 - 360.0).clamp(420.0, 860.0)
             ))
-            .rounded(px(12.0))
-            .bg(theme.surface_soft)
+            .rounded(px(10.0))
+            .bg(theme.surface)
             .border_1()
             .border_color(theme.border_strong)
             .shadow_lg()
@@ -615,59 +615,19 @@ impl crate::App {
             .flex_col()
             .overflow_hidden();
 
-        popup = popup.child(
-            div()
-                .w_full()
-                .h(px(34.0))
-                .px(px(12.0))
-                .border_b_1()
-                .border_color(theme.border)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(7.0))
-                .child(icon("search", 13.0, theme.accent_text))
-                .child(
-                    div()
-                        .child(if self.command_query.trim().is_empty() {
-                            "Search ClipRelay".to_string()
-                        } else {
-                            format!("Results for “{}”", self.command_needle())
-                        })
-                        .min_w(px(0.0))
-                        .flex_1()
-                        .text_ellipsis()
-                        .text_size(px(11.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::MEDIUM),
-                )
-                .child(
-                    div()
-                        .child("ESC")
-                        .px(px(6.0))
-                        .h(px(20.0))
-                        .rounded(px(4.0))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.raised)
-                        .flex()
-                        .items_center()
-                        .text_size(px(9.0))
-                        .text_color(theme.muted),
-                ),
-        );
-
-        // Scope tabs.
+        // The query is already visible in the focused field immediately above
+        // this surface. Keep the popup header to one quiet scope control rather
+        // than repeating the search text in a second title row.
         let mut chips = div()
             .w_full()
-            .h(px(38.0))
-            .px(px(10.0))
+            .h(px(44.0))
+            .px(px(8.0))
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(2.0));
+            .gap(px(4.0));
         for (value, label) in [
             ("all", "All"),
             ("videos", "Videos"),
@@ -677,11 +637,13 @@ impl crate::App {
             let effective_scope = self.effective_command_scope();
             let active = effective_scope == value;
             let value = value.to_string();
+            let click_value = value.clone();
+            let enter_value = value.clone();
             chips = chips.child(
                 div()
                     .id(SharedString::from(format!("scope-{value}")))
-                    .h(px(30.0))
-                    .px(px(11.0))
+                    .h(px(34.0))
+                    .px(px(12.0))
                     .rounded(px(6.0))
                     .cursor_pointer()
                     .bg(if active {
@@ -689,18 +651,39 @@ impl crate::App {
                     } else {
                         theme.transparent()
                     })
-                    .hover(|style| style.bg(theme.hover))
+                    .hover(move |style| style.bg(if active { theme.active } else { theme.hover }))
+                    .active(|style| style.bg(theme.active))
                     .flex()
                     .items_center()
                     .child(label)
-                    .text_size(px(12.0))
-                    .text_color(if active { theme.text } else { theme.muted })
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_size(px(13.0))
+                    .text_color(if active { theme.text } else { theme.text_soft })
+                    .font_weight(if active {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::MEDIUM
+                    })
+                    .tab_index(0)
+                    .focus(|style| style.border_2().border_color(current_theme().accent))
                     .on_click(cx.listener(move |app, _event, _window, cx| {
-                        app.command_scope = value.clone();
+                        app.command_scope = click_value.clone();
                         app.schedule_command_search(cx);
                         cx.notify();
-                    })),
+                    }))
+                    .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                        app.command_scope = enter_value.clone();
+                        app.schedule_command_search(cx);
+                        cx.notify();
+                        cx.stop_propagation();
+                    }))
+                    .on_action(
+                        cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                            app.command_scope = value.clone();
+                            app.schedule_command_search(cx);
+                            cx.notify();
+                            cx.stop_propagation();
+                        }),
+                    ),
             );
         }
         popup = popup.child(chips);
@@ -731,12 +714,12 @@ impl crate::App {
                     list = list.child(
                         div()
                             .w_full()
-                            .h(px(28.0))
-                            .px(px(14.0))
+                            .h(px(26.0))
+                            .px(px(16.0))
                             .flex()
                             .items_center()
-                            .child(title.to_string().to_uppercase())
-                            .text_size(px(10.0))
+                            .child(title.to_string())
+                            .text_size(px(11.0))
                             .text_color(theme.muted)
                             .font_weight(FontWeight::SEMIBOLD),
                     );
@@ -752,44 +735,48 @@ impl crate::App {
                     let mut row = div()
                         .id(SharedString::from(format!("action-{action_id}")))
                         .w_full()
-                        .mx(px(6.0))
-                        .h(px(50.0))
+                        .mx(px(8.0))
+                        .h(px(52.0))
                         .px(px(10.0))
                         .rounded(px(6.0))
-                        .cursor_pointer()
+                        .cursor(if enabled {
+                            CursorStyle::PointingHand
+                        } else {
+                            CursorStyle::Arrow
+                        })
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(9.0))
-                        .hover(|style| style.bg(theme.hover))
+                        .gap(px(10.0))
+                        .hover(move |style| {
+                            if !enabled {
+                                style
+                            } else {
+                                style.bg(if is_selected {
+                                    theme.active
+                                } else {
+                                    theme.hover
+                                })
+                            }
+                        })
+                        .when(enabled, |this| this.active(|style| style.bg(theme.active)))
                         .bg(if is_selected {
                             theme.active
                         } else {
                             theme.transparent()
                         })
-                        .opacity(if enabled { 1.0 } else { 0.45 })
+                        .opacity(if enabled { 1.0 } else { 0.56 })
                         .child(
                             div()
-                                .w(px(27.0))
-                                .h(px(27.0))
-                                .rounded(px(4.0))
-                                .bg(if is_selected {
-                                    theme.accent_soft
-                                } else {
-                                    theme.raised
-                                })
-                                .border_1()
-                                .border_color(if is_selected {
-                                    theme.accent
-                                } else {
-                                    theme.border
-                                })
+                                .w(px(22.0))
+                                .h(px(22.0))
+                                .flex_none()
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .child(icon(
                                     glyph,
-                                    15.0,
+                                    16.0,
                                     if is_selected {
                                         theme.accent_text
                                     } else {
@@ -800,25 +787,26 @@ impl crate::App {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w(px(0.0))
                                 .flex()
                                 .flex_col()
                                 .gap(px(1.0))
                                 .child(
                                     div()
                                         .child(title.to_string())
-                                        .text_size(px(12.0))
-                                        .text_color(if is_selected {
-                                            theme.text
+                                        .text_size(px(13.0))
+                                        .text_color(theme.text)
+                                        .font_weight(if is_selected {
+                                            FontWeight::SEMIBOLD
                                         } else {
-                                            theme.text_soft
+                                            FontWeight::MEDIUM
                                         })
-                                        .font_weight(FontWeight::MEDIUM)
                                         .text_ellipsis(),
                                 )
                                 .child(
                                     div()
                                         .child(detail.to_string())
-                                        .text_size(px(10.0))
+                                        .text_size(px(11.0))
                                         .text_color(theme.muted)
                                         .text_ellipsis(),
                                 ),
@@ -828,8 +816,17 @@ impl crate::App {
                         } else {
                             div()
                                 .child(shortcut.to_string())
-                                .text_size(px(10.0))
-                                .text_color(theme.muted_soft)
+                                .flex_none()
+                                .h(px(22.0))
+                                .px(px(7.0))
+                                .rounded(px(4.0))
+                                .bg(theme.raised)
+                                .border_1()
+                                .border_color(theme.border)
+                                .flex()
+                                .items_center()
+                                .text_size(px(11.0))
+                                .text_color(theme.muted)
                                 .into_any()
                         });
                     row = row.on_click(cx.listener(move |app, _event, _window, cx| {
@@ -852,8 +849,8 @@ impl crate::App {
                     let mut row = div()
                         .id(SharedString::from(format!("command-{index}")))
                         .w_full()
-                        .mx(px(6.0))
-                        .h(px(50.0))
+                        .mx(px(8.0))
+                        .h(px(52.0))
                         .px(px(10.0))
                         .rounded(px(6.0))
                         .cursor_pointer()
@@ -861,7 +858,14 @@ impl crate::App {
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
-                        .hover(|style| style.bg(theme.hover))
+                        .hover(move |style| {
+                            style.bg(if is_selected {
+                                theme.active
+                            } else {
+                                theme.hover
+                            })
+                        })
+                        .active(|style| style.bg(theme.active))
                         .bg(if is_selected {
                             theme.active
                         } else {
@@ -869,26 +873,15 @@ impl crate::App {
                         })
                         .child(
                             div()
-                                .w(px(27.0))
-                                .h(px(27.0))
-                                .rounded(px(4.0))
-                                .bg(if is_selected {
-                                    theme.accent_soft
-                                } else {
-                                    theme.raised
-                                })
-                                .border_1()
-                                .border_color(if is_selected {
-                                    theme.accent
-                                } else {
-                                    theme.border
-                                })
+                                .w(px(22.0))
+                                .h(px(22.0))
+                                .flex_none()
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .child(icon(
-                                    if kind == "folder" { "▤" } else { "▶" },
-                                    13.0,
+                                    if kind == "folder" { "folder" } else { "play" },
+                                    16.0,
                                     if is_selected {
                                         theme.accent_text
                                     } else {
@@ -899,35 +892,39 @@ impl crate::App {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w(px(0.0))
                                 .flex()
                                 .flex_col()
                                 .gap(px(2.0))
                                 .child(
                                     div()
                                         .child(title)
-                                        .text_size(px(12.0))
-                                        .text_color(if is_selected {
-                                            theme.text
+                                        .text_size(px(13.0))
+                                        .text_color(theme.text)
+                                        .font_weight(if is_selected {
+                                            FontWeight::SEMIBOLD
                                         } else {
-                                            theme.text_soft
+                                            FontWeight::MEDIUM
                                         })
-                                        .font_weight(FontWeight::MEDIUM)
                                         .text_ellipsis(),
                                 )
                                 .child(
                                     div()
                                         .child(detail)
-                                        .text_size(px(10.0))
+                                        .text_size(px(11.0))
                                         .text_color(theme.muted)
                                         .text_ellipsis(),
                                 ),
                         )
                         .child(if kind == "folder" {
-                            div()
-                                .child(format!("{count}"))
-                                .text_size(px(10.0))
-                                .text_color(theme.muted_soft)
-                                .into_any()
+                            tabular(
+                                div()
+                                    .flex_none()
+                                    .child(format!("{count}"))
+                                    .text_size(px(11.0))
+                                    .text_color(theme.muted),
+                            )
+                            .into_any()
                         } else {
                             div().into_any()
                         });
@@ -947,40 +944,59 @@ impl crate::App {
             }
         }
 
-        if selectable_count == 0 && !self.command_searching {
+        if selectable_count == 0 && self.command_searching {
+            list = list.child(
+                div()
+                    .w_full()
+                    .h(px(82.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.0))
+                    .child(icon("search", 15.0, theme.muted))
+                    .child(
+                        div()
+                            .child("Searching library…")
+                            .text_size(px(12.0))
+                            .text_color(theme.text_soft)
+                            .font_weight(FontWeight::MEDIUM),
+                    ),
+            );
+        } else if selectable_count == 0 {
             let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
             let has_query = !self.command_query.trim().is_empty();
             let effective_scope = self.effective_command_scope();
             let title = if !has_root && effective_scope != "commands" {
-                "Choose a library root to begin".to_string()
+                "Choose a library folder to search".to_string()
             } else if effective_scope == "commands" {
-                "No matching command".to_string()
+                "No commands match".to_string()
             } else if effective_scope == "folders" {
                 if has_query {
-                    "No matching folder".to_string()
+                    "No folders match".to_string()
                 } else {
-                    "No indexed folders".to_string()
+                    "No folders indexed yet".to_string()
                 }
             } else if scope == "videos" {
                 if has_query {
-                    "No matching video".to_string()
+                    "No videos match".to_string()
                 } else {
-                    "No indexed videos".to_string()
+                    "No videos indexed yet".to_string()
                 }
             } else {
-                "No matching result".to_string()
+                "No results match".to_string()
             };
             let detail = if !has_root && scope != "commands" {
-                "Use Choose library root below, or run it as a command."
+                "Use “Choose library root” in Commands."
             } else if has_query {
-                "Try a shorter filename, folder, or action."
+                "Try a shorter filename, folder, or command."
             } else {
-                "Your library index has no items for this scope."
+                "Scan the library or choose another filter."
             };
             list = list.child(
                 div()
                     .w_full()
-                    .py(px(24.0))
+                    .py(px(26.0))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -988,14 +1004,14 @@ impl crate::App {
                     .child(
                         div()
                             .child(title)
-                            .text_size(px(12.0))
-                            .text_color(theme.text_soft)
+                            .text_size(px(13.0))
+                            .text_color(theme.text)
                             .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
                         div()
                             .child(detail)
-                            .text_size(px(10.0))
+                            .text_size(px(11.0))
                             .text_color(theme.muted),
                     ),
             );
@@ -1003,12 +1019,6 @@ impl crate::App {
         popup = popup.child(list);
 
         // Hint footer.
-        let hint = |text: &str| {
-            div()
-                .child(text.to_string())
-                .text_size(px(9.0))
-                .text_color(theme.muted_soft)
-        };
         let result_count = entries
             .iter()
             .filter(|e| {
@@ -1018,35 +1028,41 @@ impl crate::App {
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(30.0))
-                .px(px(12.0))
+                .h(px(34.0))
+                .px(px(14.0))
                 .border_t_1()
                 .border_color(theme.border)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
+                .gap(px(10.0))
                 .child(if self.command_searching {
                     div()
-                        .child("SEARCHING".to_string())
-                        .text_size(px(9.0))
+                        .child("Searching…".to_string())
+                        .text_size(px(11.0))
                         .text_color(theme.warning)
                 } else if !self.command_query.trim().is_empty() {
                     div()
                         .child(format!(
-                            "{} RESULT{}",
+                            "{} result{}",
                             result_count,
-                            if result_count == 1 { "" } else { "S" }
+                            if result_count == 1 { "" } else { "s" }
                         ))
-                        .text_size(px(9.0))
-                        .text_color(theme.muted_soft)
+                        .text_size(px(11.0))
+                        .text_color(theme.muted)
                 } else {
                     div()
+                        .child("Suggested commands")
+                        .text_size(px(11.0))
+                        .text_color(theme.muted)
                 })
                 .child(div().flex_1())
-                .child(hint("↑↓  NAVIGATE"))
-                .child(hint("↵  OPEN"))
-                .child(hint("ESC  CLOSE")),
+                .child(
+                    div()
+                        .child("↑↓ Move  ·  Enter Open  ·  Esc Close")
+                        .text_size(px(11.0))
+                        .text_color(theme.muted_soft),
+                ),
         );
         popup_fade(popup, "command-center-fade")
     }

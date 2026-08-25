@@ -17,3 +17,4 @@ path; it does not authorize host-desktop automation.
 See `docs/GUI_TESTING.md` for commands, artifacts, security boundaries, and
 baseline review.
 
+Note: If subagent ability enabled, delegate smaller, cheaper models like deepseek v4 flash (smol role in omp) to do boring tasks after smarter model (you) carefuly designed the plan and implementation. Also always delegate smaller model to do the testing phase. Use the smarter model as the advisor always, including for the testing phase. The smarter model is likely gpt 5.6 SOL.
