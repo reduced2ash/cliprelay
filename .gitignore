@@ -33,8 +33,3 @@ secrets.json
 *.pem
 *.key
 *.mobileprovision
-
-# Rust build output
-/target
-.agents/
-skills-lock.json
