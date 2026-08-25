@@ -1,18 +1,12 @@
 version: 2
 
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: cargo
     directory: /
-    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
-    groups:
-      python-runtime:
-        dependency-type: production
-      python-development:
-        dependency-type: development
 
   - package-ecosystem: github-actions
     directory: /

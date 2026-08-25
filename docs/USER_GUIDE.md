@@ -154,10 +154,9 @@ generated in the background and may be disabled.
 Interface scale presets provide 80, 90, and 100 percent workspace density.
 
 **Maximum performance** keeps VSync enabled at the active display refresh
-rate, keeps Qt graphics resources resident when the window is hidden, preloads
-adjacent clips, and raises safe thumbnail and hover-preview concurrency. A
-restart applies the renderer and decoder preference; preloading changes apply
-immediately.
+rate, preloads adjacent clips, and raises safe thumbnail and hover-preview
+concurrency. A restart applies the renderer and decoder preference; preloading
+changes apply immediately.
 
 The export-encoder setting offers Automatic, Prefer hardware, and Software
 only. Automatic uses hardware in Maximum mode and the quality-focused software

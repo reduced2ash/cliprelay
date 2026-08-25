@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest published version of ClipRelay.
-Pre-release builds are supported only until a newer pre-release is available.
+Security fixes are applied to the current native code on `main`. Historical
+Python/Qt pre-release artifacts are no longer supported.
 
 ## Reporting a vulnerability
 

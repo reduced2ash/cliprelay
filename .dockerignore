@@ -1,11 +1,7 @@
 .git
 .github
-.venv
-__pycache__
-*.pyc
 artifacts
 build
 dist
 target
 vendor/gpui/target
-

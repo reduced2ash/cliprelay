@@ -90,6 +90,3 @@ inside the container.
 - The app binary is built in a multi-stage image. BuildKit caches Cargo registry,
   Git, and target data between builds without copying the toolchain into the
   runtime image.
-
-The reusable, product-neutral starting point lives in
-`tools/gui-test-template/README.md`.

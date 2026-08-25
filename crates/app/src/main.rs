@@ -2854,7 +2854,7 @@ fn saved_window_size() -> Option<(f32, f32)> {
 fn apply_dock_icon() {
     use objc::{class, msg_send, sel, sel_impl};
     unsafe {
-        let svg: &[u8] = include_bytes!("../../../src/cliprelay/assets/cliprelay.svg");
+        let svg: &[u8] = include_bytes!("../assets/cliprelay.svg");
         let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
         let data: *mut objc::runtime::Object =
             msg_send![class!(NSData), dataWithBytes: svg.as_ptr() length: svg.len()];

@@ -33,6 +33,7 @@ one-shot pending capture request; Wayland still passes `None`. Linux Blade
 surfaces include copy usage so Vulkan swapchain images are valid transfer
 sources for readback.
 
-To regenerate from a fresh registry download: apply the same edits to
-`~/.cargo/registry/src/*/gpui-0.2.2/` and copy the directory here, or
-`diff -r` this directory against the registry copy.
+To refresh from a registry download, copy only the standalone manifest,
+license, build script, platform resources, and `src/` tree. Reapply these
+patches, remove registry metadata and upstream examples, then validate the
+entire ClipRelay workspace.

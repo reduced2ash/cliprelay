@@ -1,9 +1,0 @@
-.git
-.venv
-__pycache__
-*.pyc
-artifacts
-build
-dist
-target
-

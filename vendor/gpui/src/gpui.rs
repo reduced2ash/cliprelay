@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Zed's GPU-accelerated UI framework, vendored for ClipRelay's platform patches.
+
 #![deny(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code

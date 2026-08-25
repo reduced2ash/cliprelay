@@ -25,7 +25,7 @@ body:
     id: version
     attributes:
       label: ClipRelay version
-      placeholder: "For example: 0.1.0-beta.1"
+      placeholder: "Commit, build date, or release version"
     validations:
       required: true
   - type: textarea
