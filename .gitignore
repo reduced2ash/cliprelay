@@ -1,7 +1,18 @@
 .DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 build/
 dist/
 artifacts/
+*.spec.bak
 *.log
 *.partial
 *.ffpass*
@@ -25,6 +36,5 @@ secrets.json
 
 # Rust build output
 /target
-.impeccable/
 .agents/
 skills-lock.json

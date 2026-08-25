@@ -1,69 +1,73 @@
 # Architecture
 
-ClipRelay is a native Rust desktop application. The workspace separates the
-GPUI interface from reusable domain and service code while keeping local
-SQLite storage as the source of truth.
+ClipRelay is a Python desktop application using Qt Quick through PySide6.
 
-## Workspace
+## Main components
 
-| Area | Responsibility |
+| Component | Responsibility |
 | --- | --- |
-| `crates/app` | GPUI startup, views, interaction state, playback, and platform integration |
-| `crates/core` | database, media, settings, secrets, Telegram, X handoff, and cleanup |
-| `vendor/gpui` | patched GPUI 0.2.2 source pinned by the root Cargo patch |
-| `tools/ui-test` | isolated launch, workflow, and render-capture checks |
+| `app.py` | Application lifecycle, Qt/QML setup, command-line entry point |
+| `controller.py` | UI-facing orchestration, background tasks, delivery state |
+| `database.py` | SQLite schema, media manifest, history, delivery attempts |
+| `media.py` | Discovery, FFprobe validation, thumbnails, previews, FFmpeg exports |
+| `telegram.py` | Telegram Bot API and Telethon personal-account workflows |
+| `x_assist.py` | Official X composer, clipboard, drag, and reveal handoff |
+| `cleanup.py` | Generated-file boundary checks and Trash operations |
+| `secrets.py` | Operating-system credential store and restricted fallback |
+| `qt_models.py` | Paged and virtualized Qt list models |
+| `native_window.py` | Frameless movement, resize, state, and macOS NSWindow integration |
+| `qml/` | Application shell, library, Prepare, history, settings, shared controls |
 
-The app owns presentation state and sends long-running work to background
-workers. The core crate remains independent of GPUI so database, media, safety,
-and delivery behavior can be tested directly.
+## Window shell
 
-## Library model
+The visible title bar and window controls are rendered in QML so every theme
+owns the complete window surface. `NativeWindowController` keeps those controls
+connected to operating-system behavior:
 
-Filename discovery, metadata verification, thumbnails, and hover previews are
-separate stages:
+- system move where available, with a cursor-driven geometry fallback
+- native resize on supported backends, with constrained manual resizing on
+  macOS
+- normal, maximized, minimized, and full-screen state restoration
+- active and inactive presentation state
+- rounded windowed corners and native shadow configuration through NSWindow
 
-1. A recursive scan builds a lightweight persistent manifest.
-2. SQLite serves paged media rows, folder summaries, search, and random picks.
-3. Bounded workers validate media and generate visual derivatives.
-4. The GPUI layer applies results only when they still belong to the active
-   workspace and generation.
+Resize hit zones live outside the scaled workspace, so interface-density
+settings do not shrink the draggable edges or title-bar controls.
 
-This keeps startup, navigation, and random selection responsive for large
-libraries.
+## Large-library model
 
-## Prepare and playback
+Filename discovery, metadata verification, thumbnail generation, and hover
+preview generation are separate stages.
 
-GStreamer provides in-process playback. FFmpeg and FFprobe run as external
-processes for probing, thumbnails, previews, and exports. Editing state stays
-non-destructive until an export is requested.
+1. A recursive `os.scandir` pass builds a lightweight persistent manifest.
+2. SQLite provides paged media rows and folder summaries.
+3. Visible tiles request thumbnails through a bounded worker queue.
+4. Random selection reads from SQLite and validates only the selected clip.
+5. Optional comprehensive verification and thumbnail generation run outside
+   the UI thread.
 
-The docked Prepare panel and full Studio view share the same live state:
-selection, playback position, trim, crop, masks, captions, compression,
-destinations, progress, and errors.
+This separation keeps application startup and Random responsive even when the
+library contains thousands of files.
 
-## Persistence and delivery
+## Media safety
 
-SQLite stores library roots, media metadata, workspaces, settings, post
-history, and per-platform delivery attempts. Telegram delivery and X handoff
-have independent states, so one platform can succeed without hiding a failure
-or incomplete action on the other.
-
-Secrets use the operating-system credential store where available, with a
-permission-restricted local fallback. The fallback and database are local
-application data and must never be attached to public reports.
-
-## Safety boundaries
-
-- Source videos are opened read-only.
-- FFmpeg writes to a partial output before the final atomic move.
-- Cancellation and failure remove incomplete generated output.
-- Cleanup requires a database record marked as generated.
-- Cleanup resolves the target and verifies it is inside the configured export
+- Source videos are never opened for writing.
+- FFmpeg writes to a `.partial.mp4` path first.
+- A completed partial file is atomically moved to its final export path.
+- Cancellation and errors remove the partial output.
+- Cleanup requires an export record marked as generated.
+- Cleanup also verifies that the target resolves inside the configured export
   directory before moving it to Trash.
 
-## Platform and packaging boundaries
+## Delivery state
 
-Shared behavior lives in the workspace crates. Platform-specific window,
-clipboard, and packaging work is kept behind target-specific Rust modules or
-scripts. The macOS packager embeds GStreamer and media tools; Windows native
-runtime deployment is not yet considered release-ready.
+Posts and platform-specific attempts are stored separately. Telegram can be
+sent while X remains prepared, and either platform can retain its completed
+state if the other fails.
+
+## Packaging
+
+PyInstaller freezes the Python runtime, Qt libraries, QML, assets, application
+code, and bundled media tools. GitHub Actions builds natively for each target
+architecture. macOS packages are ZIP and DMG files; Windows packages are an
+Inno Setup installer and a portable ZIP.

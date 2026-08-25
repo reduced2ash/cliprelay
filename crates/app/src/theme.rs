@@ -1,4 +1,4 @@
-//! Theme palettes for Relay, Pitch Black, and Full White.
+//! Theme palettes — Relay, Pitch Black, Full White (DESIGN.md tokens).
 #![allow(dead_code)]
 
 use gpui::Hsla;

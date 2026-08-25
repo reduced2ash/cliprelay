@@ -1,0 +1,1403 @@
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+from pathlib import Path
+
+import pytest
+from watchdog.events import (
+    FileClosedEvent,
+    FileClosedNoWriteEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileMovedEvent,
+    FileOpenedEvent,
+)
+
+from cliprelay.controller import AppController, _WatchHandler
+from cliprelay.database import Database, EXACT_FOLDER_SCOPE_PREFIX
+from cliprelay.media import ExportResult, ScanCancelled, ScanResult
+from cliprelay.qt_models import FolderModel, HistoryModel, LibraryModel
+from cliprelay.settings import Settings
+from cliprelay.telegram import TelegramBotService, TelegramError
+
+
+class MemorySecrets:
+    backend = "memory"
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.get_calls = 0
+
+    def get(self, key: str, default: str = "") -> str:
+        self.get_calls += 1
+        return self.values.get(key, default)
+
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
+
+
+class Response:
+    is_success = True
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def json(self) -> dict:
+        return self.payload
+
+
+class FakeHttpClient:
+    calls: list[tuple[str, str]] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url: str):
+        self.calls.append(("GET", url))
+        return Response({"ok": True, "result": {"username": "relay_bot"}})
+
+    async def post(self, url: str, data=None, files=None):
+        self.calls.append(("POST", url))
+        if url.endswith("/getChat"):
+            return Response({"ok": True, "result": {"title": "Test channel"}})
+        return Response({
+            "ok": True,
+            "result": {"message_id": 81, "chat": {"username": "test_channel"}},
+        })
+
+
+def test_watch_handler_only_emits_for_mutating_file_events(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+
+    for passive_event in (
+        FileOpenedEvent(str(source)),
+        FileClosedEvent(str(source)),
+        FileClosedNoWriteEvent(str(source)),
+    ):
+        emitted: list[bool] = []
+        _WatchHandler(lambda: emitted.append(True)).on_any_event(
+            passive_event
+        )
+        assert emitted == []
+
+    for mutation_event in (
+        FileCreatedEvent(str(source)),
+        FileDeletedEvent(str(source)),
+        FileModifiedEvent(str(source)),
+        FileMovedEvent(str(source), str(tmp_path / "moved.mp4")),
+    ):
+        emitted = []
+        _WatchHandler(lambda: emitted.append(True)).on_any_event(
+            mutation_event
+        )
+        assert emitted == [True]
+
+
+def test_watch_handler_ignores_metadata_only_modifications(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    source = library_root / "video.mp4"
+    source.write_bytes(b"video")
+    database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(source),
+        "name": source.name,
+        "relative_path": source.name,
+        "folder": "",
+        "size_bytes": source.stat().st_size,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    emitted: list[bool] = []
+    handler = _WatchHandler(
+        lambda: emitted.append(True),
+        controller._watch_event_requires_refresh,
+    )
+
+    handler.on_any_event(FileModifiedEvent(str(source)))
+    assert emitted == []
+    handler.on_any_event(FileCreatedEvent(str(source)))
+    assert emitted == []
+
+    source.write_bytes(b"substantive video update")
+    handler.on_any_event(FileModifiedEvent(str(source)))
+    assert emitted == [True]
+    controller.shutdown()
+
+
+def test_command_center_loads_overview_search_and_clear_states(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    nested = library_root / "Reference"
+    nested.mkdir(parents=True)
+    source = nested / "featured-clip.mp4"
+    source.write_bytes(b"video")
+    database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(source),
+        "name": source.name,
+        "relative_path": "Reference/featured-clip.mp4",
+        "folder": "Reference",
+        "size_bytes": source.stat().st_size,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    controller.requestCommandOverview()
+    assert [row["kind"] for row in controller.commandSearchResults] == [
+        "media",
+        "folder",
+    ]
+    assert controller.commandSearchLoading is False
+
+    controller.requestCommandSearch("featured")
+    assert controller.commandSearchResults[0]["title"] == source.name
+
+    controller.requestCommandSearch("Reference", "folders")
+    assert [row["kind"] for row in controller.commandSearchResults] == [
+        "folder",
+    ]
+    assert controller.commandSearchResults[0]["folderPath"] == "Reference"
+
+    controller.requestCommandOverview("videos")
+    assert controller.commandSearchResults
+    assert all(
+        row["kind"] == "media"
+        for row in controller.commandSearchResults
+    )
+
+    controller.requestCommandSearch("")
+    assert controller.commandSearchResults == []
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_bot_validation_destination_and_send(monkeypatch, tmp_path: Path) -> None:
+    from cliprelay import telegram as telegram_module
+
+    monkeypatch.setattr(telegram_module.httpx, "AsyncClient", FakeHttpClient)
+    secrets = MemorySecrets()
+    service = TelegramBotService(secrets)
+    bot = await service.validate("123:token")
+    assert bot["username"] == "relay_bot"
+    assert secrets.get("telegram_bot_token") == "123:token"
+    assert (await service.validate_destination("@test"))["title"] == "Test channel"
+
+    video = tmp_path / "prepared.mp4"
+    video.write_bytes(b"video")
+    progress: list[float] = []
+    delivery = await service.send_video(video, "caption", "@test", lambda p, _: progress.append(p))
+    assert delivery.message_id == "81"
+    assert delivery.link == "https://t.me/test_channel/81"
+    assert progress == [0.05, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_bot_rejects_oversized_file_before_network(tmp_path: Path) -> None:
+    secrets = MemorySecrets()
+    secrets.set("telegram_bot_token", "token")
+    service = TelegramBotService(secrets)
+    video = tmp_path / "large.mp4"
+    with video.open("wb") as stream:
+        stream.truncate(50 * 1024 * 1024 + 1)
+    with pytest.raises(TelegramError, match="exceeds"):
+        await service.send_video(video, "", "@test")
+
+
+class FailingBot:
+    token = "token"
+
+    async def send_video(self, *args, **kwargs):
+        raise TelegramError("Bot is not allowed to post there")
+
+
+class PreparedX:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, str]] = []
+
+    def prepare(self, path: Path, caption: str) -> None:
+        self.calls.append((Path(path), caption))
+
+
+class PreparedProcessor:
+    def __init__(self, output: Path) -> None:
+        self.output = output
+        self.edits = None
+
+    async def export(self, media, start, end, preset, target, progress=None, edits=None):
+        self.edits = edits
+        progress(1.0, "Export ready")
+        return ExportResult(self.output, self.output.stat().st_size, end - start, True, preset)
+
+    def cancel(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_both_destinations_keep_x_handoff_when_telegram_fails(tmp_path: Path) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    media_id = database.upsert_media({
+        "root_path": str(tmp_path), "path": str(source), "name": source.name,
+        "relative_path": source.name, "folder": "", "duration": 5,
+        "width": 640, "height": 360, "size_bytes": source.stat().st_size,
+        "video_codec": "h264", "audio_codec": "aac", "frame_rate": 30, "mtime": 1,
+    })
+    output = tmp_path / "prepared.mp4"
+    output.write_bytes(b"prepared")
+    settings = Settings(database)
+    settings.set("export_dir", str(tmp_path))
+    secrets = MemorySecrets()
+    library = LibraryModel(database)
+    controller = AppController(
+        database, settings, secrets, library, FolderModel(database), HistoryModel(database)
+    )
+    controller.bot = FailingBot()
+    controller.processor = PreparedProcessor(output)
+    prepared_x = PreparedX()
+    controller.x_assistant = prepared_x
+
+    await controller._publish_async({
+        "mediaId": media_id,
+        "trimStart": 0,
+        "trimEnd": 5,
+        "preset": "balanced",
+        "telegramEnabled": True,
+        "xEnabled": True,
+        "telegramMode": "bot",
+        "telegramDestination": "@test",
+        "telegramCaption": "telegram caption",
+        "xCaption": "x caption",
+        "edits": {
+            "crop": {"enabled": True, "x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+            "overlays": [{"x": 0.2, "y": 0.2, "width": 0.25, "height": 0.1}],
+        },
+        "cleanupPolicy": "keep",
+    })
+
+    post = database.list_history()[0]
+    assert post["telegram_status"] == "failed"
+    assert post["x_status"] == "prepared"
+    assert "Telegram:" in post["error"]
+    assert prepared_x.calls == [(output, "x caption")]
+    assert controller.processor.edits["crop"]["width"] == pytest.approx(0.8)
+    assert len(controller.processor.edits["overlays"]) == 1
+    assert database.get_media(media_id)["posted_count"] == 1
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_random_uses_cached_database_without_walking_library(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from cliprelay import controller as controller_module
+
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    source = library_root / "cached.mp4"
+    source.write_bytes(b"source")
+    media_id = database.upsert_media({
+        "root_path": str(library_root), "path": str(source), "name": source.name,
+        "relative_path": source.name, "folder": "", "duration": 5,
+        "width": 640, "height": 360, "size_bytes": source.stat().st_size,
+        "video_codec": "h264", "audio_codec": "aac", "frame_rate": 30,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    secrets = MemorySecrets()
+    controller = AppController(
+        database,
+        settings,
+        secrets,
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    assert secrets.get_calls == 0
+    assert controller._startup_refresh_timer.interval() == 4_000
+    assert controller._startup_refresh_timer.isSingleShot()
+    assert not controller._auto_scan_timer.isActive()
+    secret_reads = secrets.get_calls
+    assert controller.settings["botConfigured"] is False
+    assert controller.settings["personalConfigured"] is False
+    assert secrets.get_calls == secret_reads
+    monkeypatch.setattr(
+        controller.indexer,
+        "discover",
+        lambda *_: pytest.fail("Random must not walk the folder tree"),
+    )
+    main_thread = threading.get_ident()
+    original_random = database.random_media
+
+    def random_off_ui_thread(*args, **kwargs):
+        assert threading.get_ident() != main_thread
+        return original_random(*args, **kwargs)
+
+    monkeypatch.setattr(database, "random_media", random_off_ui_thread)
+    monkeypatch.setattr(controller.indexer, "ensure_thumbnail", lambda *_: None)
+
+    await controller._pick_random_cached_async()
+
+    assert controller.selectedMediaId == media_id
+    assert not controller.selectedMediaChecking
+    opened: list[str] = []
+    monkeypatch.setattr(
+        controller_module.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toLocalFile()) or True,
+    )
+    controller.openSelectedVideo()
+    assert len(opened) == 1
+    assert Path(opened[0]) == source
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_library_page_fetch_runs_off_ui_thread(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    settings = Settings(database)
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    library.has_more = True
+    main_thread = threading.get_ident()
+    called = False
+
+    def fetch_page(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        assert threading.get_ident() != main_thread
+        return []
+
+    monkeypatch.setattr(database, "list_media", fetch_page)
+    controller.loadMoreMedia()
+    for _ in range(100):
+        if controller._load_more_task is None:
+            break
+        await asyncio.sleep(0.01)
+
+    assert called
+    assert controller._load_more_task is None
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_filtered_library_refresh_runs_off_ui_thread(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        Settings(database),
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    controller._runtime_model_workers = True
+    main_thread = threading.get_ident()
+    queried = False
+
+    def list_media(*_args, **_kwargs):
+        nonlocal queried
+        queried = True
+        assert threading.get_ident() != main_thread
+        return []
+
+    monkeypatch.setattr(database, "list_media", list_media)
+    controller.setSearch("large library query")
+    for _ in range(100):
+        if controller._library_model_refresh_task is None:
+            break
+        await asyncio.sleep(0.01)
+
+    assert queried
+    assert controller._library_model_refresh_task is None
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_maximum_performance_prefers_hardware_export(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    settings = Settings(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    assert controller.processor.encoder_mode == "software"
+    controller.setSetting("performance_mode", "maximum")
+    assert controller.processor.encoder_mode == "hardware"
+    assert controller._thumbnail_semaphore._value == 4
+    assert controller._preview_semaphore._value == 2
+
+    controller.setSetting("export_encoder", "software")
+    assert controller.processor.encoder_mode == "software"
+    controller.setSetting("export_encoder", "hardware")
+    assert controller.processor.encoder_mode == "hardware"
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_random_folder_filter_uses_selected_subtree(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    chosen = library_root / "chosen" / "deeper" / "selected.mp4"
+    outside = library_root / "outside" / "other.mp4"
+    chosen.parent.mkdir(parents=True)
+    outside.parent.mkdir(parents=True)
+    chosen.write_bytes(b"chosen")
+    outside.write_bytes(b"outside")
+
+    chosen_id = database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(chosen),
+        "name": chosen.name,
+        "relative_path": "chosen/deeper/selected.mp4",
+        "folder": "chosen/deeper",
+        "duration": 5,
+        "width": 640,
+        "height": 360,
+        "size_bytes": chosen.stat().st_size,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "frame_rate": 30,
+        "mtime": chosen.stat().st_mtime,
+    })
+    database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(outside),
+        "name": outside.name,
+        "relative_path": "outside/other.mp4",
+        "folder": "outside",
+        "duration": 5,
+        "width": 640,
+        "height": 360,
+        "size_bytes": outside.stat().st_size,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "frame_rate": 30,
+        "mtime": outside.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller.indexer, "ensure_thumbnail", lambda *_: None)
+
+    controller.setRandomFolderEnabled("chosen", True)
+    assert controller.randomFolderSummary == "chosen"
+    assert controller.randomFolderSelectionCount == 1
+    assert settings.get("random_folders") == [
+        f"{EXACT_FOLDER_SCOPE_PREFIX}chosen/deeper"
+    ]
+    controller.loadRandomFolderOptions()
+    while controller.randomFolderOptionsLoading:
+        await asyncio.sleep(0.01)
+    assert next(
+        row for row in controller.randomFolderOptions
+        if row["folderPath"] == "chosen"
+    )["videoCount"] == 1
+
+    await controller._pick_random_cached_async()
+
+    assert controller.selectedMediaId == chosen_id
+    controller.clearRandomFolders()
+    assert controller.randomFolderSummary == "No folders"
+    assert controller.randomFolderSelectionCount == 0
+    assert controller.hasRandomFolderSelection is False
+    assert all(
+        row["selected"] is False
+        for row in controller.randomFolderOptions
+    )
+
+    controller.selectAllRandomFolders()
+    assert controller.randomFolderSummary == "All folders"
+    assert controller.allRandomFoldersSelected is True
+    assert controller.randomFolderSelectionCount == sum(
+        row["directVideoCount"] > 0
+        for row in controller.randomFolderOptions
+    )
+    assert all(
+        row["selected"] is True
+        for row in controller.randomFolderOptions
+    )
+    assert settings.get("random_folder_mode") == "all"
+    assert settings.get("random_folders") == []
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_random_folder_parent_selection_cascades_to_descendants(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    for relative_path in (
+        "group/direct.mp4",
+        "group/alpha/alpha.mp4",
+        "group/beta/beta.mp4",
+        "outside/outside.mp4",
+    ):
+        source = library_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(relative_path.encode())
+        database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": source.name,
+            "relative_path": relative_path,
+            "folder": source.parent.relative_to(library_root).as_posix(),
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": source.stat().st_mtime,
+        })
+
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+
+    controller.loadRandomFolderOptions()
+    while controller.randomFolderOptionsLoading:
+        await asyncio.sleep(0.01)
+    controller.clearRandomFolders()
+    controller.setRandomFolderEnabled("group", True)
+
+    selected = {
+        row["folderPath"]: row["selectionState"]
+        for row in controller.randomFolderOptions
+    }
+    assert selected["group"] == 2
+    assert selected["group/alpha"] == 2
+    assert selected["group/beta"] == 2
+    assert selected["outside"] == 0
+    assert controller.randomFolderSelectionCount == 3
+
+    controller.setRandomFolderEnabled("group/alpha", False)
+    selected = {
+        row["folderPath"]: row["selectionState"]
+        for row in controller.randomFolderOptions
+    }
+    assert selected["group"] == 1
+    assert selected["group/alpha"] == 0
+    assert selected["group/beta"] == 2
+    assert controller.randomFolderSummary == "2 folders"
+    assert settings.get("random_folders") == [
+        f"{EXACT_FOLDER_SCOPE_PREFIX}group",
+        f"{EXACT_FOLDER_SCOPE_PREFIX}group/beta",
+    ]
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_selection_arrows_feed_unified_navigation_history(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    media_ids: list[int] = []
+    for index, (name, mtime) in enumerate([
+        ("newest.mp4", 300),
+        ("middle.mp4", 200),
+        ("oldest.mp4", 100),
+    ]):
+        source = library_root / name
+        source.write_bytes(str(index).encode())
+        media_ids.append(database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": name,
+            "relative_path": name,
+            "folder": "",
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": mtime,
+        }))
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    controller.selectMedia(media_ids[1])
+    controller.navigateSelection(1)
+    for _ in range(100):
+        if (
+            controller._selection_navigation_task is None
+            and controller.selectedMediaId == media_ids[2]
+        ):
+            break
+        await asyncio.sleep(0.01)
+    assert controller.selectedMediaId == media_ids[2]
+
+    controller.selectMedia(media_ids[1])
+    for _ in range(100):
+        if controller._selection_navigation_task is None:
+            break
+        await asyncio.sleep(0.01)
+    assert controller.canSelectPrevious
+    assert controller.canSelectNext
+
+    controller.navigateSelection(-1)
+    assert controller.selectedMediaId == media_ids[0]
+    assert controller.canNavigateBack
+
+    controller.navigateBack()
+    assert controller.selectedMediaId == media_ids[1]
+    assert controller.canNavigateForward
+
+    controller.navigateForward()
+    assert controller.selectedMediaId == media_ids[0]
+
+    random_rows = [
+        database.get_media(media_ids[1]),
+        database.get_media(media_ids[2]),
+    ]
+    monkeypatch.setattr(
+        database,
+        "random_media",
+        lambda *_args, **_kwargs: random_rows.pop(0),
+    )
+    await controller._pick_random_cached_async()
+    await controller._pick_random_cached_async()
+    assert controller.selectedMediaId == media_ids[2]
+
+    controller.navigateBack()
+    assert controller.selectedMediaId == media_ids[1]
+
+    controller.selectMedia(media_ids[0])
+    assert controller.canNavigateForward is False
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_navigation_history_restores_mixed_folder_and_video_states(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    folder_a = library_root / "folder-a"
+    folder_b = library_root / "folder-b"
+    folder_a.mkdir(parents=True)
+    folder_b.mkdir()
+
+    media_ids: dict[str, int] = {}
+    for folder, name, mtime in [
+        ("folder-a", "a.mp4", 200),
+        ("folder-b", "b.mp4", 100),
+    ]:
+        source = library_root / folder / name
+        source.write_bytes(name.encode())
+        media_ids[folder] = database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": name,
+            "relative_path": f"{folder}/{name}",
+            "folder": folder,
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": mtime,
+        })
+
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    restored: list[tuple[str, str, int]] = []
+    controller.libraryNavigationRestored.connect(
+        lambda folder, search, folder_index: restored.append(
+            (folder, search, folder_index)
+        )
+    )
+
+    controller.setFolder("folder-a")
+    controller.selectMedia(media_ids["folder-a"])
+    monkeypatch.setattr(
+        database,
+        "random_media",
+        lambda *_args, **_kwargs: database.get_media(
+            media_ids["folder-b"]
+        ),
+    )
+    await controller._pick_random_cached_async()
+    controller.setFolder("folder-b")
+
+    assert library.folder == "folder-b"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+
+    controller.navigateBack()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+    assert restored[-1][0] == "folder-a"
+
+    controller.navigateBack()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-a"]
+
+    controller.navigateForward()
+    assert library.folder == "folder-a"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+
+    controller.navigateForward()
+    assert library.folder == "folder-b"
+    assert controller.selectedMediaId == media_ids["folder-b"]
+    assert controller.canNavigateForward is False
+
+    replacement_root = tmp_path / "replacement"
+    replacement_root.mkdir()
+    controller.setSetting("library_root", str(replacement_root))
+    assert controller.canNavigateBack is False
+    assert controller.canNavigateForward is False
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_workspace_tabs_keep_independent_roots_drafts_and_history(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    roots = [tmp_path / "library-a", tmp_path / "library-b"]
+    media: list[list[int]] = [[], []]
+    for root_index, library_root in enumerate(roots):
+        library_root.mkdir()
+        for file_index in range(2):
+            source = library_root / f"clip-{file_index}.mp4"
+            source.write_bytes(f"{root_index}-{file_index}".encode())
+            media[root_index].append(database.upsert_media({
+                "root_path": str(library_root),
+                "path": str(source),
+                "name": source.name,
+                "relative_path": source.name,
+                "folder": "",
+                "duration": 5,
+                "width": 640,
+                "height": 360,
+                "size_bytes": source.stat().st_size,
+                "video_codec": "h264",
+                "audio_codec": "aac",
+                "frame_rate": 30,
+                "mtime": 100 - file_index,
+            }))
+
+    settings = Settings(database)
+    settings.set("library_root", str(roots[0]))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    monkeypatch.setattr(controller, "ensureThumbnail", lambda *_: None)
+    monkeypatch.setattr(controller, "ensureTimeline", lambda *_: None)
+
+    first_workspace = controller.activeWorkspaceId
+    controller.setSetting("folder_sort_mode", "count_desc")
+    controller.selectMedia(media[0][0])
+    controller.selectMedia(media[0][1])
+    controller.saveActiveWorkspaceDraft({
+        "mediaId": media[0][1],
+        "caption": "first workspace",
+    })
+
+    controller.createWorkspace(str(roots[1]))
+    second_workspace = controller.activeWorkspaceId
+    assert second_workspace != first_workspace
+    assert controller.settings["library_root"] == str(roots[1])
+    controller.setSetting("folder_sort_mode", "name_desc")
+    controller.selectMedia(media[1][0])
+    controller.selectMedia(media[1][1])
+    controller.saveActiveWorkspaceDraft({
+        "mediaId": media[1][1],
+        "caption": "second workspace",
+    })
+
+    controller.navigateBack()
+    assert controller.selectedMediaId == media[1][0]
+
+    controller.activateWorkspace(first_workspace)
+    assert controller.settings["library_root"] == str(roots[0])
+    assert controller.settings["folder_sort_mode"] == "count_desc"
+    assert controller.selectedMediaId == media[0][1]
+    assert controller.activeWorkspaceDraft["caption"] == "first workspace"
+    controller.navigateBack()
+    assert controller.selectedMediaId == media[0][0]
+
+    controller.activateWorkspace(second_workspace)
+    assert controller.settings["folder_sort_mode"] == "name_desc"
+    assert controller.selectedMediaId == media[1][0]
+    assert controller.canNavigateForward
+    assert controller.activeWorkspaceDraft["caption"] == "second workspace"
+
+    controller.renameWorkspace(second_workspace, "Reference clips")
+    assert controller.activeWorkspace["title"] == "Reference clips"
+    controller.duplicateWorkspace(second_workspace)
+    duplicate_id = controller.activeWorkspaceId
+    assert controller.workspaceCount == 3
+    assert controller.activeWorkspace["title"] == "Reference clips copy"
+    controller.closeWorkspace(duplicate_id)
+    assert controller.workspaceCount == 2
+    assert controller.closedWorkspaceCount == 1
+    controller.reopenClosedWorkspace()
+    assert controller.activeWorkspaceId == duplicate_id
+    assert controller.workspaceCount == 3
+    controller.shutdown()
+
+    restored = AppController(
+        database,
+        Settings(database),
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    assert restored.workspaceCount == 3
+    assert restored.activeWorkspaceId == duplicate_id
+    assert restored.settings["library_root"] == str(roots[1])
+    assert restored.settings["folder_sort_mode"] == "name_desc"
+    assert restored.activeWorkspaceDraft["caption"] == "second workspace"
+    restored.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scan_can_be_stopped_without_waiting_for_worker_completion(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    started = threading.Event()
+    worker_stopped = threading.Event()
+    messages: list[tuple[str, str]] = []
+    controller.toast.connect(
+        lambda level, message: messages.append((level, message))
+    )
+
+    def slow_manifest(
+        _root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        assert cancel_event is not None
+        started.set()
+        while not cancel_event.wait(0.01):
+            pass
+        worker_stopped.set()
+        raise ScanCancelled("stopped")
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", slow_manifest)
+    controller.scanLibrary()
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    assert controller.scanning
+    assert controller.activeWorkspaceScanning
+    assert controller.scanRoot == str(library_root)
+    controller.cancelScan()
+    assert controller.scanCancelling
+
+    for _ in range(100):
+        if not controller.scanning:
+            break
+        await asyncio.sleep(0.01)
+
+    assert worker_stopped.is_set()
+    assert not controller.scanning
+    assert any("Videos found so far" in message for _, message in messages)
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_new_workspace_preempts_old_scan_and_starts_its_root(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    first_root = tmp_path / "library-a"
+    second_root = tmp_path / "library-b"
+    first_root.mkdir()
+    second_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(first_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    first_started = threading.Event()
+    first_stopped = threading.Event()
+    calls: list[str] = []
+
+    def root_manifest(
+        root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        normalized = str(Path(root).resolve())
+        calls.append(normalized)
+        if normalized == str(first_root):
+            assert cancel_event is not None
+            first_started.set()
+            while not cancel_event.wait(0.01):
+                pass
+            first_stopped.set()
+            raise ScanCancelled("superseded")
+        return ScanResult(discovered=3, indexed=3)
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", root_manifest)
+    controller._request_library_refresh(False, reason="manual")
+    for _ in range(100):
+        if first_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    first_workspace_id = controller.activeWorkspaceId
+    controller.createWorkspace(str(second_root))
+    second_workspace_id = controller.activeWorkspaceId
+    assert second_workspace_id != first_workspace_id
+
+    for _ in range(200):
+        if not controller.scanning and len(calls) >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert first_stopped.is_set()
+    assert calls == [str(first_root), str(second_root)]
+    assert controller.settings["library_root"] == str(second_root)
+    assert not controller.scanning
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_switching_tabs_keeps_scan_but_closing_last_root_tab_stops_it(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    first_root = tmp_path / "library-a"
+    second_root = tmp_path / "library-b"
+    first_root.mkdir()
+    second_root.mkdir()
+    settings = Settings(database)
+    settings.set("library_root", str(first_root))
+    settings.set("auto_index", False)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        LibraryModel(database),
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def slow_manifest(
+        _root: str,
+        *_args,
+        cancel_event: threading.Event | None = None,
+        **_kwargs,
+    ) -> ScanResult:
+        assert cancel_event is not None
+        started.set()
+        while not cancel_event.wait(0.01):
+            pass
+        stopped.set()
+        raise ScanCancelled("closed")
+
+    monkeypatch.setattr(controller.indexer, "refresh_manifest", slow_manifest)
+    first_workspace_id = controller.activeWorkspaceId
+    second_workspace = controller._new_workspace(str(second_root))
+    controller._workspace_tabs.append(second_workspace)
+    controller._request_library_refresh(False, reason="manual")
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+
+    controller.activateWorkspace(second_workspace["id"])
+    await asyncio.sleep(0.05)
+    assert controller.scanning
+    assert not controller.activeWorkspaceScanning
+    assert not stopped.is_set()
+
+    controller.closeWorkspace(first_workspace_id)
+    for _ in range(100):
+        if stopped.is_set() and not controller.scanning:
+            break
+        await asyncio.sleep(0.01)
+
+    assert stopped.is_set()
+    assert not controller.scanning
+    controller.shutdown()
+
+
+def test_restored_workspace_preloads_before_event_loop_starts(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    media_ids: list[int] = []
+    for index in range(2):
+        source = library_root / f"clip-{index}.mp4"
+        source.write_bytes(b"video")
+        media_ids.append(database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": source.name,
+            "relative_path": source.name,
+            "folder": "",
+            "duration": 5,
+            "width": 640,
+            "height": 360,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": 100 - index,
+        }))
+
+    workspace_id = "restored-workspace"
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    settings.set("performance_mode", "maximum")
+    settings.set("workspace_tabs", [{
+        "id": workspace_id,
+        "root": str(library_root),
+        "selectedMediaId": media_ids[0],
+    }])
+    settings.set("active_workspace_id", workspace_id)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    controller: AppController | None = None
+    try:
+        controller = AppController(
+            database,
+            settings,
+            MemorySecrets(),
+            LibraryModel(database),
+            FolderModel(database),
+            HistoryModel(database),
+        )
+
+        assert controller.selectedMediaId == media_ids[0]
+        assert media_ids[1] in controller._thumbnail_jobs
+        assert media_ids[1] in controller._preview_jobs
+    finally:
+        if controller is not None:
+            controller.shutdown()
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
+@pytest.mark.asyncio
+async def test_select_generates_thumbnail_and_reveals_nested_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    nested = library_root / "nested" / "clips"
+    nested.mkdir(parents=True)
+    source = nested / "chosen.mp4"
+    source.write_bytes(b"source")
+    media_id = database.upsert_media({
+        "root_path": str(library_root),
+        "path": str(source),
+        "name": source.name,
+        "relative_path": "nested/clips/chosen.mp4",
+        "folder": "nested/clips",
+        "duration": 8,
+        "width": 1280,
+        "height": 720,
+        "size_bytes": source.stat().st_size,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "frame_rate": 30,
+        "mtime": source.stat().st_mtime,
+    })
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    library = LibraryModel(database)
+    folders = FolderModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        folders,
+        HistoryModel(database),
+    )
+    generated: list[int] = []
+    timeline_generated: list[int] = []
+    thumbnail = tmp_path / "chosen.jpg"
+    timeline = tmp_path / "chosen-timeline.jpg"
+
+    def record_thumbnail(selected_id: int) -> Path:
+        generated.append(selected_id)
+        thumbnail.write_bytes(b"thumbnail")
+        database.set_media_asset(selected_id, "thumbnail_path", str(thumbnail))
+        return thumbnail
+
+    def record_timeline(selected_id: int) -> Path:
+        timeline_generated.append(selected_id)
+        timeline.write_bytes(b"timeline")
+        database.set_media_asset(
+            selected_id,
+            "timeline_path",
+            str(timeline),
+        )
+        return timeline
+
+    monkeypatch.setattr(controller.indexer, "ensure_thumbnail", record_thumbnail)
+    monkeypatch.setattr(controller.indexer, "ensure_timeline", record_timeline)
+    controller.selectMedia(media_id)
+    for _ in range(50):
+        if not controller._thumbnail_jobs and controller._timeline_task is None:
+            break
+        await asyncio.sleep(0.01)
+    assert generated == [media_id]
+    assert timeline_generated == [media_id]
+    assert library.rows[0]["thumbnailState"] == "ready"
+    assert library.rows[0]["thumbnailUrl"].startswith("file:")
+    assert controller.selectedMedia["timelineUrl"].startswith("file:")
+
+    library.search = "does not match"
+    library.folder = "elsewhere"
+    revealed: list[tuple[str, int, int]] = []
+    controller.libraryRevealRequested.connect(
+        lambda folder, media_index, folder_index: revealed.append(
+            (folder, media_index, folder_index)
+        )
+    )
+    controller.revealSelectedInLibrary()
+
+    assert library.search == ""
+    assert library.folder == "nested/clips"
+    assert library.rows[0]["mediaId"] == media_id
+    assert revealed == [("nested/clips", 0, folders.find_index("nested/clips"))]
+
+    post_id = database.create_post({
+        "media_id": media_id,
+        "telegram_enabled": True,
+        "x_enabled": False,
+        "telegram_caption": "from history",
+    })
+    navigated: list[str] = []
+    controller.navigationRequested.connect(navigated.append)
+    controller.clearSelection()
+    library.search = "hidden"
+    library.folder = "elsewhere"
+    revealed.clear()
+
+    controller.viewHistoryPost(post_id)
+
+    assert controller.selectedMediaId == media_id
+    assert library.search == ""
+    assert library.folder == "nested/clips"
+    assert navigated == ["library"]
+    assert revealed == [("nested/clips", 0, folders.find_index("nested/clips"))]
+    controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_visible_thumbnail_queue_limits_parallel_ffmpeg_work(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database = Database(tmp_path / "db.sqlite3")
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    media_ids: list[int] = []
+    for index in range(6):
+        source = library_root / f"clip-{index}.mp4"
+        source.write_bytes(b"source")
+        media_ids.append(database.upsert_media({
+            "root_path": str(library_root),
+            "path": str(source),
+            "name": source.name,
+            "relative_path": source.name,
+            "folder": "",
+            "duration": 8,
+            "width": 1280,
+            "height": 720,
+            "size_bytes": source.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "frame_rate": 30,
+            "mtime": source.stat().st_mtime,
+        }))
+    settings = Settings(database)
+    settings.set("library_root", str(library_root))
+    library = LibraryModel(database)
+    controller = AppController(
+        database,
+        settings,
+        MemorySecrets(),
+        library,
+        FolderModel(database),
+        HistoryModel(database),
+    )
+    state_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    def create_thumbnail(media_id: int) -> Path:
+        nonlocal active, maximum_active
+        with state_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.03)
+        target = tmp_path / f"{media_id}.jpg"
+        target.write_bytes(b"thumbnail")
+        database.set_media_asset(media_id, "thumbnail_path", str(target))
+        with state_lock:
+            active -= 1
+        return target
+
+    monkeypatch.setattr(controller.indexer, "ensure_thumbnail", create_thumbnail)
+    for media_id in media_ids:
+        controller.ensureThumbnail(media_id)
+    for _ in range(100):
+        if not controller._thumbnail_jobs:
+            break
+        await asyncio.sleep(0.01)
+
+    assert maximum_active == 2
+    assert all(row["thumbnailState"] == "ready" for row in library.rows)
+    controller.shutdown()
