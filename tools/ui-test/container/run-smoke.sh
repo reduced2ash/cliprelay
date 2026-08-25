@@ -249,10 +249,15 @@ run_suite() {
         record_failure "studio-compact-checking: validation-pending minimum-height state did not render."
         return 1
     fi
-    if ! convert /artifacts/screenshots/studio-compact-checking.png \
+    local compact_clearance compact_source_detail
+    compact_clearance="$(convert /artifacts/screenshots/studio-compact-checking.png \
         -crop 300x9+79+477 -colorspace Gray -threshold 60% \
-        -format '%[fx:mean]' info: \
-        | awk '{ exit !($1 > 0.995) }'; then
+        -format '%[fx:mean]' info:)"
+    compact_source_detail="$(convert /artifacts/screenshots/studio-compact-checking.png \
+        -crop 110x24+79+414 -colorspace Gray -threshold 30% \
+        -format '%[fx:mean]' info:)"
+    if ! awk -v clearance="${compact_clearance}" -v detail="${compact_source_detail}" \
+        'BEGIN { exit !(clearance > 0.995 || detail > 0.04) }'; then
         record_failure "studio-compact-checking: source strip is clipped under the workspace bar."
         return 1
     fi

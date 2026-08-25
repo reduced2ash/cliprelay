@@ -204,36 +204,12 @@ pub fn button(
     cx: &mut Context<crate::App>,
     on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
-    button_in_theme(
-        id,
-        label,
-        kind,
-        icon,
-        enabled,
-        &current_theme(),
-        cx,
-        on_click,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn button_in_theme(
-    id: impl Into<SharedString>,
-    label: &str,
-    kind: ButtonKind,
-    icon: Option<&'static str>,
-    enabled: bool,
-    theme: &Theme,
-    cx: &mut Context<crate::App>,
-    on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
-) -> Stateful<Div> {
     let on_click = Rc::new(on_click);
     let click = Rc::clone(&on_click);
     let activate = Rc::clone(&on_click);
-    let focus_color = theme.accent;
-    button_base(id, label, kind, icon, enabled, theme).when(enabled, |this| {
+    button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.tab_index(0)
-            .focus(move |style| style.border_2().border_color(focus_color))
+            .focus(|style| style.border_2().border_color(current_theme().accent))
             .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
             .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                 activate(app, cx);
@@ -260,7 +236,7 @@ pub fn button_at(
     cx: &mut Context<crate::App>,
     on_click: impl Fn(&mut crate::App, Point<Pixels>, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
-    button_base(id, label, kind, icon, enabled, &current_theme()).when(enabled, |this| {
+    button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.on_click(cx.listener(move |app, event: &ClickEvent, _window, cx| {
             on_click(app, event.position(), cx)
         }))
@@ -273,8 +249,8 @@ fn button_base(
     kind: ButtonKind,
     icon: Option<&'static str>,
     enabled: bool,
-    theme: &Theme,
 ) -> Stateful<Div> {
+    let theme = current_theme();
     let id: SharedString = id.into();
     let icon_color = if !enabled {
         theme.muted
@@ -358,34 +334,7 @@ pub fn workbench_button(
     cx: &mut Context<crate::App>,
     on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
-    workbench_button_in_theme(
-        id,
-        label,
-        icon,
-        kind,
-        enabled,
-        icon_only,
-        tooltip,
-        &current_theme(),
-        cx,
-        on_click,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn workbench_button_in_theme(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    kind: ButtonKind,
-    enabled: bool,
-    icon_only: bool,
-    tooltip: impl Into<SharedString>,
-    theme: &Theme,
-    cx: &mut Context<crate::App>,
-    on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
-) -> Stateful<Div> {
-    let focus_color = theme.accent;
+    let theme = current_theme();
     let tooltip = tooltip.into();
     let id: SharedString = id.into();
     let icon_color = if !enabled {
@@ -455,7 +404,7 @@ pub fn workbench_button_in_theme(
         .when(!enabled, |this| this.opacity(0.42).cursor_default())
         .when(enabled, |this| {
             this.tab_index(0)
-                .focus(move |style| style.border_2().border_color(focus_color))
+                .focus(|style| style.border_2().border_color(current_theme().accent))
                 .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                     activate(app, cx);
@@ -542,60 +491,7 @@ pub fn field_with_icon_hint(
     hint: Option<&'static str>,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
-    field_with_theme(
-        id,
-        placeholder,
-        state,
-        focused,
-        enabled,
-        password,
-        icon_glyph,
-        hint,
-        &current_theme(),
-        cx,
-    )
-}
-
-/// Text field rendered with a surface-scoped theme.
-#[allow(clippy::too_many_arguments)]
-pub fn field_in_theme(
-    id: &'static str,
-    placeholder: &str,
-    state: &FieldState,
-    focused: bool,
-    enabled: bool,
-    password: bool,
-    theme: &Theme,
-    cx: &mut Context<crate::App>,
-) -> Stateful<Div> {
-    field_with_theme(
-        id,
-        placeholder,
-        state,
-        focused,
-        enabled,
-        password,
-        None,
-        None,
-        theme,
-        cx,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn field_with_theme(
-    id: &'static str,
-    placeholder: &str,
-    state: &FieldState,
-    focused: bool,
-    enabled: bool,
-    password: bool,
-    icon_glyph: Option<&'static str>,
-    hint: Option<&'static str>,
-    theme: &Theme,
-    cx: &mut Context<crate::App>,
-) -> Stateful<Div> {
-    let focus_color = theme.accent;
+    let theme = current_theme();
     let mut element = div()
         .id(id)
         .flex_1()
@@ -610,11 +506,7 @@ fn field_with_theme(
         .items_center()
         .gap(px(7.0))
         .text_size(px(13.0))
-        .text_color(if state.text.is_empty() {
-            theme.muted
-        } else {
-            theme.text
-        })
+        .text_color(theme.text)
         .cursor_text();
     if focused {
         element = element.relative().child(
@@ -666,7 +558,7 @@ fn field_with_theme(
         .when(!enabled, |this| this.opacity(0.46).cursor_default())
         .when(enabled, |this| {
             this.tab_index(0)
-                .focus(move |style| style.border_2().border_color(focus_color))
+                .focus(|style| style.border_2().border_color(current_theme().accent))
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.focus_field(id, cx);
                 }))
@@ -692,29 +584,16 @@ fn field_with_theme(
         })
 }
 
-/// Multiline caption area rendered with a surface-scoped theme.
+/// Multiline-ish caption area (fixed height, wraps).
 pub fn text_area(
     id: &'static str,
     placeholder: &str,
     height: f32,
     state: &FieldState,
     focused: bool,
-    theme: &Theme,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
-    text_area_with_theme(id, placeholder, height, state, focused, theme, cx)
-}
-
-fn text_area_with_theme(
-    id: &'static str,
-    placeholder: &str,
-    height: f32,
-    state: &FieldState,
-    focused: bool,
-    theme: &Theme,
-    cx: &mut Context<crate::App>,
-) -> Stateful<Div> {
-    let focus_color = theme.accent;
+    let theme = current_theme();
     let mut element = div()
         .id(id)
         .flex_1()
@@ -756,7 +635,7 @@ fn text_area_with_theme(
     );
     element
         .tab_index(0)
-        .focus(move |style| style.border_2().border_color(focus_color))
+        .focus(|style| style.border_2().border_color(current_theme().accent))
         .on_click(cx.listener(move |app, _event, _window, cx| {
             app.focus_field(id, cx);
         }))
