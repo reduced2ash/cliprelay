@@ -23,9 +23,9 @@ Get the newest build from [GitHub Releases](https://github.com/reduced2ash/clipr
 | Portable Windows | `ClipRelay-Windows-x64.zip` |
 
 Release downloads are self-contained. Users do not need to install Python,
-Qt, FFmpeg, FFprobe, or developer tools. See
-[Installation](docs/INSTALLATION.md) for platform-specific steps and signing
-status guidance.
+Qt, FFmpeg, FFprobe, or developer tools. On macOS, open the matching DMG and
+drag ClipRelay to Applications. On Windows, use the installer or keep the
+complete portable ZIP directory together.
 
 ## What it does
 
@@ -97,8 +97,7 @@ Every tag matching `v*` runs native builds on:
 
 GitHub Actions publishes DMG, ZIP, Windows installer, portable Windows,
 dependency metadata, and SHA-256 checksums. Signing and Apple notarization are
-enabled when the maintainer configures the documented repository secrets.
-See [Releasing](docs/RELEASING.md).
+enabled when the maintainer configures the required repository secrets.
 
 ## License
 

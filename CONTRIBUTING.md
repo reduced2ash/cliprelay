@@ -77,5 +77,6 @@ library to ClipRelay infrastructure.
 ## Release changes
 
 Do not commit certificates, signing keys, API credentials, generated
-installers, application databases, logs, or real user media. Maintainer release
-instructions are in [docs/RELEASING.md](docs/RELEASING.md).
+installers, application databases, logs, or real user media. Release builds are
+defined by `.github/workflows/release.yml` and the platform scripts under
+`packaging/`.
