@@ -270,6 +270,8 @@ impl App {
         let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
         let open_workspace_menu_at_boot = std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
         let exercise_workflow_at_boot = std::env::var("CLIPRELAY_EXERCISE_WORKFLOW").is_ok();
+        let open_studio_in_workflow = std::env::var("CLIPRELAY_WORKFLOW_OPEN_STUDIO").is_ok();
+        let keep_checking_in_workflow = std::env::var("CLIPRELAY_WORKFLOW_KEEP_CHECKING").is_ok();
         let settings_scroll_boot: f32 = std::env::var("CLIPRELAY_SETTINGS_SCROLL")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -503,7 +505,19 @@ impl App {
                     }
                 }
                 let _ = controller.send(Command::RevealSelectedInLibrary);
-                smol::Timer::after(Duration::from_millis(900)).await;
+                smol::Timer::after(Duration::from_millis(500)).await;
+                if open_studio_in_workflow {
+                    let _ = this.update(cx, |app, cx| {
+                        app.prepare.studio_mode = true;
+                        if keep_checking_in_workflow {
+                            app.checking = true;
+                            log::info!("ui-test workflow kept Prepare validation pending");
+                        }
+                        log::info!("ui-test workflow opened Prepare Studio");
+                        cx.notify();
+                    });
+                }
+                smol::Timer::after(Duration::from_millis(400)).await;
             })
             .detach();
         }
@@ -2803,14 +2817,14 @@ fn parse_cli_args() -> (f32, f32) {
             "--window-width" | "--window_width" => {
                 if let Some(value) = args.next() {
                     if let Ok(v) = value.parse::<f32>() {
-                        width = v.max(940.0);
+                        width = v.max(700.0);
                     }
                 }
             }
             "--window-height" | "--window_height" => {
                 if let Some(value) = args.next() {
                     if let Ok(v) = value.parse::<f32>() {
-                        height = v.max(660.0);
+                        height = v.max(520.0);
                     }
                 }
             }

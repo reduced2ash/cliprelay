@@ -25,6 +25,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
+# Keep GPUI's duplicate-interactivity assertions active in the isolated
+# release-speed smoke binary.
+ENV CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true
 COPY . .
 
 RUN --mount=type=cache,id=cliprelay-cargo-registry,target=/usr/local/cargo/registry \

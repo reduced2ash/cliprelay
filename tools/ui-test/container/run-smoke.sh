@@ -116,7 +116,11 @@ capture_case() {
     local case_data="/tmp/cases/${case_name}"
     local screenshot="/artifacts/screenshots/${case_name}.png"
     local app_log="/artifacts/logs/app-${case_name}.log"
-    local window_id geometry width height
+    local window_id geometry width height target_width=1180 target_height=760
+    if [[ "${case_name}" == "studio-compact-checking" ]]; then
+        target_width=700
+        target_height=520
+    fi
 
     mkdir -p "${case_data}" /tmp/library
     rm -f "${screenshot}"
@@ -129,8 +133,8 @@ capture_case() {
         /usr/local/bin/cliprelay \
         --data-dir "${case_data}" \
         --library /tmp/library \
-        --window-width 1180 \
-        --window-height 760 \
+        --window-width "${target_width}" \
+        --window-height "${target_height}" \
         >"${app_log}" 2>&1 &
     app_pid=$!
 
@@ -156,6 +160,12 @@ capture_case() {
     if (( width < 700 || height < 520 )); then
         stop_app
         record_failure "${case_name}: window geometry ${width}x${height} is below the app minimum."
+        return 1
+    fi
+    if [[ "${case_name}" == "studio-compact-checking" ]] \
+        && (( width != target_width || height != target_height )); then
+        stop_app
+        record_failure "${case_name}: expected exact ${target_width}x${target_height} geometry, got ${width}x${height}."
         return 1
     fi
 
@@ -215,7 +225,13 @@ run_suite() {
     capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
     capture_case command CLIPRELAY_OPEN_COMMAND=1 CLIPRELAY_QUERY=library || return 1
     capture_case workflow CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
-    if [[ "$(convert /artifacts/screenshots/workflow.png -crop 1x1+1025+270 \
+    capture_case studio CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_WORKFLOW_OPEN_STUDIO=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    capture_case studio-compact-checking \
+        CLIPRELAY_EXERCISE_WORKFLOW=1 \
+        CLIPRELAY_WORKFLOW_OPEN_STUDIO=1 \
+        CLIPRELAY_WORKFLOW_KEEP_CHECKING=1 \
+        CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    if [[ "$(convert /artifacts/screenshots/workflow.png -crop 1x1+1025+170 \
         -format '%[fx:r>b+0.2]' info:)" != "1" ]]; then
         record_failure "workflow: Prepare rendered a known red video with swapped color channels."
         return 1
@@ -226,6 +242,18 @@ run_suite() {
         || ! grep -q 'ui-test workflow retained user scroll after Library reveal' /artifacts/logs/app-workflow.log \
         || ! grep -q 'library reveal resolved media' /artifacts/logs/app-workflow.log; then
         record_failure "workflow: scroll recovery, hover preview, Random, Prepare autoplay, or source reveal did not complete."
+        return 1
+    fi
+    if ! grep -q 'ui-test workflow kept Prepare validation pending' \
+        /artifacts/logs/app-studio-compact-checking.log; then
+        record_failure "studio-compact-checking: validation-pending minimum-height state did not render."
+        return 1
+    fi
+    if ! convert /artifacts/screenshots/studio-compact-checking.png \
+        -crop 300x9+79+477 -colorspace Gray -threshold 60% \
+        -format '%[fx:mean]' info: \
+        | awk '{ exit !($1 > 0.995) }'; then
+        record_failure "studio-compact-checking: source strip is clipped under the workspace bar."
         return 1
     fi
     assert_distinct_states library history || {
@@ -244,11 +272,15 @@ run_suite() {
         record_failure "library/workflow: the exercised playback state produced no meaningful visual change."
         return 1
     }
+    assert_distinct_states workflow studio || {
+        record_failure "workflow/studio: compact and full Prepare states produced no meaningful visual change."
+        return 1
+    }
     return 0
 }
 
 if run_suite; then
-    echo "PASS isolated ClipRelay GUI smoke test (5 semantic states, including Random/playback/reveal). Artifacts: /artifacts" > /artifacts/summary.txt
+    echo "PASS isolated ClipRelay GUI smoke test (7 semantic states, including Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
     exit 0
 fi
 
