@@ -7,6 +7,8 @@ use gpui_video_player::Video;
 use std::path::PathBuf;
 use std::time::Duration;
 
+const MIN_TRIM_DURATION: f64 = 0.05;
+
 pub const COMPRESSION_OPTIONS: [(&str, &str); 7] = [
     ("Original when possible", "original"),
     ("Balanced", "balanced"),
@@ -62,6 +64,7 @@ pub struct PrepareState {
     pub trim_end: f64,
     pub inspector_tab: i64, // 0 Edit, 1 Publish
     pub studio_mode: bool,
+    pub compact_inspector_open: bool,
     pub studio_width: f64,
     pub same_caption: bool,
     pub telegram_mode_index: i64,
@@ -112,7 +115,8 @@ impl Default for PrepareState {
             trim_end: 0.0,
             inspector_tab: 0,
             studio_mode: false,
-            studio_width: 460.0,
+            compact_inspector_open: false,
+            studio_width: 420.0,
             same_caption: true,
             telegram_mode_index: 0,
             destination: String::new(),
@@ -165,6 +169,7 @@ impl PrepareState {
             self.position = 0.0;
             self.playing = false;
             self.inspector_tab = 0;
+            self.compact_inspector_open = false;
             self.active_action.clear();
             self.crop_enabled = false;
             self.crop = CropSpec {
@@ -261,6 +266,46 @@ impl PrepareState {
         if let Some(video) = &self.video {
             let _ = video.seek(Duration::from_secs_f64(0.0), true);
         }
+    }
+
+    /// Mark the current playhead as the start of the retained range.
+    /// If it crosses the existing Out mark, reopen Out to the source end so
+    /// the user's new mark is accepted instead of being silently clamped away.
+    pub fn mark_in_at_playhead(&mut self) -> bool {
+        if self.duration <= MIN_TRIM_DURATION {
+            return false;
+        }
+        let previous = (self.trim_start, self.trim_end);
+        let mark = self.position.clamp(0.0, self.duration - MIN_TRIM_DURATION);
+        let current_end = if self.trim_end > 0.0 {
+            self.trim_end.min(self.duration)
+        } else {
+            self.duration
+        };
+        self.trim_end = if mark >= current_end - MIN_TRIM_DURATION {
+            self.duration
+        } else {
+            current_end
+        };
+        self.trim_start = mark.min((self.trim_end - MIN_TRIM_DURATION).max(0.0));
+        previous != (self.trim_start, self.trim_end)
+    }
+
+    /// Mark the current playhead as the end of the retained range. Crossing
+    /// the existing In mark symmetrically reopens In to the source beginning.
+    pub fn mark_out_at_playhead(&mut self) -> bool {
+        if self.duration <= MIN_TRIM_DURATION {
+            return false;
+        }
+        let previous = (self.trim_start, self.trim_end);
+        let mark = self.position.clamp(MIN_TRIM_DURATION, self.duration);
+        if mark <= self.trim_start + MIN_TRIM_DURATION {
+            self.trim_start = 0.0;
+        }
+        self.trim_end = mark
+            .max(self.trim_start + MIN_TRIM_DURATION)
+            .min(self.duration);
+        previous != (self.trim_start, self.trim_end)
     }
 
     pub fn toggle_playback(&mut self) {
@@ -579,5 +624,47 @@ mod prepare_tests {
         prepare.trim_start = 0.0;
         prepare.trim_end = 10.0;
         assert!(!prepare.cut_active());
+    }
+
+    #[test]
+    fn playhead_marks_create_and_cross_trim_ranges_intuitively() {
+        let mut prepare = PrepareState {
+            duration: 10.0,
+            trim_end: 10.0,
+            position: 3.0,
+            ..Default::default()
+        };
+        assert!(prepare.mark_in_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (3.0, 10.0));
+
+        prepare.position = 8.0;
+        assert!(prepare.mark_out_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (3.0, 8.0));
+
+        // A new In beyond Out reopens the end of the source.
+        prepare.position = 9.0;
+        assert!(prepare.mark_in_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (9.0, 10.0));
+
+        // A new Out before In symmetrically reopens the beginning.
+        prepare.position = 2.0;
+        assert!(prepare.mark_out_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (0.0, 2.0));
+    }
+
+    #[test]
+    fn playhead_marks_preserve_a_valid_minimum_range_at_source_edges() {
+        let mut prepare = PrepareState {
+            duration: 10.0,
+            trim_end: 10.0,
+            position: 10.0,
+            ..Default::default()
+        };
+        assert!(prepare.mark_in_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (9.95, 10.0));
+
+        prepare.position = 0.0;
+        assert!(prepare.mark_out_at_playhead());
+        assert_eq!((prepare.trim_start, prepare.trim_end), (0.0, 0.05));
     }
 }

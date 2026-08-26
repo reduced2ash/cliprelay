@@ -88,30 +88,30 @@ impl Theme {
     pub fn relay() -> Self {
         Self::from_palette(
             ThemeMode::Relay,
-            "#151416",
-            "#1D1B1E",
-            "#211F22",
-            "#262328",
-            "#312C32",
-            "#2B272D",
-            "#F1ECE8",
-            "#D3CBCA",
-            "#ABA3A4",
-            "#91898C",
-            "#3A343B",
-            "#4B434C",
-            "#F07858",
-            "#D96247",
-            "#3C2928",
-            "#F07858",
-            "#151416",
-            "#72B985",
-            "#213229",
+            "#101114",
+            "#15171B",
+            "#181A1F",
+            "#1D2026",
+            "#252830",
+            "#20232A",
+            "#F1F3F5",
+            "#C8CCD2",
+            "#8E949E",
+            "#6C737E",
+            "#2A2E36",
+            "#3A3F49",
+            "#F26A4F",
+            "#DC5A42",
+            "#2A1D1B",
+            "#FF8067",
+            "#111215",
+            "#67C587",
+            "#17281E",
             "#D8A758",
-            "#352D20",
-            "#DD6B70",
-            "#392426",
-            "#211F22",
+            "#2E281A",
+            "#E26F76",
+            "#321D21",
+            "#15171B",
         )
     }
 
@@ -254,13 +254,15 @@ pub const SPACING_LG: f32 = 16.0;
 pub const SPACING_XL: f32 = 24.0;
 pub const SPACING_XXL: f32 = 32.0;
 
-pub const RADIUS_SM: f32 = 6.0;
-pub const RADIUS_MD: f32 = 10.0;
-pub const RADIUS_LG: f32 = 14.0;
+// Action controls use Zed-like square geometry. Larger radii remain available
+// for surfaces such as menus, media wells, and floating status treatments.
+pub const RADIUS_SM: f32 = 0.0;
+pub const RADIUS_MD: f32 = 5.0;
+pub const RADIUS_LG: f32 = 7.0;
 
-pub const CONTROL_HEIGHT: f32 = 44.0;
-pub const COMPACT_CONTROL_HEIGHT: f32 = 40.0;
-pub const WORKBENCH_CONTROL_HEIGHT: f32 = 30.0;
+pub const CONTROL_HEIGHT: f32 = 36.0;
+pub const COMPACT_CONTROL_HEIGHT: f32 = 32.0;
+pub const WORKBENCH_CONTROL_HEIGHT: f32 = 28.0;
 
 pub const FOCUS_WIDTH: f32 = 2.0;
 
@@ -273,9 +275,12 @@ pub const TILE_GAP_COMPACT: f32 = 8.0;
 pub const TILE_RADIUS: f32 = 4.0;
 pub const PREVIEW_DELAY_MS: u64 = 350;
 
-pub const SIDEBAR_EXPANDED_WIDTH: f32 = 204.0;
-pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 68.0;
-pub const EXPLORER_WIDTH: f32 = 204.0;
-pub const TITLE_BAR_HEIGHT: f32 = 40.0;
-pub const WORKSPACE_TAB_HEIGHT: f32 = 34.0;
-pub const CONTEXT_TOOLBAR_HEIGHT: f32 = 42.0;
+// The workbench shell follows a narrow activity rail + useful explorer split.
+// This keeps navigation present without spending a full text sidebar beside a
+// second folder column, matching the approved desktop composition.
+pub const SIDEBAR_EXPANDED_WIDTH: f32 = 196.0;
+pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 54.0;
+pub const EXPLORER_WIDTH: f32 = 244.0;
+pub const TITLE_BAR_HEIGHT: f32 = 46.0;
+pub const WORKSPACE_TAB_HEIGHT: f32 = 32.0;
+pub const CONTEXT_TOOLBAR_HEIGHT: f32 = 44.0;

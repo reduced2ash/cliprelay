@@ -1103,7 +1103,7 @@ impl App {
         self.prepare.compression_index = draft.compression_index.clamp(0, 6);
         self.prepare.target_mb = draft.target_size;
         self.prepare.cleanup_index = draft.cleanup_index.clamp(0, 2);
-        self.prepare.studio_width = draft.studio_inspector_width.clamp(360.0, 620.0);
+        self.prepare.studio_width = draft.studio_inspector_width.clamp(380.0, 500.0);
         self.prepare.load_edit_spec(&draft.edits);
         // The model captions changed externally: clear the field states so
         // the caption areas show the restored values and stale edits can't
@@ -1796,6 +1796,38 @@ impl App {
                     self.activate_workspace_at(next, cx);
                 }
             }
+            "i" if !cmd
+                && !shift
+                && !modifiers.alt
+                && self.page == Page::Library
+                && self.selected.is_some()
+                && self.prepare.duration > 0.0
+                && !self.checking
+                && !self.command_open
+                && !self.random_popup_open
+                && self.focused_field.is_none() =>
+            {
+                if self.prepare.mark_in_at_playhead() {
+                    self.save_draft();
+                }
+                cx.notify();
+            }
+            "o" if !cmd
+                && !shift
+                && !modifiers.alt
+                && self.page == Page::Library
+                && self.selected.is_some()
+                && self.prepare.duration > 0.0
+                && !self.checking
+                && !self.command_open
+                && !self.random_popup_open
+                && self.focused_field.is_none() =>
+            {
+                if self.prepare.mark_out_at_playhead() {
+                    self.save_draft();
+                }
+                cx.notify();
+            }
             "r" if !cmd && !modifiers.alt => {
                 // Global like the original: jump to Library and pick.
                 self.page = Page::Library;
@@ -2241,10 +2273,17 @@ impl App {
                 app.on_key_down(event, window, cx);
             }));
 
-        // Header (command center row).
-        root = root.child(self.render_header(cx));
-        // Context toolbar.
-        root = root.child(self.render_context_toolbar(cx));
+        let focused_studio = self.page == Page::Library
+            && self.prepare.studio_mode
+            && self.selected.is_some();
+
+        // Studio is a focused media workspace: its editor header replaces the
+        // global command chrome. The bottom workspace tabs remain available so
+        // returning to another open workspace is always one click away.
+        if !focused_studio {
+            root = root.child(self.render_header(cx));
+            root = root.child(self.render_context_toolbar(cx));
+        }
 
         let mut body = div()
             .id("body")
@@ -2253,8 +2292,10 @@ impl App {
             .flex()
             .flex_row()
             .min_h(px(0.0));
-        body = body.child(self.render_sidebar(cx));
-        body = body.child(div().w(px(1.0)).h_full().bg(self.theme.border).flex_none());
+        if !focused_studio {
+            body = body.child(self.render_sidebar(cx));
+            body = body.child(div().w(px(1.0)).h_full().bg(self.theme.border).flex_none());
+        }
         let page = self.page;
         body = body.child(match page {
             Page::Library => {

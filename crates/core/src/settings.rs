@@ -63,7 +63,9 @@ pub fn defaults() -> HashMap<&'static str, Value> {
     map.insert(PERFORMANCE_MODE, json_str("automatic"));
     map.insert(LIBRARY_DENSITY, json_str("default"));
     map.insert(EXPORT_ENCODER, json_str("auto"));
-    map.insert(SIDEBAR_COLLAPSED, Value::Bool(false));
+    // The redesigned workbench opens on the compact activity rail shown in
+    // the approved shell. Users can still expand it when they want labels.
+    map.insert(SIDEBAR_COLLAPSED, Value::Bool(true));
     map.insert(PREPARE_EXPANDED, Value::Bool(false));
     map.insert(SORT_MODE, json_str("newest"));
     map.insert(FOLDER_SORT_MODE, json_str("name_asc"));

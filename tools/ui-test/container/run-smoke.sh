@@ -120,6 +120,9 @@ capture_case() {
     if [[ "${case_name}" == "studio-compact-checking" ]]; then
         target_width=700
         target_height=520
+    elif [[ "${case_name}" == "workflow-tall" ]]; then
+        target_width=1180
+        target_height=1080
     fi
 
     mkdir -p "${case_data}" /tmp/library
@@ -167,6 +170,59 @@ capture_case() {
         stop_app
         record_failure "${case_name}: expected exact ${target_width}x${target_height} geometry, got ${width}x${height}."
         return 1
+    fi
+
+    if [[ "${case_name}" == "workflow-cut" ]]; then
+        local attempt drag_y drag_start_x drag_end_x out_start_x out_end_x
+        for attempt in $(seq 1 100); do
+            grep -q 'ui-test workflow observed Prepare autoplay' "${app_log}" && break
+            kill -0 "${app_pid}" >/dev/null 2>&1 || break
+            sleep 0.1
+        done
+        if ! grep -q 'ui-test workflow observed Prepare autoplay' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: Prepare was not ready for the pointer-drag check."
+            return 1
+        fi
+
+        # Exercise the real nested GPUI hitboxes: press the dock's left IN
+        # handle, cross the filmstrip while held, then release inside the stage.
+        drag_y=$((height - 285))
+        # The redesigned desktop dock is 420px at this fixture width. Aim at
+        # the center of the 20px nested IN hit target rather than the timeline
+        # lane beside it.
+        drag_start_x=$((width - 400))
+        drag_end_x=$((width - 250))
+        xdotool windowactivate --sync "${window_id}"
+        xdotool mousemove --sync --window "${window_id}" "${drag_start_x}" "${drag_y}"
+        xdotool mousedown 1
+        xdotool mousemove --sync --window "${window_id}" "$((drag_start_x + 40))" "${drag_y}"
+        xdotool mousemove --sync --window "${window_id}" "$((drag_start_x + 80))" "${drag_y}"
+        xdotool mousemove --sync --window "${window_id}" "${drag_end_x}" "${drag_y}"
+        xdotool mouseup 1
+        sleep 0.2
+        if ! grep -q 'Prepare cut IN drag committed:' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: dragging the IN handle did not commit a cut."
+            return 1
+        fi
+
+        out_start_x=$((width - 20))
+        out_end_x=$((width - 100))
+        xdotool mousemove --sync --window "${window_id}" "${out_start_x}" "${drag_y}"
+        xdotool mousedown 1
+        xdotool mousemove --sync --window "${window_id}" "$((out_start_x - 40))" "${drag_y}"
+        xdotool mousemove --sync --window "${window_id}" "${out_end_x}" "${drag_y}"
+        xdotool mouseup 1
+        sleep 0.3
+        if ! grep -q 'Prepare cut OUT drag committed:' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: dragging the OUT handle did not commit a cut."
+            return 1
+        fi
+        # Capture after the actual input even if GPUI's scheduled renderer
+        # capture completed earlier in the deterministic workflow.
+        xwd -silent -id "${window_id}" | convert xwd:- "${screenshot}"
     fi
 
     if ! wait_for_capture "${screenshot}"; then
@@ -220,11 +276,20 @@ run_suite() {
     } > /artifacts/environment.txt
     printf 'case\tdiff_pixels\tallowed_pixels\n' > /artifacts/metrics.tsv
 
+    if [[ "${GUI_TEST_ONLY_TALL:-0}" == "1" ]]; then
+        capture_case workflow-tall CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        return 0
+    fi
+
     capture_case library || return 1
     capture_case history CLIPRELAY_PAGE=history || return 1
     capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
     capture_case command CLIPRELAY_OPEN_COMMAND=1 CLIPRELAY_QUERY=library || return 1
     capture_case workflow CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    if [[ "${GUI_TEST_CAPTURE_TALL:-0}" == "1" ]]; then
+        capture_case workflow-tall CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    fi
+    capture_case workflow-cut CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
     capture_case studio CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_WORKFLOW_OPEN_STUDIO=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
     capture_case studio-compact-checking \
         CLIPRELAY_EXERCISE_WORKFLOW=1 \
@@ -254,7 +319,7 @@ run_suite() {
         -crop 300x9+79+477 -colorspace Gray -threshold 60% \
         -format '%[fx:mean]' info:)"
     compact_source_detail="$(convert /artifacts/screenshots/studio-compact-checking.png \
-        -crop 110x24+79+414 -colorspace Gray -threshold 30% \
+        -crop 220x24+10+354 -colorspace Gray -threshold 30% \
         -format '%[fx:mean]' info:)"
     if ! awk -v clearance="${compact_clearance}" -v detail="${compact_source_detail}" \
         'BEGIN { exit !(clearance > 0.995 || detail > 0.04) }'; then
@@ -277,6 +342,10 @@ run_suite() {
         record_failure "library/workflow: the exercised playback state produced no meaningful visual change."
         return 1
     }
+    assert_distinct_states workflow workflow-cut || {
+        record_failure "workflow/workflow-cut: dragging the IN handle did not visibly change the retained range."
+        return 1
+    }
     assert_distinct_states workflow studio || {
         record_failure "workflow/studio: compact and full Prepare states produced no meaningful visual change."
         return 1
@@ -285,7 +354,11 @@ run_suite() {
 }
 
 if run_suite; then
-    echo "PASS isolated ClipRelay GUI smoke test (7 semantic states, including Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
+    if [[ "${GUI_TEST_ONLY_TALL:-0}" == "1" ]]; then
+        echo "PASS isolated tall Prepare-panel visual check. Artifacts: /artifacts" > /artifacts/summary.txt
+    else
+        echo "PASS isolated ClipRelay GUI smoke test (8 semantic states, including a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
+    fi
     exit 0
 fi
 

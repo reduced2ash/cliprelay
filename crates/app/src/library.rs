@@ -774,32 +774,9 @@ impl crate::App {
             .bg(theme.surface_soft)
             .flex()
             .flex_col();
-        // Header band.
-        tree = tree.child(
-            div()
-                .h(px(CONTEXT_TOOLBAR_HEIGHT))
-                .px(px(12.0))
-                .border_b_1()
-                .border_color(theme.border)
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(icon("▤", 15.0, theme.accent_text))
-                .child(
-                    div()
-                        .child(tracked("EXPLORER"))
-                        .text_size(px(10.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .child(format!("{}", self.counts.0))
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft),
-                ),
-        );
+        // The global context toolbar owns the Explorer heading. Starting the
+        // tree immediately avoids the duplicate header band that made this
+        // column feel heavier than VS Code/Zed-style workbench navigation.
         let mut items = div()
             .id("explorer-tree")
             .flex_1()

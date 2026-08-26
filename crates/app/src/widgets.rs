@@ -194,7 +194,8 @@ impl Element for PlatformInputElement {
     }
 }
 
-/// Standard action button (44px target; compact variant 40px).
+/// Standard action button. The visible control stays compact while the
+/// surrounding layout provides a comfortable pointer target.
 pub fn button(
     id: impl Into<SharedString>,
     label: &str,
@@ -209,8 +210,15 @@ pub fn button(
     let activate = Rc::clone(&on_click);
     button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.tab_index(0)
-            .focus(|style| style.border_2().border_color(current_theme().accent))
-            .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
+            .focus(|style| style.bg(current_theme().hover))
+            .on_click(cx.listener(move |app, _event, window, cx| {
+                // Pointer presses use the transient `active` fill below. Drop
+                // pointer-acquired focus before invoking the action so the
+                // highlight cannot persist, while allowing the action to focus
+                // a field or popup when that is its intended result.
+                window.blur();
+                click(app, cx);
+            }))
             .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                 activate(app, cx);
                 cx.stop_propagation();
@@ -256,7 +264,7 @@ fn button_base(
         theme.muted
     } else {
         match kind {
-            ButtonKind::Primary => theme.accent_content,
+            ButtonKind::Primary => theme.accent_text,
             ButtonKind::Danger => theme.error,
             _ => theme.text,
         }
@@ -264,42 +272,41 @@ fn button_base(
     let mut element = div()
         .id(id)
         .h(px(CONTROL_HEIGHT))
-        .px(px(15.0))
+        .px(px(12.0))
         .rounded(px(RADIUS_SM))
         .flex()
         .items_center()
         .justify_center()
-        .gap(px(8.0))
+        .gap(px(7.0))
         .cursor_pointer()
         .text_size(px(13.0))
-        .font_weight(FontWeight::SEMIBOLD);
+        .font_weight(FontWeight::MEDIUM);
     match kind {
         ButtonKind::Primary => {
             element = element
-                .bg(theme.accent)
-                .text_color(theme.accent_content)
-                .hover(|style| style.bg(theme.accent_pressed))
-                .active(|style| style.bg(theme.accent_pressed));
+                .bg(theme.accent_soft)
+                .border_1()
+                .border_color(theme.accent)
+                .text_color(theme.accent_text)
+                .hover(|style| style.bg(theme.active).border_color(theme.accent_pressed));
         }
         ButtonKind::Secondary => {
             element = element
-                .bg(theme.raised)
+                .bg(theme.transparent())
                 .border_1()
-                .border_color(theme.border)
+                .border_color(theme.border_strong)
                 .text_color(theme.text)
                 .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
         }
         ButtonKind::Ghost => {
             element = element
                 .text_color(theme.text)
-                .hover(|style| style.bg(theme.hover))
-                .active(|style| style.bg(theme.active));
+                .hover(|style| style.bg(theme.hover));
         }
         ButtonKind::Danger => {
             element = element
                 .text_color(theme.error)
-                .hover(|style| style.bg(theme.error_soft))
-                .active(|style| style.bg(theme.error_soft));
+                .hover(|style| style.bg(theme.error_soft));
         }
     }
     if let Some(icon) = icon {
@@ -312,6 +319,11 @@ fn button_base(
             .text_ellipsis(),
     );
     element
+        .when(enabled, |this| {
+            // GPUI's active state exists only while the pointer is held down,
+            // so this orange fill naturally clears on release or cancellation.
+            this.active(|style| style.bg(theme.accent_soft))
+        })
         // Disabled: neutral raised fill + muted text (opacity alone washes
         // colored buttons out on light themes).
         .when(!enabled, |this| {
@@ -321,7 +333,7 @@ fn button_base(
         })
 }
 
-/// Compact toolbar button (30px; icon-only or icon+label).
+/// Compact toolbar button (28px; icon-only or icon+label).
 #[allow(clippy::too_many_arguments)]
 pub fn workbench_button(
     id: impl Into<SharedString>,
@@ -341,7 +353,7 @@ pub fn workbench_button(
         theme.muted_soft
     } else {
         match kind {
-            ButtonKind::Primary => theme.accent_content,
+            ButtonKind::Primary => theme.accent_text,
             ButtonKind::Danger => theme.error,
             ButtonKind::Ghost => theme.muted,
             ButtonKind::Secondary => theme.text,
@@ -355,7 +367,7 @@ pub fn workbench_button(
             this.w(px(WORKBENCH_CONTROL_HEIGHT)).px(px(0.0))
         })
         .when(!icon_only, |this| this.px(px(9.0)))
-        .rounded(px(4.0))
+        .rounded(px(RADIUS_SM))
         .flex()
         .items_center()
         .justify_center()
@@ -366,30 +378,29 @@ pub fn workbench_button(
     match kind {
         ButtonKind::Primary => {
             element = element
-                .bg(theme.accent)
-                .text_color(theme.accent_content)
-                .hover(|style| style.bg(theme.accent_pressed))
-                .active(|style| style.bg(theme.accent_pressed));
+                .bg(theme.accent_soft)
+                .border_1()
+                .border_color(theme.accent)
+                .text_color(theme.accent_text)
+                .hover(|style| style.bg(theme.active).border_color(theme.accent_pressed));
         }
         ButtonKind::Secondary => {
             element = element
-                .bg(theme.raised)
+                .bg(theme.transparent())
                 .border_1()
-                .border_color(theme.border)
+                .border_color(theme.border_strong)
                 .text_color(theme.text)
                 .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
         }
         ButtonKind::Ghost => {
             element = element
                 .text_color(theme.muted)
-                .hover(|style| style.bg(theme.hover).text_color(theme.text))
-                .active(|style| style.bg(theme.active).text_color(theme.text));
+                .hover(|style| style.bg(theme.hover).text_color(theme.text));
         }
         ButtonKind::Danger => {
             element = element
                 .text_color(theme.error)
-                .hover(|style| style.bg(theme.error_soft))
-                .active(|style| style.bg(theme.error_soft));
+                .hover(|style| style.bg(theme.error_soft));
         }
     }
     element = element.child(self::icon(icon, 15.0, icon_color));
@@ -403,9 +414,13 @@ pub fn workbench_button(
         .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
         .when(!enabled, |this| this.opacity(0.42).cursor_default())
         .when(enabled, |this| {
-            this.tab_index(0)
-                .focus(|style| style.border_2().border_color(current_theme().accent))
-                .on_click(cx.listener(move |app, _event, _window, cx| click(app, cx)))
+            this.active(|style| style.bg(theme.accent_soft))
+                .tab_index(0)
+                .focus(|style| style.bg(current_theme().hover))
+                .on_click(cx.listener(move |app, _event, window, cx| {
+                    window.blur();
+                    click(app, cx);
+                }))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                     activate(app, cx);
                     cx.stop_propagation();

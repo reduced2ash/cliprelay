@@ -54,18 +54,14 @@ impl crate::App {
             .and_then(|v| v.as_str())
             .unwrap_or("name_asc")
             .to_string();
-        let cut_active = self.prepare.media_id > 0
-            && (self.prepare.trim_start > 0.0
-                || (self.prepare.trim_end > 0.0
-                    && self.prepare.duration > 0.0
-                    && self.prepare.trim_end < self.prepare.duration));
+        let cut_active = self.prepare.media_id > 0 && self.prepare.cut_active();
         vec![
             CommandAction {
                 id: 0,
                 label: "Pick random video",
                 detail: "Choose from the active random-source folders",
                 category: "Library",
-                glyph: "⇄",
+                glyph: "shuffle",
                 keywords: "random shuffle choose video",
                 shortcut: "R",
                 enabled: has_root && !self.random_picking,
@@ -307,7 +303,7 @@ impl crate::App {
                 label: "Close workspace",
                 detail: "Close the active workspace tab",
                 category: "Workspaces",
-                glyph: "✕",
+                glyph: "close",
                 keywords: "close tab workspace",
                 shortcut: "⌘W",
                 enabled: !self.workspaces.is_empty(),
@@ -337,7 +333,7 @@ impl crate::App {
                 label: "Focus Prepare Edit",
                 detail: "Show crop and black-mask tools",
                 category: "Prepare",
-                glyph: "▣",
+                glyph: "square",
                 keywords: "prepare edit crop mask frame",
                 shortcut: "",
                 enabled: selected,
@@ -347,10 +343,30 @@ impl crate::App {
                 label: "Focus Prepare Publish",
                 detail: "Show output, destinations, and captions",
                 category: "Prepare",
-                glyph: "➤",
+                glyph: "send",
                 keywords: "prepare publish telegram x caption output",
                 shortcut: "",
                 enabled: selected,
+            },
+            CommandAction {
+                id: 38,
+                label: "Set cut In at playhead",
+                detail: "Keep the video starting at the current frame",
+                category: "Prepare",
+                glyph: "[",
+                keywords: "prepare trim cut mark in start playhead",
+                shortcut: "I",
+                enabled: selected && self.prepare.duration > 0.0 && !self.checking,
+            },
+            CommandAction {
+                id: 39,
+                label: "Set cut Out at playhead",
+                detail: "Keep the video ending at the current frame",
+                category: "Prepare",
+                glyph: "]",
+                keywords: "prepare trim cut mark out end playhead",
+                shortcut: "O",
+                enabled: selected && self.prepare.duration > 0.0 && !self.checking,
             },
             CommandAction {
                 id: 28,
@@ -559,9 +575,20 @@ impl crate::App {
                 self.prepare.studio_mode = true;
                 cx.notify();
             }
+            38 => {
+                if self.prepare.mark_in_at_playhead() {
+                    self.save_draft();
+                }
+                cx.notify();
+            }
+            39 => {
+                if self.prepare.mark_out_at_playhead() {
+                    self.save_draft();
+                }
+                cx.notify();
+            }
             28 => {
-                self.prepare.trim_start = 0.0;
-                self.prepare.trim_end = self.prepare.duration;
+                self.prepare.reset_cut();
                 self.save_draft();
                 cx.notify();
             }
@@ -579,12 +606,13 @@ impl crate::App {
             34 => self.set_setting(THEME_MODE, serde_json::json!("relay"), cx),
             35 => self.set_setting(THEME_MODE, serde_json::json!("pitch_black"), cx),
             36 => self.set_setting(THEME_MODE, serde_json::json!("full_white"), cx),
-            _ => {
+            37 => {
                 if self.window_size.0 >= 1080.0 {
                     self.sidebar_collapsed = !self.sidebar_collapsed;
                 }
                 cx.notify();
             }
+            _ => {}
         }
     }
 
@@ -654,7 +682,7 @@ impl crate::App {
                         theme.transparent()
                     })
                     .hover(move |style| style.bg(if active { theme.active } else { theme.hover }))
-                    .active(|style| style.bg(theme.active))
+                    .active(|style| style.bg(theme.accent_soft))
                     .flex()
                     .items_center()
                     .child(label)
@@ -666,8 +694,9 @@ impl crate::App {
                         FontWeight::MEDIUM
                     })
                     .tab_index(0)
-                    .focus(|style| style.border_2().border_color(current_theme().accent))
-                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                    .focus(|style| style.bg(current_theme().hover))
+                    .on_click(cx.listener(move |app, _event, window, cx| {
+                        window.blur();
                         app.command_scope = click_value.clone();
                         app.schedule_command_search(cx);
                         cx.notify();
@@ -1074,10 +1103,16 @@ impl crate::App {
         let page = self.page;
         let width = self.window_size.0;
         let nav_collapsed = width < 1080.0 || self.sidebar_collapsed;
-        let activity_width = if nav_collapsed { 68.0 } else { 204.0 };
+        let activity_width = if nav_collapsed {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_EXPANDED_WIDTH
+        };
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
-        let show_explorer = page == Page::Library && has_root && self.show_folders;
-        let explorer_width = 204.0;
+        let studio_mode = self.prepare.studio_mode;
+        let show_explorer =
+            page == Page::Library && has_root && self.show_folders && !studio_mode;
+        let explorer_width = EXPLORER_WIDTH;
         let prepare_width =
             if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
                 self.prepare_dock_width()
@@ -1115,11 +1150,15 @@ impl crate::App {
             .items_center()
             .overflow_hidden();
 
-        // Activity section (68 or 204)
-        let (page_icon, page_name) = match page {
-            Page::Library => ("library", "Library"),
-            Page::History => ("history", "History"),
-            Page::Settings => ("settings", "Settings"),
+        // Activity section: a narrow workbench rail, expandable when wanted.
+        let (page_icon, page_name) = if self.prepare.studio_mode {
+            ("edit", "Prepare")
+        } else {
+            match page {
+                Page::Library => ("library", "Library"),
+                Page::History => ("history", "History"),
+                Page::Settings => ("settings", "Settings"),
+            }
         };
         let mut activity = div()
             .flex_none()
@@ -1220,7 +1259,12 @@ impl crate::App {
 
         match page {
             Page::Library => {
-                let location = if self.active_folder.is_empty() {
+                let location = if studio_mode {
+                    self.selected
+                        .as_ref()
+                        .map(|media| media.name.clone())
+                        .unwrap_or_else(|| "No clip selected".to_string())
+                } else if self.active_folder.is_empty() {
                     self.settings_value(LIBRARY_ROOT)
                         .rsplit('/')
                         .next()
@@ -1239,7 +1283,7 @@ impl crate::App {
                     location
                 };
                 center = center.child(icon(
-                    "folder",
+                    if studio_mode { "edit" } else { "folder" },
                     15.0,
                     if has_root {
                         theme.accent_text
@@ -1251,7 +1295,11 @@ impl crate::App {
                     center = center
                         .child(
                             div()
-                                .child("Video library")
+                                .child(if studio_mode {
+                                    "Prepare"
+                                } else {
+                                    "Video library"
+                                })
                                 .text_size(px(12.0))
                                 .text_color(theme.accent_text)
                                 .font_weight(FontWeight::SEMIBOLD),
@@ -1277,7 +1325,7 @@ impl crate::App {
                         .text_ellipsis(),
                 );
 
-                if has_root {
+                if has_root && !studio_mode {
                     center = center.child(workbench_button(
                         "toggle-folders",
                         if self.show_folders {
@@ -1309,12 +1357,12 @@ impl crate::App {
                     ));
                 }
 
-                if !narrow_actions {
+                if !narrow_actions && !studio_mode {
                     center =
                         center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
                 }
 
-                if has_root {
+                if has_root && !studio_mode {
                     let sort_label = match self
                         .settings
                         .get(SORT_MODE)
@@ -1336,7 +1384,7 @@ impl crate::App {
                             .w(px(sort_width))
                             .h(px(30.0))
                             .px(px(9.0))
-                            .rounded(px(4.0))
+                            .rounded(px(RADIUS_SM))
                             .bg(if self.sort_menu_open {
                                 theme.active
                             } else {
@@ -1392,12 +1440,12 @@ impl crate::App {
                     );
                 }
 
-                if !narrow_actions && has_root {
+                if !narrow_actions && has_root && !studio_mode {
                     center =
                         center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
                 }
 
-                if has_root {
+                if has_root && !studio_mode {
                     let scanning = self.scan.active;
                     let cancelling = self.scan.cancelling;
                     let scanning_label = if cancelling {
@@ -2125,7 +2173,7 @@ impl crate::App {
                     self,
                     "ws-close",
                     "Close workspace",
-                    "✕",
+                    "close",
                     true,
                     Some(Command::CloseWorkspace(id.clone())),
                     cx,
@@ -2420,7 +2468,7 @@ impl crate::App {
                 .flex_none()
                 .h(px(28.0))
                 .w(px(28.0))
-                .rounded(px(4.0))
+                .rounded(px(RADIUS_SM))
                 .relative()
                 .cursor_pointer()
                 .flex()
@@ -2484,7 +2532,7 @@ impl crate::App {
                 .h(px(30.0))
                 .px(px(9.0))
                 .w(px(width_px))
-                .rounded(px(4.0))
+                .rounded(px(RADIUS_SM))
                 .flex()
                 .items_center()
                 .gap(px(6.0))
@@ -2591,7 +2639,7 @@ impl crate::App {
         let theme = self.theme.clone();
         let workspaces = self.workspaces.clone();
         let active_index = self.active_workspace_index;
-        let action_rail_width = 68.0;
+        let action_rail_width = SIDEBAR_COLLAPSED_WIDTH;
         let available = (self.window_size.0 - action_rail_width - 8.0).max(160.0);
         let tab_width = (available / workspaces.len().max(1) as f32).clamp(132.0, 218.0);
         let renaming = self.renaming_workspace;
@@ -2706,7 +2754,7 @@ impl crate::App {
                             .flex_none()
                             .w(px(22.0))
                             .h(px(22.0))
-                            .rounded(px(4.0))
+                            .rounded(px(RADIUS_SM))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2830,7 +2878,7 @@ impl crate::App {
             .id("workspace-tabs")
             .w_full()
             .min_w(px(0.0))
-            .h(px(34.0))
+            .h(px(WORKSPACE_TAB_HEIGHT))
             .bg(theme.surface)
             .border_t_1()
             .border_color(theme.border)
@@ -2869,14 +2917,14 @@ impl crate::App {
                         target: Page,
                         cx: &mut Context<crate::App>|
          -> Stateful<Div> {
-            let selected = page == target;
+            let selected = page == target && !(target == Page::Library && app.prepare.studio_mode);
             let theme = app.theme.clone();
             let mut item = div()
                 .id(id)
                 .w_full()
-                .h(px(44.0))
+                .h(px(40.0))
                 .px(if collapsed { px(0.0) } else { px(12.0) })
-                .rounded(px(6.0))
+                .rounded(px(RADIUS_SM))
                 .relative()
                 .flex()
                 .flex_row()
@@ -2885,7 +2933,8 @@ impl crate::App {
                 .gap(px(9.0))
                 .cursor_pointer()
                 .tab_index(0)
-                .focus(|style| style.border_2().border_color(theme.accent))
+                .focus(|style| style.bg(theme.hover))
+                .active(|style| style.bg(theme.accent_soft))
                 .bg(if selected {
                     theme.active
                 } else {
@@ -2922,14 +2971,15 @@ impl crate::App {
                     div()
                         .absolute()
                         .left_0()
-                        .top(px(10.0))
+                        .top(px(8.0))
                         .w(px(2.0))
                         .h(px(24.0))
                         .rounded_r(px(1.0))
                         .bg(theme.accent),
                 );
             }
-            item.on_click(cx.listener(move |app, _event, _window, cx| {
+            item.on_click(cx.listener(move |app, _event, window, cx| {
+                window.blur();
                 app.navigate_to(target, cx);
             }))
             .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
@@ -2968,77 +3018,112 @@ impl crate::App {
                 "settings",
                 Page::Settings,
                 cx,
-            ))
-            .child(div().flex_1())
-            .child(
+            ));
+        if self.prepare.studio_mode {
+            sidebar = sidebar.child(
                 div()
-                    .id("toggle-sidebar")
+                    .id("nav-prepare")
                     .w_full()
-                    .h(px(44.0))
+                    .h(px(40.0))
                     .px(if collapsed { px(0.0) } else { px(12.0) })
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .when(!narrow, |this| {
-                        this.tab_index(0)
-                            .focus(|style| style.border_2().border_color(theme.accent))
-                    })
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_center()
                     .gap(px(9.0))
-                    .hover(|style| style.bg(theme.hover))
-                    .child(icon(
-                        if collapsed {
-                            "chevron-right"
-                        } else {
-                            "chevron-left"
-                        },
-                        16.0,
-                        theme.muted,
-                    ))
+                    .bg(theme.active)
+                    .child(icon("edit", 17.0, theme.accent_text))
                     .when(!collapsed, |this| {
                         this.child(
                             div()
                                 .flex_1()
-                                .child("Collapse sidebar")
-                                .text_size(px(12.0))
-                                .text_color(theme.muted),
+                                .min_w(px(0.0))
+                                .child("Prepare")
+                                .text_size(px(13.0))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_ellipsis(),
                         )
                     })
-                    .opacity(if narrow { 0.45 } else { 1.0 })
-                    .tooltip(move |_window, cx| {
-                        let text = if narrow {
-                            "Widen the window to expand the sidebar"
-                        } else if collapsed {
-                            "Expand sidebar"
-                        } else {
-                            "Collapse sidebar"
-                        };
-                        crate::tooltip_view(cx, text.into())
-                    })
-                    .on_click(cx.listener(|app, _event, _window, cx| {
-                        if app.window_size.0 >= 1080.0 {
-                            app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
-                        }
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(8.0))
+                            .w(px(2.0))
+                            .h(px(24.0))
+                            .bg(theme.accent),
+                    ),
+            );
+        }
+        sidebar = sidebar.child(div().flex_1()).child(
+            div()
+                .id("toggle-sidebar")
+                .w_full()
+                .h(px(40.0))
+                .px(if collapsed { px(0.0) } else { px(12.0) })
+                .rounded(px(RADIUS_SM))
+                .cursor_pointer()
+                .when(!narrow, |this| {
+                    this.tab_index(0)
+                        .focus(|style| style.bg(theme.hover))
+                        .active(|style| style.bg(theme.accent_soft))
+                })
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap(px(9.0))
+                .hover(|style| style.bg(theme.hover))
+                .child(icon(
+                    if collapsed {
+                        "chevron-right"
+                    } else {
+                        "chevron-left"
+                    },
+                    16.0,
+                    theme.muted,
+                ))
+                .when(!collapsed, |this| {
+                    this.child(
+                        div()
+                            .flex_1()
+                            .child("Collapse sidebar")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted),
+                    )
+                })
+                .opacity(if narrow { 0.45 } else { 1.0 })
+                .tooltip(move |_window, cx| {
+                    let text = if narrow {
+                        "Widen the window to expand the sidebar"
+                    } else if collapsed {
+                        "Expand sidebar"
+                    } else {
+                        "Collapse sidebar"
+                    };
+                    crate::tooltip_view(cx, text.into())
+                })
+                .on_click(cx.listener(|app, _event, window, cx| {
+                    if app.window_size.0 >= 1080.0 {
+                        window.blur();
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                    }
+                }))
+                .when(!narrow, |this| {
+                    this.on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                        cx.stop_propagation();
                     }))
-                    .when(!narrow, |this| {
-                        this.on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                    .on_action(cx.listener(
+                        |app, _: &crate::ActivateSpace, _window, cx| {
                             app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
                             cx.stop_propagation();
-                        }))
-                        .on_action(cx.listener(
-                            |app, _: &crate::ActivateSpace, _window, cx| {
-                                app.set_setting(
-                                    SIDEBAR_COLLAPSED,
-                                    json!(!app.sidebar_collapsed),
-                                    cx,
-                                );
-                                cx.stop_propagation();
-                            },
-                        ))
-                    }),
-            );
+                        },
+                    ))
+                }),
+        );
         sidebar
     }
 
@@ -3082,27 +3167,33 @@ impl crate::App {
             );
         }
 
-        // Stage.
+        // Docked Prepare is intentionally a review surface. Advanced editing
+        // and configuration move to Studio so the media proof can dominate.
         panel = panel.child(self.render_prepare_stage(cx, &theme, dock_width));
-        // Inspector tabs.
-        panel = panel.child(self.render_prepare_tabs(cx));
-        // Inspector content.
-        panel = panel.child(self.render_prepare_inspector(cx, &theme, dock_width));
+        if self.window_size.1 >= 900.0 {
+            panel = panel.child(self.render_prepare_dock_summary(&theme));
+        } else if self.window_size.1 >= 720.0 {
+            panel = panel.child(self.render_prepare_dock_compact_summary(&theme));
+        }
+        panel = panel.child(self.render_prepare_dock_footer(cx, &theme));
         panel
     }
 
     pub fn render_prepare_studio(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let width = self.window_size.0;
-        // The stage column starts after the sidebar + divider; on narrow
-        // windows the inspector gives up width before the stage overflows
-        // (mirrors the original's resolvedStudioInspectorWidth squeeze).
-        let collapsed = self.sidebar_collapsed || width < 1080.0;
-        let sidebar = if collapsed { 68.0 } else { 204.0 };
-        let available = (width - sidebar - 1.0 - 9.0 - 280.0).max(0.0);
-        let inspector_width = self.prepare.studio_width.clamp(300.0, 620.0) as f32;
-        let inspector_width = inspector_width.min(available);
-        let stage_width = (width - sidebar - 1.0 - inspector_width - 9.0).max(280.0);
+        let checking = self.checking;
+        // A narrow Studio becomes a deliberate stage-only workspace. Keeping
+        // the inspector's real minimum width matters more than showing a
+        // crushed, unusable sliver of it; widening the window restores it.
+        let compact_studio = width < 900.0;
+        let compact_inspector_open = self.prepare.compact_inspector_open;
+        let inspector_width = self.prepare.studio_width.clamp(380.0, 500.0) as f32;
+        let stage_width = if compact_studio {
+            width
+        } else {
+            (width - inspector_width - 5.0).max(420.0)
+        };
 
         let mut studio = div()
             .id("prepare-studio")
@@ -3112,7 +3203,32 @@ impl crate::App {
             .flex()
             .flex_row();
 
-        // Header band on top of the stage column.
+        let selected_name = self
+            .selected
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+        let source_detail = self
+            .selected
+            .as_ref()
+            .map(|m| {
+                let mut parts = vec![cliprelay_core::utils::format_bytes(m.size_bytes as f64)];
+                if m.width > 0 && m.height > 0 {
+                    parts.push(format!("{}×{}", m.width, m.height));
+                }
+                if let Some(folder) = std::path::Path::new(&m.path)
+                    .parent()
+                    .and_then(|path| path.file_name())
+                    .and_then(|name| name.to_str())
+                {
+                    parts.push(folder.to_string());
+                }
+                parts.join("  ·  ")
+            })
+            .unwrap_or_default();
+
+        // The context row belongs to the media workspace, not to a decorative
+        // page title. It preserves a direct route back to the library.
         let mut stage_col = div()
             .id("studio-stage")
             .w(px(stage_width))
@@ -3121,41 +3237,104 @@ impl crate::App {
         stage_col = stage_col.child(
             div()
                 .w_full()
-                .h(px(38.0))
-                .px(px(12.0))
+                .h(px(44.0))
+                .px(px(10.0))
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(8.0))
-                .child(icon("✎", 14.0, theme.accent_text))
-                .child(
-                    div()
-                        .child("Prepare")
-                        .text_size(px(12.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(div().child("/").text_size(px(12.0)).text_color(theme.muted))
+                .child(workbench_button(
+                    "studio-back",
+                    "Back to Library",
+                    "chevron-left",
+                    ButtonKind::Ghost,
+                    true,
+                    false,
+                    "Return to the library  ·  Escape",
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = false;
+                        cx.notify();
+                    },
+                ))
+                .child(div().w(px(1.0)).h(px(20.0)).bg(theme.border))
                 .child(
                     div()
                         .flex_1()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
                         .child(
-                            self.selected
-                                .as_ref()
-                                .map(|m| m.name.clone())
-                                .unwrap_or_default(),
+                            div()
+                                .child(selected_name)
+                                .text_size(px(12.0))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_ellipsis(),
                         )
-                        .text_size(px(12.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_ellipsis(),
+                        .child(
+                            div()
+                                .child(source_detail)
+                                .text_size(px(10.0))
+                                .text_color(theme.muted)
+                                .text_ellipsis(),
+                        ),
                 )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .w(px(6.0))
+                                .h(px(6.0))
+                                .rounded(px(3.0))
+                                .bg(if checking {
+                                    theme.warning
+                                } else {
+                                    theme.success
+                                }),
+                        )
+                        .child(
+                            div()
+                                .child(if checking { "Checking" } else { "Ready" })
+                                .text_size(px(11.0))
+                                .text_color(theme.text_soft),
+                        ),
+                )
+                .when(compact_studio, |header| {
+                    header.child(workbench_button(
+                        "studio-compact-inspector",
+                        if compact_inspector_open {
+                            "Video"
+                        } else {
+                            "Inspector"
+                        },
+                        "panel",
+                        ButtonKind::Ghost,
+                        true,
+                        false,
+                        if compact_inspector_open {
+                            "Return to the video stage"
+                        } else {
+                            "Open edit and delivery inspector"
+                        },
+                        cx,
+                        |app, cx| {
+                            app.prepare.compact_inspector_open =
+                                !app.prepare.compact_inspector_open;
+                            cx.notify();
+                        },
+                    ))
+                })
                 .child(workbench_button(
                     "studio-open-player",
                     "",
-                    "↗",
+                    "external",
                     ButtonKind::Ghost,
                     true,
                     true,
@@ -3166,7 +3345,7 @@ impl crate::App {
                 .child(workbench_button(
                     "studio-exit",
                     "",
-                    "⛶",
+                    "maximize",
                     ButtonKind::Ghost,
                     true,
                     true,
@@ -3180,7 +3359,7 @@ impl crate::App {
                 .child(workbench_button(
                     "studio-close",
                     "",
-                    "✕",
+                    "close",
                     ButtonKind::Ghost,
                     true,
                     true,
@@ -3213,63 +3392,80 @@ impl crate::App {
                     ),
             );
         }
-        stage_col = stage_col.child(self.render_prepare_stage(cx, &theme, stage_width));
-        stage_col = stage_col.child(self.render_prepare_tabs(cx));
-        stage_col = stage_col.child(self.render_prepare_inspector(cx, &theme, stage_width));
+        if compact_studio && compact_inspector_open {
+            stage_col = stage_col.child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .bg(theme.surface)
+                    .flex()
+                    .flex_col()
+                    .child(self.render_prepare_tabs(cx))
+                    .child(self.render_prepare_inspector(cx, &theme, stage_width)),
+            );
+        } else {
+            stage_col = stage_col.child(self.render_prepare_stage(cx, &theme, stage_width));
+        }
         studio = studio.child(stage_col);
 
-        // Inspector divider (draggable splitter) + inspector.
-        studio = studio
-            .child(
-                div()
-                    .id("studio-splitter")
-                    .w(px(9.0))
-                    .h_full()
-                    .border_l_1()
-                    .border_r_1()
-                    .border_color(theme.border)
-                    .bg(theme.ink)
-                    .cursor_ew_resize()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
-                            app.prepare.drag = crate::prepare::DragHandle::StudioSplit;
-                            app.prepare.drag_start_x = f64::from(event.position.x);
-                            app.prepare.drag_start_value = app.prepare.studio_width;
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_move(
-                        cx.listener(move |app, event: &MouseMoveEvent, _window, cx| {
-                            let x: f32 = event.position.x.into();
-                            let y: f32 = event.position.y.into();
-                            app.prepare_drag_move(x, y, 0.0, 1.0, 1.0, cx);
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|app, _event: &MouseUpEvent, _window, cx| {
-                            app.prepare.drag = crate::prepare::DragHandle::None;
-                            app.save_draft();
-                            cx.notify();
-                        }),
-                    )
-                    .on_click(cx.listener(|app, event: &ClickEvent, _window, cx| {
-                        if event.click_count() >= 2 {
-                            app.prepare.studio_width = 460.0;
-                            app.save_draft();
-                            cx.notify();
-                        }
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(inspector_width))
-                    .flex_none()
-                    .h_full()
-                    .bg(theme.surface)
-                    .child(self.render_prepare_inspector(cx, &theme, inspector_width)),
-            );
+        // Inspector divider (draggable splitter) + inspector. Compact windows
+        // intentionally omit both rather than squeezing the editor.
+        if !compact_studio {
+            studio = studio
+                .child(
+                    div()
+                        .id("studio-splitter")
+                        .w(px(5.0))
+                        .h_full()
+                        .border_l_1()
+                        .border_r_1()
+                        .border_color(theme.border)
+                        .bg(theme.ink)
+                        .cursor_ew_resize()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
+                                app.prepare.drag = crate::prepare::DragHandle::StudioSplit;
+                                app.prepare.drag_start_x = f64::from(event.position.x);
+                                app.prepare.drag_start_value = app.prepare.studio_width;
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_move(
+                            cx.listener(move |app, event: &MouseMoveEvent, _window, cx| {
+                                let x: f32 = event.position.x.into();
+                                let y: f32 = event.position.y.into();
+                                app.prepare_drag_move(x, y, 0.0, 1.0, 1.0, cx);
+                            }),
+                        )
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|app, _event: &MouseUpEvent, _window, cx| {
+                                app.prepare.drag = crate::prepare::DragHandle::None;
+                                app.save_draft();
+                                cx.notify();
+                            }),
+                        )
+                        .on_click(cx.listener(|app, event: &ClickEvent, _window, cx| {
+                            if event.click_count() >= 2 {
+                                app.prepare.studio_width = 420.0;
+                                app.save_draft();
+                                cx.notify();
+                            }
+                        })),
+                )
+                .child(
+                    div()
+                        .w(px(inspector_width))
+                        .flex_none()
+                        .h_full()
+                        .bg(theme.surface)
+                        .flex()
+                        .flex_col()
+                        .child(self.render_prepare_tabs(cx))
+                        .child(self.render_prepare_inspector(cx, &theme, inspector_width)),
+                );
+        }
         studio
     }
 
@@ -3401,7 +3597,7 @@ impl crate::App {
                 .child(workbench_button(
                     "random-close",
                     "",
-                    "✕",
+                    "close",
                     ButtonKind::Ghost,
                     true,
                     true,
@@ -3600,9 +3796,7 @@ impl crate::App {
                         } else {
                             1.0
                         })
-                        .child("✕")
-                        .text_size(px(11.0))
-                        .text_color(theme.muted)
+                        .child(icon("close", 11.0, theme.muted))
                         .tooltip(move |_window, cx| {
                             crate::tooltip_view(cx, "Clear folder search".into())
                         })
@@ -3983,7 +4177,7 @@ impl crate::App {
                     self,
                     "menu-prepare-x",
                     "Prepare X again",
-                    "𝕏",
+                    "external",
                     true,
                     Some(Command::PrepareXAgain(post_id)),
                     cx,
@@ -3996,7 +4190,7 @@ impl crate::App {
                         self,
                         "menu-open-tg",
                         "Open Telegram post",
-                        "↗",
+                        "external",
                         true,
                         None,
                         cx,
@@ -4011,7 +4205,16 @@ impl crate::App {
             if has_x_url {
                 let link = post.x_url.clone();
                 menu = menu.child(
-                    add_item(self, "menu-open-x", "Open X post", "↗", true, None, cx).on_click(
+                    add_item(
+                        self,
+                        "menu-open-x",
+                        "Open X post",
+                        "external",
+                        true,
+                        None,
+                        cx,
+                    )
+                    .on_click(
                         cx.listener(move |app, _event, _window, cx| {
                             let _ = std::process::Command::new("open").arg(&link).spawn();
                             app.history_more_menu_post = None;
@@ -4085,17 +4288,17 @@ impl crate::App {
         } else {
             0.0
         };
-        let min_grid = if window < 900.0 {
-            280.0
-        } else if window < 1180.0 {
-            360.0
-        } else {
-            460.0
-        };
+        let min_grid = if window < 900.0 { 280.0 } else { 360.0 };
         let preferred = if window < 900.0 {
             (page_width * 0.42).clamp(280.0, 320.0)
+        } else if window < 1120.0 {
+            (page_width * 0.40).clamp(350.0, 410.0)
+        } else if window < 1480.0 {
+            (page_width * 0.34).clamp(420.0, 500.0)
+        } else if window >= 1800.0 {
+            (page_width * 0.28).clamp(520.0, 680.0)
         } else {
-            (page_width * 0.34).clamp(340.0, 420.0)
+            (page_width * 0.32).clamp(480.0, 560.0)
         };
         let available = (page_width - explorer - min_grid).max(280.0);
         if self.prepare_expanded && window >= 1180.0 {
