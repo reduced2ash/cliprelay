@@ -1165,7 +1165,7 @@ impl crate::App {
                 div()
                     .id("nav-library-header")
                     .w(px(activity_item_width))
-                    .h(px(48.0))
+                    .h(px(40.0))
                     .px(if nav_collapsed { px(0.0) } else { px(10.0) })
                     .rounded(px(3.0))
                     .bg(if library_selected {
@@ -1321,15 +1321,18 @@ impl crate::App {
                 } else {
                     location
                 };
-                center = center.child(icon(
-                    if studio_mode { "edit" } else { "folder" },
-                    15.0,
-                    if has_root {
-                        theme.accent_text
-                    } else {
-                        theme.muted
-                    },
-                ));
+                center = center.child(div().w(px(7.0)).flex_none());
+                if studio_mode {
+                    center = center.child(icon(
+                        "edit",
+                        15.0,
+                        if has_root {
+                            theme.accent_text
+                        } else {
+                            theme.muted
+                        },
+                    ));
+                }
                 if !narrow_actions {
                     center = center
                         .child(
@@ -1339,14 +1342,14 @@ impl crate::App {
                                 } else {
                                     "Video library"
                                 })
-                                .text_size(px(12.0))
+                                .text_size(px(13.0))
                                 .text_color(theme.accent_text)
                                 .font_weight(FontWeight::SEMIBOLD),
                         )
                         .child(
                             div()
                                 .child("/")
-                                .text_size(px(12.0))
+                                .text_size(px(13.0))
                                 .text_color(theme.muted_soft),
                         );
                 }
@@ -1355,7 +1358,7 @@ impl crate::App {
                         .flex_1()
                         .min_w(px(42.0))
                         .child(location)
-                        .text_size(px(12.0))
+                        .text_size(px(13.0))
                         .text_color(if has_root {
                             theme.text_soft
                         } else {
@@ -1588,7 +1591,7 @@ impl crate::App {
                 .flex_none()
                 .w(px(prepare_width))
                 .h_full()
-                .bg(theme.workbench_header)
+                .bg(theme.workbench_canvas)
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.workbench_border.opacity(0.62))
@@ -3080,7 +3083,7 @@ impl crate::App {
             .w(px(dock_width))
             .flex_none()
             .h_full()
-            .bg(theme.workbench_explorer)
+            .bg(theme.workbench_canvas)
             .border_l_1()
             .border_color(theme.workbench_border.opacity(0.62))
             .flex()

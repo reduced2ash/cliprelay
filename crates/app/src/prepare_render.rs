@@ -2974,7 +2974,7 @@ impl crate::App {
             .id("prepare-dock-footer")
             .w_full()
             .mt_auto()
-            .bg(theme.surface)
+            .bg(theme.workbench_canvas)
             .border_t_1()
             .border_color(theme.border)
             .px(px(PREPARE_GUTTER))

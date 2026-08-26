@@ -823,11 +823,7 @@ impl crate::App {
                 .focus(|style| style.bg(theme.workbench_selection.opacity(0.86)))
                 .active(|style| style.bg(theme.accent_soft))
                 .hover(|style| style.bg(theme.workbench_selection.opacity(0.68)))
-                .bg(if root_active {
-                    theme.workbench_selection.opacity(0.86)
-                } else {
-                    theme.transparent()
-                })
+                .bg(theme.transparent())
                 .child(
                     div()
                         .id("folder-root-chevron")
