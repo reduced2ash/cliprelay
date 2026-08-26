@@ -123,6 +123,9 @@ capture_case() {
     elif [[ "${case_name}" == "workflow-tall" ]]; then
         target_width=1180
         target_height=1080
+    elif [[ "${case_name}" == "workflow-shell" ]]; then
+        target_width=1672
+        target_height=945
     fi
 
     mkdir -p "${case_data}" /tmp/library
@@ -280,6 +283,10 @@ run_suite() {
         capture_case workflow-tall CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
         return 0
     fi
+    if [[ "${GUI_TEST_ONLY_SHELL:-0}" == "1" ]]; then
+        capture_case workflow-shell CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        return 0
+    fi
 
     capture_case library || return 1
     capture_case history CLIPRELAY_PAGE=history || return 1
@@ -356,6 +363,8 @@ run_suite() {
 if run_suite; then
     if [[ "${GUI_TEST_ONLY_TALL:-0}" == "1" ]]; then
         echo "PASS isolated tall Prepare-panel visual check. Artifacts: /artifacts" > /artifacts/summary.txt
+    elif [[ "${GUI_TEST_ONLY_SHELL:-0}" == "1" ]]; then
+        echo "PASS isolated 1672x945 workbench-shell visual check. Artifacts: /artifacts" > /artifacts/summary.txt
     else
         echo "PASS isolated ClipRelay GUI smoke test (8 semantic states, including a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
     fi

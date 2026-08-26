@@ -2245,10 +2245,10 @@ impl App {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.ink)
+            .bg(theme.workbench_chrome)
             .text_color(theme.text)
             .text_size(px(15.0))
-            .font_family("System Font")
+            .font_family("Open Sans")
             .track_focus(&self.focus_handle)
             .key_context("cliprelay")
             .on_action(cx.listener(|_app, _: &FocusNext, window, _cx| {
@@ -2276,6 +2276,10 @@ impl App {
         let focused_studio = self.page == Page::Library
             && self.prepare.studio_mode
             && self.selected.is_some();
+        let explorer_owns_rail_seam = self.page == Page::Library
+            && !self.settings_value(LIBRARY_ROOT).is_empty()
+            && self.explorer_visible()
+            && !self.prepare.studio_mode;
 
         // Studio is a focused media workspace: its editor header replaces the
         // global command chrome. The bottom workspace tabs remain available so
@@ -2294,7 +2298,15 @@ impl App {
             .min_h(px(0.0));
         if !focused_studio {
             body = body.child(self.render_sidebar(cx));
-            body = body.child(div().w(px(1.0)).h_full().bg(self.theme.border).flex_none());
+            if !explorer_owns_rail_seam {
+                body = body.child(
+                    div()
+                        .w(px(1.0))
+                        .h_full()
+                        .bg(self.theme.workbench_border.opacity(0.62))
+                        .flex_none(),
+                );
+            }
         }
         let page = self.page;
         body = body.child(match page {

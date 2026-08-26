@@ -32,7 +32,7 @@ impl AssetSource for ClipRelayAssets {
             "icons/expand-horizontal.svg" => Some(icon_svg!(r#"<path d="M8 3 3 8l5 5"/><path d="M3 8h7"/><path d="m16 11 5 5-5 5"/><path d="M21 16h-7"/>"#)),
             "icons/ellipsis.svg" => Some(icon_svg!(r#"<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>"#)),
             "icons/external-link.svg" => Some(icon_svg!(r#"<path d="M15 3h6v6"/><path d="m10 14 11-11"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>"#)),
-            "icons/folder.svg" => Some(icon_svg!(r#"<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>"#)),
+            "icons/folder.svg" => Some(icon_svg!(r#"<path stroke-width="1.65" d="M3.5 7.25A1.75 1.75 0 0 1 5.25 5.5h4l2 2h7.5a1.75 1.75 0 0 1 1.75 1.75v7.5a1.75 1.75 0 0 1-1.75 1.75H5.25a1.75 1.75 0 0 1-1.75-1.75z"/><path stroke-width="1.65" d="M3.75 9h16.5"/>"#)),
             "icons/folders.svg" => Some(icon_svg!(r#"<path d="M4 8V6.5A2.5 2.5 0 0 1 6.5 4H10l2 2h5.5A2.5 2.5 0 0 1 20 8.5V10"/><path d="M3 10.5A2.5 2.5 0 0 1 5.5 8H9l2 2h7.5A2.5 2.5 0 0 1 21 12.5v4A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>"#)),
             "icons/grid.svg" => Some(icon_svg!(r#"<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>"#)),
             "icons/history.svg" => Some(icon_svg!(r#"<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>"#)),

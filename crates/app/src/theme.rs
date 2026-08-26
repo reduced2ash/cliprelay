@@ -51,6 +51,15 @@ pub struct Theme {
     pub mode: ThemeMode,
     pub is_light: bool,
     pub uses_blue_accent: bool,
+    // Workbench chrome. These roles keep the title bar, activity rail,
+    // Explorer, and content canvas distinct without turning them into cards.
+    pub workbench_chrome: Hsla,
+    pub workbench_rail: Hsla,
+    pub workbench_explorer: Hsla,
+    pub workbench_canvas: Hsla,
+    pub workbench_header: Hsla,
+    pub workbench_border: Hsla,
+    pub workbench_selection: Hsla,
     // neutrals
     pub ink: Hsla,
     pub surface: Hsla,
@@ -204,10 +213,27 @@ impl Theme {
         media_overlay: &str,
     ) -> Self {
         let is_light = mode == ThemeMode::FullWhite;
+        // Preserve each theme's established palette. The workbench roles
+        // describe where colors are used; they do not introduce a new global
+        // background color.
+        let workbench_chrome = color(ink);
+        let workbench_rail = color(ink);
+        let workbench_explorer = color(surface);
+        let workbench_canvas = color(ink);
+        let workbench_header = color(surface);
+        let workbench_border = color(border);
+        let workbench_selection = color(raised);
         Self {
             mode,
             is_light,
             uses_blue_accent: mode != ThemeMode::Relay,
+            workbench_chrome,
+            workbench_rail,
+            workbench_explorer,
+            workbench_canvas,
+            workbench_header,
+            workbench_border,
+            workbench_selection,
             ink: color(ink),
             surface: color(surface),
             surface_soft: color(surface_soft),
@@ -254,9 +280,10 @@ pub const SPACING_LG: f32 = 16.0;
 pub const SPACING_XL: f32 = 24.0;
 pub const SPACING_XXL: f32 = 32.0;
 
-// Action controls use Zed-like square geometry. Larger radii remain available
-// for surfaces such as menus, media wells, and floating status treatments.
-pub const RADIUS_SM: f32 = 0.0;
+// Action controls use Zed-like near-square geometry. The two-pixel radius is
+// enough to soften corners at normal and high-DPI scales without becoming a
+// rounded-rectangle style.
+pub const RADIUS_SM: f32 = 2.0;
 pub const RADIUS_MD: f32 = 5.0;
 pub const RADIUS_LG: f32 = 7.0;
 
@@ -279,8 +306,9 @@ pub const PREVIEW_DELAY_MS: u64 = 350;
 // This keeps navigation present without spending a full text sidebar beside a
 // second folder column, matching the approved desktop composition.
 pub const SIDEBAR_EXPANDED_WIDTH: f32 = 196.0;
-pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 54.0;
-pub const EXPLORER_WIDTH: f32 = 244.0;
-pub const TITLE_BAR_HEIGHT: f32 = 46.0;
+pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 62.0;
+// Includes the Explorer's owned left and right one-pixel seams.
+pub const EXPLORER_WIDTH: f32 = 245.0;
+pub const TITLE_BAR_HEIGHT: f32 = 56.0;
 pub const WORKSPACE_TAB_HEIGHT: f32 = 32.0;
-pub const CONTEXT_TOOLBAR_HEIGHT: f32 = 44.0;
+pub const CONTEXT_TOOLBAR_HEIGHT: f32 = 58.0;

@@ -1111,7 +1111,7 @@ impl crate::App {
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
         let studio_mode = self.prepare.studio_mode;
         let show_explorer =
-            page == Page::Library && has_root && self.show_folders && !studio_mode;
+            page == Page::Library && has_root && self.explorer_visible() && !studio_mode;
         let explorer_width = EXPLORER_WIDTH;
         let prepare_width =
             if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
@@ -1122,12 +1122,7 @@ impl crate::App {
         let show_prepare = prepare_width > 1.0;
         // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
         let slot_reserved = activity_width
-            + 1.0
-            + if show_explorer {
-                explorer_width + 1.0
-            } else {
-                0.0
-            }
+            + if show_explorer { explorer_width } else { 1.0 }
             + if show_prepare {
                 prepare_width + 1.0
             } else {
@@ -1142,106 +1137,147 @@ impl crate::App {
             .w_full()
             .min_w(px(0.0))
             .h(px(CONTEXT_TOOLBAR_HEIGHT))
-            .bg(theme.surface)
-            .border_b_1()
-            .border_color(theme.border)
+            .bg(theme.workbench_canvas)
             .flex()
             .flex_row()
             .items_center()
             .overflow_hidden();
 
-        // Activity section: a narrow workbench rail, expandable when wanted.
-        let (page_icon, page_name) = if self.prepare.studio_mode {
-            ("edit", "Prepare")
+        // The first context cell is also the first activity-rail slot. This
+        // keeps the navigation rhythm continuous instead of rendering Library
+        // once above the rail and again immediately below it.
+        let library_selected = page == Page::Library && !studio_mode;
+        let can_expand_navigation = nav_collapsed && width >= 1080.0;
+        let activity_item_width = if nav_collapsed {
+            40.0
         } else {
-            match page {
-                Page::Library => ("library", "Library"),
-                Page::History => ("history", "History"),
-                Page::Settings => ("settings", "Settings"),
-            }
+            activity_width - 16.0
         };
-        let mut activity = div()
+        let activity = div()
             .flex_none()
             .w(px(activity_width))
             .h_full()
-            .bg(theme.surface)
+            .bg(theme.workbench_rail)
             .flex()
-            .flex_row()
             .items_center()
-            .gap(px(8.0));
-        if nav_collapsed {
-            activity = activity
-                .justify_center()
-                .child(icon(page_icon, 16.0, theme.accent_text));
-        } else {
-            activity = activity
-                .pl(px(12.0))
-                .pr(px(10.0))
-                .child(icon(page_icon, 16.0, theme.accent_text))
-                .child(
-                    div()
-                        .child(tracked(&page_name.to_uppercase()))
-                        .text_size(px(10.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
-                );
-        }
+            .justify_center()
+            .child(
+                div()
+                    .id("nav-library-header")
+                    .w(px(activity_item_width))
+                    .h(px(48.0))
+                    .px(if nav_collapsed { px(0.0) } else { px(10.0) })
+                    .rounded(px(3.0))
+                    .bg(if library_selected {
+                        theme.accent_soft
+                    } else {
+                        theme.transparent()
+                    })
+                    .cursor_pointer()
+                    .tab_index(0)
+                    .focus(|style| style.bg(theme.hover))
+                    .active(|style| style.bg(theme.accent_soft))
+                    .hover(|style| style.bg(theme.hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(9.0))
+                    .child(icon(
+                        "library",
+                        18.0,
+                        if library_selected {
+                            theme.accent_text
+                        } else {
+                            theme.muted
+                        },
+                    ))
+                    .when(!nav_collapsed, |this| {
+                        this.child(
+                            div()
+                                .flex_1()
+                                .child("Library")
+                                .text_size(px(13.0))
+                                .text_color(if library_selected {
+                                    theme.text
+                                } else {
+                                    theme.text_soft
+                                })
+                                .font_weight(if library_selected {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::MEDIUM
+                                }),
+                        )
+                    })
+                    .tooltip(move |_window, cx| {
+                        crate::tooltip_view(
+                            cx,
+                            if can_expand_navigation {
+                                "Open Library  ·  Double-click to expand navigation"
+                            } else {
+                                "Open Library"
+                            }
+                            .into(),
+                        )
+                    })
+                    .on_click(cx.listener(move |app, event: &ClickEvent, window, cx| {
+                        window.blur();
+                        if can_expand_navigation && event.click_count() >= 2 {
+                            app.set_setting(SIDEBAR_COLLAPSED, json!(false), cx);
+                        } else {
+                            app.navigate_to(Page::Library, cx);
+                        }
+                    }))
+                    .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                        app.navigate_to(Page::Library, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(
+                        cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                            app.navigate_to(Page::Library, cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
+            );
         toolbar = toolbar.child(activity);
-        toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
 
         // Explorer header
         if show_explorer {
-            let count = self.folders.len();
             let explorer = div()
                 .flex_none()
                 .w(px(explorer_width))
                 .h_full()
-                .bg(theme.surface_soft)
+                .rounded_tl(px(3.0))
+                .bg(theme.workbench_header)
+                .border_t_1()
+                .border_l_1()
+                .border_r_1()
+                .border_color(theme.workbench_border.opacity(0.62))
                 .flex()
                 .flex_row()
                 .items_center()
-                .pl(px(10.0))
-                .pr(px(5.0))
-                .gap(px(7.0))
-                .child(icon("folders", 15.0, theme.muted))
+                .pl(px(28.0))
+                .pr(px(18.0))
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.0))
+                        .relative()
+                        .top(px(1.0))
                         .child(tracked("EXPLORER"))
-                        .text_size(px(10.0))
+                        .text_size(px(12.5))
                         .text_color(theme.text_soft)
                         .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    div()
-                        .child(format!("{}", count))
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft)
-                        .font_weight(FontWeight::MEDIUM),
-                )
-                .child(
-                    workbench_button(
-                        "collapse-folders",
-                        "",
-                        "chevron-up",
-                        ButtonKind::Ghost,
-                        true,
-                        true,
-                        "Collapse all folders",
-                        cx,
-                        |app, cx| {
-                            for node in &app.folders {
-                                app.folders_expanded.insert(node.folder.clone(), false);
-                            }
-                            cx.notify();
-                        },
-                    )
-                    .w(px(28.0))
-                    .h(px(28.0)),
                 );
             toolbar = toolbar.child(explorer);
-            toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
+        } else {
+            toolbar = toolbar.child(
+                div()
+                    .w(px(1.0))
+                    .h_full()
+                    .bg(theme.workbench_border.opacity(0.62))
+                    .flex_none(),
+            );
         }
 
         // Center slot (library context or page detail)
@@ -1255,6 +1291,9 @@ impl crate::App {
             .gap(px(7.0))
             .pl(px(12.0))
             .pr(px(9.0))
+            .bg(theme.workbench_canvas)
+            .border_t_1()
+            .border_color(theme.workbench_border.opacity(0.62))
             .overflow_hidden();
 
         match page {
@@ -1538,101 +1577,51 @@ impl crate::App {
 
         // Prepare dock header (right side)
         if show_prepare {
-            toolbar = toolbar.child(div().w(px(1.0)).h_full().bg(theme.border).flex_none());
-            let selected_name = self
-                .selected
-                .as_ref()
-                .map(|m| m.name.clone())
-                .unwrap_or_default();
-            let expanded = self.prepare_expanded;
-            let has_edits = self.prepare.has_edits();
-            let mut prepare = div()
+            toolbar = toolbar.child(
+                div()
+                    .w(px(1.0))
+                    .h_full()
+                    .bg(theme.workbench_border.opacity(0.62))
+                    .flex_none(),
+            );
+            let prepare = div()
                 .flex_none()
                 .w(px(prepare_width))
                 .h_full()
-                .bg(theme.surface)
+                .bg(theme.workbench_header)
+                .border_t_1()
+                .border_b_1()
+                .border_color(theme.workbench_border.opacity(0.62))
                 .flex()
                 .flex_row()
                 .items_center()
-                .pl(px(12.0))
-                .pr(px(7.0))
-                .gap(px(3.0))
+                .px(px(12.0))
+                .gap(px(8.0))
                 .overflow_hidden()
-                .child(icon("edit", 15.0, theme.accent_text))
                 .child(
                     div()
                         .child("Prepare")
                         .text_size(px(12.0))
                         .text_color(theme.text)
                         .font_weight(FontWeight::SEMIBOLD),
-                );
-            if prepare_width >= 470.0 {
-                prepare = prepare
-                    .child(
-                        div()
-                            .child("/")
-                            .text_size(px(12.0))
-                            .text_color(theme.muted_soft),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(36.0))
-                            .child(selected_name)
-                            .text_size(px(12.0))
-                            .text_color(theme.text_soft)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_ellipsis(),
-                    );
-            } else {
-                prepare = prepare.child(div().flex_1().min_w(px(0.0)));
-            }
-            if has_edits {
-                prepare = prepare.child(icon("crop", 14.0, theme.accent_text));
-            }
-            prepare = prepare
+                )
+                .child(div().flex_1().min_w(px(0.0)))
                 .child(workbench_button(
-                    "toolbar-open-player",
-                    "",
-                    "external",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Open in default player",
-                    cx,
-                    |app, cx| app.open_selected_in_player(cx),
-                ))
-                .child(workbench_button(
-                    "toolbar-widen",
-                    "",
-                    if expanded { "contract" } else { "expand" },
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    if expanded {
-                        "Narrow Prepare"
-                    } else {
-                        "Widen Prepare"
-                    },
-                    cx,
-                    |app, cx| {
-                        app.set_setting(PREPARE_EXPANDED, json!(!app.prepare_expanded), cx);
-                    },
-                ))
-                .child(workbench_button(
-                    "toolbar-fullscreen",
-                    "",
+                    "toolbar-open-studio",
+                    "Open Studio",
                     "maximize",
-                    ButtonKind::Ghost,
+                    ButtonKind::Secondary,
                     true,
-                    true,
-                    "Open full-screen editor",
+                    false,
+                    "Open the focused Prepare workspace",
                     cx,
                     |app, cx| {
                         app.prepare.studio_mode = true;
                         cx.notify();
                     },
-                ))
+                )
+                .h(px(32.0)))
+                .child(div().w(px(1.0)).h(px(22.0)).bg(theme.border))
                 .child(workbench_button(
                     "toolbar-close",
                     "",
@@ -2257,9 +2246,9 @@ impl crate::App {
         let titlebar_leading = if cfg!(target_os = "macos") {
             116.0
         } else {
-            8.0
+            16.0
         };
-        let titlebar_trailing = 8.0;
+        let titlebar_trailing = 10.0;
         let mut header = div()
             .id("header")
             .w_full()
@@ -2267,14 +2256,12 @@ impl crate::App {
             .h(px(TITLE_BAR_HEIGHT))
             .pl(px(titlebar_leading))
             .pr(px(titlebar_trailing))
-            .bg(theme.ink)
-            .border_b_1()
-            .border_color(theme.border)
+            .bg(theme.workbench_chrome)
             .relative()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(5.0))
+            .gap(px(6.0))
             .overflow_hidden();
 
         // Linux compositors own modifier-drag move/resize gestures. A full-header
@@ -2334,11 +2321,11 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(28.0))
-            .h(px(28.0)),
+            .w(px(34.0))
+            .h(px(34.0)),
         );
 
-        header = header.child(div().w(px(2.0)).flex_none());
+        header = header.child(div().w(px(12.0)).flex_none());
 
         let can_back = self
             .workspaces
@@ -2365,8 +2352,8 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(28.0))
-            .h(px(28.0)),
+            .w(px(32.0))
+            .h(px(32.0)),
         );
         header = header.child(
             workbench_button(
@@ -2383,11 +2370,11 @@ impl crate::App {
                     cx.notify();
                 },
             )
-            .w(px(28.0))
-            .h(px(28.0)),
+            .w(px(32.0))
+            .h(px(32.0)),
         );
 
-        header = header.child(div().w(px(if compact { 2.0 } else { 8.0 })).flex_none());
+        header = header.child(div().w(px(if compact { 6.0 } else { 12.0 })).flex_none());
 
         let empty_field = FieldState::default();
         let search_hint = if cfg!(target_os = "macos") {
@@ -2416,8 +2403,8 @@ impl crate::App {
             )
             .flex_1()
             .min_w(px(if very_compact { 230.0 } else { 280.0 }))
-            .max_w(px(860.0))
-            .h(px(30.0))
+            .max_w(px(680.0))
+            .h(px(34.0))
             .px(px(10.0))
             .rounded(px(5.0))
             .bg(theme.raised),
@@ -2466,8 +2453,8 @@ impl crate::App {
             div()
                 .id("activity-button")
                 .flex_none()
-                .h(px(28.0))
-                .w(px(28.0))
+                .h(px(30.0))
+                .w(px(30.0))
                 .rounded(px(RADIUS_SM))
                 .relative()
                 .cursor_pointer()
@@ -2529,7 +2516,7 @@ impl crate::App {
             let mut sources = div()
                 .id("random-sources")
                 .flex_none()
-                .h(px(30.0))
+                .h(px(32.0))
                 .px(px(9.0))
                 .w(px(width_px))
                 .rounded(px(RADIUS_SM))
@@ -2611,7 +2598,7 @@ impl crate::App {
         } else if compact {
             112.0
         } else {
-            128.0
+            136.0
         };
         header = header.child(
             workbench_button(
@@ -2629,7 +2616,7 @@ impl crate::App {
                 },
             )
             .w(px(pick_width))
-            .h(px(30.0)),
+            .h(px(34.0)),
         );
 
         header
@@ -2881,7 +2868,7 @@ impl crate::App {
             .h(px(WORKSPACE_TAB_HEIGHT))
             .bg(theme.surface)
             .border_t_1()
-            .border_color(theme.border)
+            .border_color(theme.workbench_border.opacity(0.62))
             .flex()
             .flex_row()
             .items_center()
@@ -2904,7 +2891,7 @@ impl crate::App {
             .w(px(width))
             .flex_none()
             .h_full()
-            .bg(theme.surface)
+            .bg(theme.workbench_rail)
             .py(px(8.0))
             .flex()
             .flex_col()
@@ -2921,7 +2908,8 @@ impl crate::App {
             let theme = app.theme.clone();
             let mut item = div()
                 .id(id)
-                .w_full()
+                .when(collapsed, |this| this.mx(px(10.0)).w(px(40.0)))
+                .when(!collapsed, |this| this.w_full())
                 .h(px(40.0))
                 .px(if collapsed { px(0.0) } else { px(12.0) })
                 .rounded(px(RADIUS_SM))
@@ -2936,7 +2924,7 @@ impl crate::App {
                 .focus(|style| style.bg(theme.hover))
                 .active(|style| style.bg(theme.accent_soft))
                 .bg(if selected {
-                    theme.active
+                    theme.accent_soft
                 } else {
                     theme.transparent()
                 })
@@ -2966,18 +2954,6 @@ impl crate::App {
                         .text_ellipsis(),
                 );
             }
-            if selected {
-                item = item.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(px(8.0))
-                        .w(px(2.0))
-                        .h(px(24.0))
-                        .rounded_r(px(1.0))
-                        .bg(theme.accent),
-                );
-            }
             item.on_click(cx.listener(move |app, _event, window, cx| {
                 window.blur();
                 app.navigate_to(target, cx);
@@ -2994,29 +2970,12 @@ impl crate::App {
             ))
         };
 
-        sidebar = sidebar
-            .child(nav_item(
-                self,
-                "nav-library",
-                "Library",
-                "library",
-                Page::Library,
-                cx,
-            ))
-            .child(nav_item(
+        sidebar = sidebar.child(nav_item(
                 self,
                 "nav-history",
                 "History",
                 "history",
                 Page::History,
-                cx,
-            ))
-            .child(nav_item(
-                self,
-                "nav-settings",
-                "Settings",
-                "settings",
-                Page::Settings,
                 cx,
             ));
         if self.prepare.studio_mode {
@@ -3057,73 +3016,58 @@ impl crate::App {
                     ),
             );
         }
-        sidebar = sidebar.child(div().flex_1()).child(
-            div()
-                .id("toggle-sidebar")
-                .w_full()
-                .h(px(40.0))
-                .px(if collapsed { px(0.0) } else { px(12.0) })
-                .rounded(px(RADIUS_SM))
-                .cursor_pointer()
-                .when(!narrow, |this| {
-                    this.tab_index(0)
-                        .focus(|style| style.bg(theme.hover))
-                        .active(|style| style.bg(theme.accent_soft))
-                })
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap(px(9.0))
-                .hover(|style| style.bg(theme.hover))
-                .child(icon(
-                    if collapsed {
-                        "chevron-right"
-                    } else {
-                        "chevron-left"
-                    },
-                    16.0,
-                    theme.muted,
-                ))
-                .when(!collapsed, |this| {
-                    this.child(
+        sidebar = sidebar
+            .child(div().flex_1())
+            .child(nav_item(
+                self,
+                "nav-settings",
+                "Settings",
+                "settings",
+                Page::Settings,
+                cx,
+            ));
+        if !collapsed && !narrow {
+            sidebar = sidebar.child(
+                div()
+                    .id("toggle-sidebar")
+                    .w_full()
+                    .h(px(40.0))
+                    .px(px(12.0))
+                    .cursor_pointer()
+                    .tab_index(0)
+                    .focus(|style| style.bg(theme.hover))
+                    .active(|style| style.bg(theme.accent_soft))
+                    .flex()
+                    .items_center()
+                    .gap(px(9.0))
+                    .hover(|style| style.bg(theme.hover))
+                    .child(icon("chevron-left", 16.0, theme.muted))
+                    .child(
                         div()
                             .flex_1()
                             .child("Collapse sidebar")
                             .text_size(px(12.0))
                             .text_color(theme.muted),
                     )
-                })
-                .opacity(if narrow { 0.45 } else { 1.0 })
-                .tooltip(move |_window, cx| {
-                    let text = if narrow {
-                        "Widen the window to expand the sidebar"
-                    } else if collapsed {
-                        "Expand sidebar"
-                    } else {
-                        "Collapse sidebar"
-                    };
-                    crate::tooltip_view(cx, text.into())
-                })
-                .on_click(cx.listener(|app, _event, window, cx| {
-                    if app.window_size.0 >= 1080.0 {
+                    .tooltip(move |_window, cx| {
+                        crate::tooltip_view(cx, "Collapse sidebar".into())
+                    })
+                    .on_click(cx.listener(|app, _event, window, cx| {
                         window.blur();
-                        app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
-                    }
-                }))
-                .when(!narrow, |this| {
-                    this.on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
-                        app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
+                    }))
+                    .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
                         cx.stop_propagation();
                     }))
-                    .on_action(cx.listener(
-                        |app, _: &crate::ActivateSpace, _window, cx| {
-                            app.set_setting(SIDEBAR_COLLAPSED, json!(!app.sidebar_collapsed), cx);
+                    .on_action(
+                        cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                            app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
                             cx.stop_propagation();
-                        },
-                    ))
-                }),
-        );
+                        }),
+                    ),
+            );
+        }
         sidebar
     }
 
@@ -3136,9 +3080,9 @@ impl crate::App {
             .w(px(dock_width))
             .flex_none()
             .h_full()
-            .bg(theme.surface)
+            .bg(theme.workbench_explorer)
             .border_l_1()
-            .border_color(theme.border)
+            .border_color(theme.workbench_border.opacity(0.62))
             .flex()
             .flex_col();
 
@@ -4296,9 +4240,9 @@ impl crate::App {
         } else if window < 1480.0 {
             (page_width * 0.34).clamp(420.0, 500.0)
         } else if window >= 1800.0 {
-            (page_width * 0.28).clamp(520.0, 680.0)
+            (page_width * 0.32).clamp(560.0, 720.0)
         } else {
-            (page_width * 0.32).clamp(480.0, 560.0)
+            (page_width * 0.345).clamp(520.0, 600.0)
         };
         let available = (page_width - explorer - min_grid).max(280.0);
         if self.prepare_expanded && window >= 1180.0 {

@@ -44,7 +44,14 @@ fn prepare_frame_height(
         // A wide dock earns a visibly larger proofing canvas, but the lower
         // delivery handoff and filmstrip must stay above the workspace tabs.
         let width_aware_height = (track_width * 0.68).clamp(280.0, 420.0);
-        available_height.min(width_aware_height)
+        let viewport_cap = if window_height < 1000.0 {
+            300.0
+        } else if window_height < 1200.0 {
+            360.0
+        } else {
+            420.0
+        };
+        available_height.min(width_aware_height).min(viewport_cap)
     }
 }
 
@@ -93,7 +100,7 @@ impl crate::App {
         } else if self.window_size.1 >= 1100.0 {
             92.0
         } else if self.window_size.1 >= 900.0 {
-            80.0
+            72.0
         } else {
             68.0
         };
@@ -2781,13 +2788,6 @@ impl crate::App {
                 .text_color(theme.text_soft)
                 .into_any()
         };
-        let estimate = self.estimate_output_size_label();
-        let output_value = if estimate.is_empty() {
-            "Destination-aware generated copy".to_string()
-        } else {
-            format!("Destination-aware copy  ·  {estimate}")
-        };
-
         let destination_row = |label: &'static str,
                                glyph: &'static str,
                                detail: String,
@@ -2795,6 +2795,7 @@ impl crate::App {
                                badge_color: Hsla| {
             div()
                 .w_full()
+                .flex_none()
                 .h(px(56.0))
                 .px(px(12.0))
                 .border_b_1()
@@ -2852,24 +2853,6 @@ impl crate::App {
             .scrollbar_width(px(8.0))
             .border_t_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .w_full()
-                    .h(px(32.0))
-                    .px(px(12.0))
-                    .bg(theme.ink)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .child(tracked("DELIVERY HANDOFF"))
-                            .text_size(px(10.0))
-                            .text_color(theme.muted)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    ),
-            )
             .child(destination_row(
                 "X",
                 "external",
@@ -2908,32 +2891,6 @@ impl crate::App {
                             .font_weight(FontWeight::MEDIUM),
                     )
                     .child(caption_preview),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .h(px(38.0))
-                    .px(px(12.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(
-                        div()
-                            .child("Output")
-                            .text_size(px(10.0))
-                            .text_color(theme.muted)
-                            .font_weight(FontWeight::MEDIUM),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(output_value)
-                            .text_size(px(11.0))
-                            .text_color(theme.text_soft)
-                            .text_right()
-                            .text_ellipsis(),
-                    ),
             )
     }
 
@@ -3083,8 +3040,10 @@ impl crate::App {
             } else {
                 format!("Telegram ready · X manual · {estimate}")
             }
-        } else {
+        } else if estimate.is_empty() {
             "Telegram needs setup · X manual".to_string()
+        } else {
+            format!("Telegram needs setup · X manual · {estimate}")
         };
         footer = footer.child(
             div()
