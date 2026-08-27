@@ -42,7 +42,7 @@ impl ThemeMode {
 }
 
 /// Media area colors are theme-independent.
-pub const MEDIA_WELL: &str = "#05070B";
+pub const MEDIA_WELL: &str = "#050509";
 pub const MEDIA_TEXT: &str = "#F4F7FB";
 pub const MEDIA_MUTED: &str = "#A9B2C0";
 
@@ -97,30 +97,30 @@ impl Theme {
     pub fn relay() -> Self {
         Self::from_palette(
             ThemeMode::Relay,
-            "#101114",
-            "#15171B",
-            "#181A1F",
-            "#1D2026",
-            "#252830",
-            "#20232A",
-            "#F1F3F5",
-            "#C8CCD2",
-            "#8E949E",
-            "#6C737E",
-            "#2A2E36",
-            "#3A3F49",
-            "#F26A4F",
-            "#DC5A42",
-            "#2A1D1B",
-            "#FF8067",
-            "#111215",
-            "#67C587",
-            "#17281E",
-            "#D8A758",
-            "#2E281A",
-            "#E26F76",
-            "#321D21",
-            "#15171B",
+            "#0D0E13",
+            "#13151C",
+            "#171923",
+            "#1C1F2A",
+            "#262A38",
+            "#20232F",
+            "#F3F0EC",
+            "#CBC8C5",
+            "#92929A",
+            "#6F717B",
+            "#2B2E3A",
+            "#414655",
+            "#FF7152",
+            "#E85C3E",
+            "#2B1A1A",
+            "#FF8A70",
+            "#100E10",
+            "#70C98D",
+            "#12251A",
+            "#E4AE5D",
+            "#2C2415",
+            "#EE7680",
+            "#30191F",
+            "#111219",
         )
     }
 
@@ -213,16 +213,38 @@ impl Theme {
         media_overlay: &str,
     ) -> Self {
         let is_light = mode == ThemeMode::FullWhite;
-        // Preserve each theme's established palette. The workbench roles
-        // describe where colors are used; they do not introduce a new global
-        // background color.
-        let workbench_chrome = color(ink);
-        let workbench_rail = color(ink);
-        let workbench_explorer = color(surface);
-        let workbench_canvas = color(ink);
-        let workbench_header = color(surface);
-        let workbench_border = color(border);
-        let workbench_selection = color(raised);
+        // Relay uses a smoked graphite hierarchy with a restrained violet
+        // undertone. The warm coral accent stays rare and decisive while the
+        // chrome, Explorer, and canvas remain distinct at a glance.
+        let (
+            workbench_chrome,
+            workbench_rail,
+            workbench_explorer,
+            workbench_canvas,
+            workbench_header,
+            workbench_border,
+            workbench_selection,
+        ) = if mode == ThemeMode::Relay {
+            (
+                color("#151720"),
+                color("#0A0B10"),
+                color("#12141B"),
+                color("#0D0E13"),
+                color("#11131A"),
+                color("#2A2D38"),
+                color("#1D202A"),
+            )
+        } else {
+            (
+                color(ink),
+                color(ink),
+                color(surface),
+                color(ink),
+                color(surface),
+                color(border),
+                color(raised),
+            )
+        };
         Self {
             mode,
             is_light,

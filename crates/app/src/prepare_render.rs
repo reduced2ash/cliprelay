@@ -937,7 +937,8 @@ impl crate::App {
                             app.command(Command::RevealSelectedInLibrary);
                             cx.notify();
                         },
-                    )),
+                    )
+                    .mr(px(10.0))),
             );
         }
         stage
