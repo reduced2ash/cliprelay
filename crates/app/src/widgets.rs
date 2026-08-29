@@ -208,9 +208,14 @@ pub fn button(
     let on_click = Rc::new(on_click);
     let click = Rc::clone(&on_click);
     let activate = Rc::clone(&on_click);
+    let focus_fill = if kind == ButtonKind::Primary {
+        current_theme().accent_pressed
+    } else {
+        current_theme().hover
+    };
     button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.tab_index(0)
-            .focus(|style| style.bg(current_theme().hover))
+            .focus(move |style| style.bg(focus_fill))
             .on_click(cx.listener(move |app, _event, window, cx| {
                 // Pointer presses use the transient `active` fill below. Drop
                 // pointer-acquired focus before invoking the action so the
@@ -264,7 +269,7 @@ fn button_base(
         theme.muted
     } else {
         match kind {
-            ButtonKind::Primary => theme.accent_text,
+            ButtonKind::Primary => theme.accent_content,
             ButtonKind::Danger => theme.error,
             _ => theme.text,
         }
@@ -284,19 +289,27 @@ fn button_base(
     match kind {
         ButtonKind::Primary => {
             element = element
-                .bg(theme.accent_soft)
+                .bg(theme.accent)
                 .border_1()
                 .border_color(theme.accent)
-                .text_color(theme.accent_text)
-                .hover(|style| style.bg(theme.active).border_color(theme.accent_pressed));
+                .text_color(theme.accent_content)
+                .hover(|style| {
+                    style
+                        .bg(theme.accent_pressed)
+                        .border_color(theme.accent_pressed)
+                });
         }
         ButtonKind::Secondary => {
             element = element
                 .bg(theme.transparent())
                 .border_1()
-                .border_color(theme.border_strong)
+                .border_color(theme.border.opacity(0.86))
                 .text_color(theme.text)
-                .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
+                .hover(|style| {
+                    style
+                        .bg(theme.hover)
+                        .border_color(theme.border_strong.opacity(0.72))
+                });
         }
         ButtonKind::Ghost => {
             element = element
@@ -318,11 +331,16 @@ fn button_base(
             .min_w(px(0.0))
             .text_ellipsis(),
     );
+    let pressed_fill = if kind == ButtonKind::Primary {
+        theme.accent_pressed
+    } else {
+        theme.accent_soft
+    };
     element
         .when(enabled, |this| {
             // GPUI's active state exists only while the pointer is held down,
             // so this orange fill naturally clears on release or cancellation.
-            this.active(|style| style.bg(theme.accent_soft))
+            this.active(move |style| style.bg(pressed_fill))
         })
         // Disabled: neutral raised fill + muted text (opacity alone washes
         // colored buttons out on light themes).
@@ -353,7 +371,7 @@ pub fn workbench_button(
         theme.muted_soft
     } else {
         match kind {
-            ButtonKind::Primary => theme.accent_text,
+            ButtonKind::Primary => theme.accent_content,
             ButtonKind::Danger => theme.error,
             ButtonKind::Ghost => theme.muted,
             ButtonKind::Secondary => theme.text,
@@ -378,19 +396,27 @@ pub fn workbench_button(
     match kind {
         ButtonKind::Primary => {
             element = element
-                .bg(theme.accent_soft)
+                .bg(theme.accent)
                 .border_1()
                 .border_color(theme.accent)
-                .text_color(theme.accent_text)
-                .hover(|style| style.bg(theme.active).border_color(theme.accent_pressed));
+                .text_color(theme.accent_content)
+                .hover(|style| {
+                    style
+                        .bg(theme.accent_pressed)
+                        .border_color(theme.accent_pressed)
+                });
         }
         ButtonKind::Secondary => {
             element = element
                 .bg(theme.transparent())
                 .border_1()
-                .border_color(theme.border_strong)
+                .border_color(theme.border.opacity(0.86))
                 .text_color(theme.text)
-                .hover(|style| style.bg(theme.hover).border_color(theme.border_strong));
+                .hover(|style| {
+                    style
+                        .bg(theme.hover)
+                        .border_color(theme.border_strong.opacity(0.72))
+                });
         }
         ButtonKind::Ghost => {
             element = element
@@ -410,13 +436,23 @@ pub fn workbench_button(
     let on_click = Rc::new(on_click);
     let click = Rc::clone(&on_click);
     let activate = Rc::clone(&on_click);
+    let pressed_fill = if kind == ButtonKind::Primary {
+        theme.accent_pressed
+    } else {
+        theme.accent_soft
+    };
+    let focus_fill = if kind == ButtonKind::Primary {
+        theme.accent_pressed
+    } else {
+        theme.hover
+    };
     element
         .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
         .when(!enabled, |this| this.opacity(0.42).cursor_default())
         .when(enabled, |this| {
-            this.active(|style| style.bg(theme.accent_soft))
+            this.active(move |style| style.bg(pressed_fill))
                 .tab_index(0)
-                .focus(|style| style.bg(current_theme().hover))
+                .focus(move |style| style.bg(focus_fill))
                 .on_click(cx.listener(move |app, _event, window, cx| {
                     window.blur();
                     click(app, cx);
@@ -755,10 +791,12 @@ pub fn status_pill(id: &'static str, label: &str, state: PillState) -> impl Elem
     };
     div()
         .id(id)
-        .h(px(28.0))
+        .h(px(26.0))
         .px(px(10.0))
-        .rounded(px(6.0))
+        .rounded(px(13.0))
         .bg(bg)
+        .border_1()
+        .border_color(color.opacity(0.22))
         .flex()
         .items_center()
         .gap(px(6.0))

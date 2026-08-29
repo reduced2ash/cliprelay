@@ -332,5 +332,8 @@ pub const SIDEBAR_COLLAPSED_WIDTH: f32 = 62.0;
 // Includes the Explorer's owned left and right one-pixel seams.
 pub const EXPLORER_WIDTH: f32 = 245.0;
 pub const TITLE_BAR_HEIGHT: f32 = 56.0;
-pub const WORKSPACE_TAB_HEIGHT: f32 = 32.0;
+// The workspace strip is a persistent part of the workbench chrome. Keep it
+// tall enough to read as a deliberate navigation row instead of a compressed
+// status bar, while remaining denser than the main toolbar.
+pub const WORKSPACE_TAB_HEIGHT: f32 = 38.0;
 pub const CONTEXT_TOOLBAR_HEIGHT: f32 = 58.0;

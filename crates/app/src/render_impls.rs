@@ -1580,19 +1580,13 @@ impl crate::App {
 
         // Prepare dock header (right side)
         if show_prepare {
-            toolbar = toolbar.child(
-                div()
-                    .w(px(1.0))
-                    .h_full()
-                    .bg(theme.workbench_border.opacity(0.62))
-                    .flex_none(),
-            );
             let prepare = div()
                 .flex_none()
                 .w(px(prepare_width))
                 .h_full()
                 .bg(theme.workbench_canvas)
                 .border_t_1()
+                .border_l_1()
                 .border_b_1()
                 .border_color(theme.workbench_border.opacity(0.62))
                 .flex()
@@ -2641,9 +2635,11 @@ impl crate::App {
             .h_full()
             .flex()
             .flex_row()
-            .items_center()
             .overflow_x_scroll()
-            .scrollbar_width(px(4.0))
+            // Workspace tabs still scroll when the window cannot fit them,
+            // but the scrollbar must not reserve a dark gutter beneath the
+            // strip. Wheel/trackpad scrolling and programmatic reveal remain.
+            .scrollbar_width(px(0.0))
             .track_scroll(&self.tab_scroll);
 
         for (index, workspace) in workspaces.iter().enumerate() {
@@ -2660,13 +2656,15 @@ impl crate::App {
                 .w(px(tab_width))
                 .flex_none()
                 .h_full()
-                .px(px(9.0))
+                .px(px(11.0))
                 .relative()
                 .cursor_pointer()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(7.0))
+                .gap(px(8.0))
+                .rounded_tl(px(3.0))
+                .rounded_tr(px(3.0))
                 .bg(if active {
                     theme.raised
                 } else {
@@ -2699,7 +2697,7 @@ impl crate::App {
                     } else {
                         "folder"
                     },
-                    14.0,
+                    14.5,
                     if active || scanning {
                         theme.accent_text
                     } else {
@@ -2729,7 +2727,7 @@ impl crate::App {
                             .flex_1()
                             .min_w(px(0.0))
                             .child(title)
-                            .text_size(px(12.0))
+                            .text_size(px(12.5))
                             .text_color(if active { theme.text } else { theme.text_soft })
                             .font_weight(if active {
                                 FontWeight::SEMIBOLD
@@ -2742,14 +2740,14 @@ impl crate::App {
                         div()
                             .id(SharedString::from(format!("tab-close-{id}")))
                             .flex_none()
-                            .w(px(22.0))
-                            .h(px(22.0))
+                            .w(px(24.0))
+                            .h(px(24.0))
                             .rounded(px(RADIUS_SM))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .hover(|style| style.bg(theme.active))
-                            .child(icon("x", 12.0, theme.muted_soft))
+                            .hover(|style| style.bg(theme.active).text_color(theme.text))
+                            .child(icon("x", 12.5, theme.muted_soft))
                             .on_click(cx.listener(move |app, _event, _window, cx| {
                                 app.pending_close_workspace = Some(index);
                                 app.command(Command::CloseWorkspace(id.clone()));
@@ -2802,9 +2800,10 @@ impl crate::App {
                     div()
                         .absolute()
                         .top_0()
-                        .left_0()
-                        .w_full()
+                        .left(px(6.0))
+                        .right(px(6.0))
                         .h(px(2.0))
+                        .rounded_b(px(1.0))
                         .bg(theme.accent),
                 );
             }
@@ -2869,12 +2868,12 @@ impl crate::App {
             .w_full()
             .min_w(px(0.0))
             .h(px(WORKSPACE_TAB_HEIGHT))
-            .bg(theme.surface)
+            .flex_none()
+            .bg(theme.workbench_header)
             .border_t_1()
             .border_color(theme.workbench_border.opacity(0.62))
             .flex()
             .flex_row()
-            .items_center()
             .child(tabs)
             .child(actions)
     }
@@ -3118,7 +3117,7 @@ impl crate::App {
         // and configuration move to Studio so the media proof can dominate.
         panel = panel.child(self.render_prepare_stage(cx, &theme, dock_width));
         if self.window_size.1 >= 900.0 {
-            panel = panel.child(self.render_prepare_dock_summary(&theme));
+            panel = panel.child(self.render_prepare_dock_summary(cx, &theme));
         } else if self.window_size.1 >= 720.0 {
             panel = panel.child(self.render_prepare_dock_compact_summary(&theme));
         }

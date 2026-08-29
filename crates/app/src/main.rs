@@ -1451,6 +1451,14 @@ impl App {
             .map_err(|error| format!("failed to open {}: {error:?}", path.display()))
     }
 
+    fn prepare_video_options() -> VideoOptions {
+        VideoOptions {
+            frame_buffer_capacity: Some(0),
+            looping: Some(true),
+            speed: Some(1.0),
+        }
+    }
+
     fn wait_for_renderable_frame(video: &Video, cancel: &CancelFlag) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
@@ -1555,11 +1563,7 @@ impl App {
         let load = cx.background_spawn(async move {
             Self::load_prepare_video(
                 media_path,
-                VideoOptions {
-                    frame_buffer_capacity: Some(0),
-                    looping: Some(false),
-                    speed: Some(1.0),
-                },
+                Self::prepare_video_options(),
                 &cancel,
             )
         });
@@ -1575,7 +1579,7 @@ impl App {
                     app.prepare_video_cancel.take();
                     video.set_muted(false);
                     video.set_volume(0.65);
-                    video.set_looping(false);
+                    video.set_looping(true);
                     app.prepare.playing = true;
                     video.set_paused(false);
                     app.prepare.position = 0.0;
@@ -2615,6 +2619,13 @@ mod time_tests {
         assert!(parse_time("1:30").is_ok());
         assert_eq!(parse_time("1:30").unwrap(), 90.0);
         assert_eq!(parse_time("12.5").unwrap(), 12.5);
+    }
+
+    #[test]
+    fn prepare_video_options_loop_continuously() {
+        let options = App::prepare_video_options();
+        assert_eq!(options.looping, Some(true));
+        assert_eq!(options.speed, Some(1.0));
     }
 
     #[test]

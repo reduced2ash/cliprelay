@@ -43,7 +43,7 @@ fn prepare_frame_height(
         let available_height = (window_height - reserved_height).max(220.0);
         // A wide dock earns a visibly larger proofing canvas, but the lower
         // delivery handoff and filmstrip must stay above the workspace tabs.
-        let width_aware_height = (track_width * 0.68).clamp(280.0, 420.0);
+        let width_aware_height = (track_width * 0.87).clamp(280.0, 420.0);
         let viewport_cap = if window_height < 1000.0 {
             300.0
         } else if window_height < 1200.0 {
@@ -62,6 +62,98 @@ fn color_from_hex(hex: &str) -> Hsla {
     let g = ((value >> 8) & 0xFF) as f32 / 255.0;
     let b = (value & 0xFF) as f32 / 255.0;
     Hsla::from(gpui::Rgba { r, g, b, a: 1.0 })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_dock_destination_row(
+    theme: &crate::theme::Theme,
+    id: &'static str,
+    label: &'static str,
+    glyph: &'static str,
+    detail: String,
+    badge: &'static str,
+    badge_color: Hsla,
+    cx: &mut Context<crate::App>,
+) -> impl Element {
+    div()
+        .id(id)
+        .w_full()
+        .h(px(56.0))
+        .flex_none()
+        .px(px(12.0))
+        .border_b_1()
+        .border_color(theme.border)
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .cursor_pointer()
+        .tab_index(0)
+        .hover(|style| style.bg(theme.hover))
+        .active(|style| style.bg(theme.accent_soft))
+        .focus(|style| style.bg(theme.hover))
+        .child(icon(glyph, 17.0, theme.text_soft))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .child(
+                    div()
+                        .child(label)
+                        .text_size(px(12.0))
+                        .text_color(theme.text)
+                        .font_weight(FontWeight::MEDIUM),
+                )
+                .child(
+                    div()
+                        .child(detail)
+                        .text_size(px(10.5))
+                        .text_color(theme.muted)
+                        .text_ellipsis(),
+                ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .px(px(10.0))
+                .h(px(24.0))
+                .rounded(px(12.0))
+                .bg(badge_color.opacity(0.10))
+                .border_1()
+                .border_color(badge_color.opacity(0.24))
+                .flex()
+                .items_center()
+                .child(badge)
+                .text_size(px(10.0))
+                .text_color(badge_color)
+                .font_weight(FontWeight::MEDIUM),
+        )
+        .child(icon("chevron-right", 13.0, theme.muted_soft))
+        .tooltip(move |_window, cx| {
+            crate::tooltip_view(
+                cx,
+                format!("Open {label} delivery settings in Studio").into(),
+            )
+        })
+        .on_click(cx.listener(|app, _event, _window, cx| {
+            app.prepare.inspector_tab = 1;
+            app.prepare.studio_mode = true;
+            cx.notify();
+        }))
+        .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+            app.prepare.inspector_tab = 1;
+            app.prepare.studio_mode = true;
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+            app.prepare.inspector_tab = 1;
+            app.prepare.studio_mode = true;
+            cx.stop_propagation();
+            cx.notify();
+        }))
 }
 
 impl crate::App {
@@ -97,12 +189,14 @@ impl crate::App {
             48.0
         } else if self.prepare.studio_mode {
             78.0
-        } else if self.window_size.1 >= 1100.0 {
+        } else if self.window_size.1 >= 1200.0 {
             92.0
-        } else if self.window_size.1 >= 900.0 {
-            72.0
+        } else if self.window_size.1 >= 1000.0 {
+            76.0
+        } else if self.window_size.1 >= 820.0 {
+            66.0
         } else {
-            68.0
+            58.0
         };
         // Track origin in window coordinates.
         let is_studio = self.prepare.studio_mode;
@@ -114,6 +208,8 @@ impl crate::App {
         };
         let stage_gap = if is_studio && self.window_size.1 <= 560.0 {
             4.0
+        } else if !is_studio {
+            6.0
         } else {
             6.0
         };
@@ -237,21 +333,20 @@ impl crate::App {
         let time_label = self.prepare.format_time_precise(position);
         let duration_label = self.prepare.format_time_precise(duration);
         let transport_control = if is_studio { 40.0 } else { 36.0 };
+        let transport_side_width = if is_studio { 42.0 } else { 40.0 };
+        let transport_play_width = if is_studio { 52.0 } else { 54.0 };
         let transport_group = div()
             .flex_none()
-            .w(px(transport_control * 3.0 + 2.0))
             .h(px(transport_control))
-            .bg(theme.surface_soft)
-            .border_1()
-            .border_color(theme.border_strong)
             .flex()
             .items_center()
+            .gap(px(if is_studio { 6.0 } else { 5.0 }))
             .child(
                 workbench_button(
                     "back-5",
                     "",
                     "skip-back",
-                    ButtonKind::Ghost,
+                    ButtonKind::Secondary,
                     seek_enabled,
                     true,
                     "Back 5 seconds",
@@ -262,16 +357,15 @@ impl crate::App {
                         cx.notify();
                     },
                 )
-                .w(px(transport_control))
-                .h(px(transport_control - 2.0)),
+                .w(px(transport_side_width))
+                .h(px(transport_control)),
             )
-            .child(div().flex_none().w(px(1.0)).h_full().bg(theme.border))
             .child(
                 workbench_button(
                     "play-pause",
                     "",
                     if playing { "pause" } else { "play" },
-                    ButtonKind::Ghost,
+                    ButtonKind::Secondary,
                     play_enabled,
                     true,
                     if playing {
@@ -286,17 +380,16 @@ impl crate::App {
                         cx.notify();
                     },
                 )
-                .w(px(transport_control))
-                .h(px(transport_control - 2.0))
+                .w(px(transport_play_width))
+                .h(px(transport_control))
                 .bg(theme.active),
             )
-            .child(div().flex_none().w(px(1.0)).h_full().bg(theme.border))
             .child(
                 workbench_button(
                     "forward-5",
                     "",
                     "skip-forward",
-                    ButtonKind::Ghost,
+                    ButtonKind::Secondary,
                     seek_enabled,
                     true,
                     "Forward 5 seconds",
@@ -307,28 +400,28 @@ impl crate::App {
                         cx.notify();
                     },
                 )
-                .w(px(transport_control))
-                .h(px(transport_control - 2.0)),
+                .w(px(transport_side_width))
+                .h(px(transport_control)),
             );
         let transport_height = if is_studio && self.window_size.1 <= 560.0 {
             PREPARE_CONTROL_HEIGHT
         } else if is_studio {
             48.0
         } else {
-            44.0
+            48.0
         };
         stage = stage.child(
             div()
                 .id("transport")
                 .w_full()
                 .h(px(transport_height))
-                .px(px(4.0))
+                .px(px(6.0))
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(10.0))
+                .gap(px(if is_studio { 10.0 } else { 8.0 }))
                 .child(tabular(
                     div()
                         .flex_1()
@@ -742,7 +835,7 @@ impl crate::App {
             let mut range_readout = div()
                 .id("dock-range-readout")
                 .w_full()
-                .h(px(24.0))
+                .h(px(30.0))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -890,7 +983,7 @@ impl crate::App {
             stage = stage.child(
                 div()
                     .w_full()
-                    .h(px(46.0))
+                    .h(px(54.0))
                     .border_t_1()
                     .border_color(theme.border)
                     .flex()
@@ -926,11 +1019,11 @@ impl crate::App {
                     )
                     .child(workbench_button(
                         "reveal-in-library",
-                        "",
-                        "target",
-                        ButtonKind::Ghost,
+                        if panel_width >= 390.0 { "Reveal" } else { "" },
+                        "folder",
+                        ButtonKind::Secondary,
                         true,
-                        true,
+                        panel_width < 390.0,
                         "Reveal in library",
                         cx,
                         |app, cx| {
@@ -2283,6 +2376,9 @@ impl crate::App {
                     "caption-shared",
                     "Caption for Telegram and X",
                     &caption,
+                    76.0,
+                    0.0,
+                    false,
                 ))
                 .child(
                     div()
@@ -2320,6 +2416,9 @@ impl crate::App {
                     "caption-tg",
                     "Telegram message",
                     &caption,
+                    76.0,
+                    0.0,
+                    false,
                 ))
                 .child(
                     div()
@@ -2350,6 +2449,9 @@ impl crate::App {
                     "caption-x",
                     "X post text",
                     &x_caption,
+                    76.0,
+                    0.0,
+                    false,
                 ))
                 .child(
                     div()
@@ -2734,11 +2836,12 @@ impl crate::App {
         dock
     }
 
-    /// Tall docks use the lower workspace for a read-only preparation summary.
-    /// Editing remains owned by Studio, so these rows never create a second
-    /// state model or hide a more precise control behind a compact substitute.
+    /// Tall docks keep delivery handoff compact, expose the same caption state
+    /// as Studio, and use the remaining lower workspace for a concise summary
+    /// of what Prepare will produce.
     pub fn render_prepare_dock_summary(
-        &self,
+        &mut self,
+        cx: &mut Context<Self>,
         theme: &crate::theme::Theme,
     ) -> impl Element {
         let telegram_ready = self.telegram_ready();
@@ -2751,97 +2854,48 @@ impl crate::App {
         } else {
             "Connect a bot or personal account in Studio".to_string()
         };
-        let caption = if self.prepare.same_caption || self.prepare.x_caption.trim().is_empty() {
-            self.prepare.caption.trim()
+        let shared_caption = self.prepare.same_caption;
+        let (caption_id, caption_value) = if shared_caption {
+            ("caption-shared", self.prepare.caption.clone())
         } else {
-            self.prepare.x_caption.trim()
+            ("caption-x", self.prepare.x_caption.clone())
         };
-        let caption_preview = if caption.is_empty() {
-            div()
-                .flex_1()
-                .min_h(px(0.0))
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(6.0))
-                .child(icon("pencil", 16.0, theme.muted_soft))
-                .child(
-                    div()
-                        .child("No caption added")
-                        .text_size(px(11.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::MEDIUM),
-                )
-                .child(
-                    div()
-                        .child("Add an optional caption in Studio")
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft),
-                )
-                .into_any()
+        let caption_len = caption_value.chars().count();
+        let caption_count = format!("{} / 280", group_digits(caption_len));
+        let cut_duration = (self.prepare.trim_end - self.prepare.trim_start).max(0.0);
+        let cut_label = if self.prepare.cut_active() {
+            format!(
+                "Trimmed · {}",
+                self.prepare.format_time_precise(cut_duration)
+            )
         } else {
-            div()
-                .flex_1()
-                .min_h(px(0.0))
-                .child(caption.to_string())
-                .text_size(px(11.0))
-                .text_color(theme.text_soft)
-                .into_any()
+            format!(
+                "Full range · {}",
+                self.prepare.format_time_precise(cut_duration)
+            )
         };
-        let destination_row = |label: &'static str,
-                               glyph: &'static str,
-                               detail: String,
-                               badge: &'static str,
-                               badge_color: Hsla| {
-            div()
-                .w_full()
-                .flex_none()
-                .h(px(56.0))
-                .px(px(12.0))
-                .border_b_1()
-                .border_color(theme.border)
-                .flex()
-                .items_center()
-                .gap(px(10.0))
-                .child(icon(glyph, 17.0, theme.text_soft))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .child(
-                            div()
-                                .child(label)
-                                .text_size(px(12.0))
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::MEDIUM),
-                        )
-                        .child(
-                            div()
-                                .child(detail)
-                                .text_size(px(10.0))
-                                .text_color(theme.muted)
-                                .text_ellipsis(),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .px(px(7.0))
-                        .h(px(24.0))
-                        .border_1()
-                        .border_color(badge_color.opacity(0.55))
-                        .flex()
-                        .items_center()
-                        .child(badge)
-                        .text_size(px(10.0))
-                        .text_color(badge_color)
-                        .font_weight(FontWeight::MEDIUM),
-                )
+        let output_label = {
+            let estimate = self.estimate_output_size_label();
+            if estimate.is_empty() {
+                "Estimate pending".to_string()
+            } else {
+                estimate
+            }
         };
+        let fit_label = COMPRESSION_OPTIONS
+            .get(self.prepare.compression_index as usize)
+            .map(|(label, _)| (*label).to_string())
+            .unwrap_or_else(|| "Balanced".to_string());
+        let caption_editor = caption_area(
+            self,
+            cx,
+            caption_id,
+            "Add a caption (optional)",
+            &caption_value,
+            36.0,
+            58.0,
+            true,
+        );
 
         div()
             .id("prepare-dock-summary")
@@ -2850,48 +2904,190 @@ impl crate::App {
             .min_h(px(0.0))
             .flex()
             .flex_col()
-            .overflow_scroll()
+            .overflow_y_scroll()
             .scrollbar_width(px(8.0))
             .border_t_1()
             .border_color(theme.border)
-            .child(destination_row(
+            .child(prepare_dock_destination_row(
+                theme,
+                "dock-destination-x",
                 "X",
-                "external",
+                "x",
                 "Prepared for deliberate browser handoff".to_string(),
                 "Manual",
                 theme.text_soft,
+                cx,
             ))
-            .child(destination_row(
+            .child(prepare_dock_destination_row(
+                theme,
+                "dock-destination-telegram",
                 "Telegram",
                 "send",
                 telegram_detail,
-                if telegram_ready { "Ready" } else { "Needs setup" },
+                if telegram_ready {
+                    "Ready"
+                } else {
+                    "Needs setup"
+                },
                 if telegram_ready {
                     theme.success
                 } else {
                     theme.warning
                 },
+                cx,
             ))
             .child(
                 div()
                     .w_full()
-                    .flex_1()
-                    .min_h(px(60.0))
+                    .h(px(54.0))
+                    .flex_none()
                     .px(px(12.0))
                     .py(px(9.0))
-                    .border_b_1()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(36.0))
+                            .flex_none()
+                            .relative()
+                            .flex()
+                            .child(caption_editor)
+                            .child(tabular(
+                                div()
+                                    .absolute()
+                                    .right(px(11.0))
+                                    .top(px(10.0))
+                                    .child(caption_count)
+                                    .text_size(px(10.5))
+                                    .text_color(if caption_len > 280 {
+                                        theme.warning
+                                    } else {
+                                        theme.muted
+                                    }),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .id("dock-preparation-summary")
+                    .w_full()
+                    .h(px(80.0))
+                    .flex_none()
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .border_t_1()
                     .border_color(theme.border)
                     .flex()
                     .flex_col()
-                    .gap(px(5.0))
+                    .justify_center()
+                    .gap(px(9.0))
                     .child(
                         div()
-                            .child("Caption")
-                            .text_size(px(10.0))
-                            .text_color(theme.muted)
-                            .font_weight(FontWeight::MEDIUM),
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .child("PREPARATION SUMMARY")
+                                    .text_size(px(9.5))
+                                    .text_color(theme.muted)
+                                    .font_weight(FontWeight::SEMIBOLD),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.0))
+                                    .child(icon("check", 12.0, theme.success))
+                                    .child(
+                                        div()
+                                            .child("Source remains unchanged")
+                                            .text_size(px(10.0))
+                                            .text_color(theme.text_soft),
+                                    ),
+                            ),
                     )
-                    .child(caption_preview),
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(38.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.0))
+                                    .child(
+                                        div()
+                                            .child("CUT")
+                                            .text_size(px(9.0))
+                                            .text_color(theme.muted_soft)
+                                            .font_weight(FontWeight::SEMIBOLD),
+                                    )
+                                    .child(tabular(
+                                        div()
+                                            .child(cut_label)
+                                            .text_size(px(10.5))
+                                            .text_color(theme.text_soft)
+                                            .text_ellipsis(),
+                                    )),
+                            )
+                            .child(div().w(px(1.0)).h(px(30.0)).bg(theme.border))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .pl(px(10.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.0))
+                                    .child(
+                                        div()
+                                            .child("OUTPUT")
+                                            .text_size(px(9.0))
+                                            .text_color(theme.muted_soft)
+                                            .font_weight(FontWeight::SEMIBOLD),
+                                    )
+                                    .child(
+                                        div()
+                                            .child(output_label)
+                                            .text_size(px(10.5))
+                                            .text_color(theme.text_soft)
+                                            .text_ellipsis(),
+                                    ),
+                            )
+                            .child(div().w(px(1.0)).h(px(30.0)).bg(theme.border))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .pl(px(10.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.0))
+                                    .child(
+                                        div()
+                                            .child("FIT POLICY")
+                                            .text_size(px(9.0))
+                                            .text_color(theme.muted_soft)
+                                            .font_weight(FontWeight::SEMIBOLD),
+                                    )
+                                    .child(
+                                        div()
+                                            .child(fit_label)
+                                            .text_size(px(10.5))
+                                            .text_color(theme.text_soft)
+                                            .text_ellipsis(),
+                                    ),
+                            ),
+                    ),
             )
     }
 
@@ -2927,6 +3123,14 @@ impl crate::App {
                 )
                 .child(
                     div()
+                        .h(px(22.0))
+                        .px(px(8.0))
+                        .rounded(px(11.0))
+                        .bg(state_color.opacity(0.10))
+                        .border_1()
+                        .border_color(state_color.opacity(0.22))
+                        .flex()
+                        .items_center()
                         .child(state)
                         .text_size(px(10.0))
                         .text_color(state_color),
@@ -2979,10 +3183,10 @@ impl crate::App {
             .border_t_1()
             .border_color(theme.border)
             .px(px(PREPARE_GUTTER))
-            .py(px(8.0))
+            .py(px(6.0))
             .flex()
             .flex_col()
-            .gap(px(7.0));
+            .gap(px(6.0));
 
         if publish.active {
             let stage = if publish.stage.is_empty() {
@@ -3088,10 +3292,10 @@ impl crate::App {
         footer.child(
             div()
                 .w_full()
-                .h(px(PREPARE_CONTROL_HEIGHT))
+                .h(px(36.0))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(px(8.0))
                 .child(
                     button(
                         "dock-open-studio",
@@ -3105,7 +3309,7 @@ impl crate::App {
                             cx.notify();
                         },
                     )
-                    .h(px(PREPARE_CONTROL_HEIGHT))
+                    .h(px(36.0))
                     .flex_1(),
                 )
                 .child(
@@ -3120,7 +3324,7 @@ impl crate::App {
                             app.submit_publish(if telegram_ready { "both" } else { "x" }, cx);
                         },
                     )
-                    .h(px(PREPARE_CONTROL_HEIGHT))
+                    .h(px(36.0))
                     .flex_1(),
                 ),
         )
@@ -3594,6 +3798,9 @@ fn caption_area(
     id: &'static str,
     placeholder: &'static str,
     value: &str,
+    height: f32,
+    right_padding: f32,
+    compact_dock: bool,
 ) -> impl Element {
     // Show the committed value while not editing; once the user types, the
     // field holds the live text (and on_field_changed commits it).
@@ -3611,14 +3818,27 @@ fn caption_area(
                 marked_range: None,
             })
     };
-    crate::widgets::text_area(
+    let mut field = crate::widgets::text_area(
         id,
         placeholder,
-        76.0,
+        height,
         &display,
         app.focused_field.as_deref() == Some(id),
         cx,
-    )
+    );
+    if right_padding > 0.0 {
+        field = field.pr(px(right_padding));
+    }
+    if compact_dock {
+        field = field
+            .rounded(px(2.0))
+            .bg(app.theme.transparent())
+            .border_color(app.theme.border_strong.opacity(0.72))
+            .py(px(0.0))
+            .flex()
+            .items_center();
+    }
+    field
 }
 
 impl crate::App {
@@ -3700,8 +3920,8 @@ mod prepare_tests {
 
     #[test]
     fn dock_stage_grows_with_a_wide_panel_without_overstretching() {
-        assert_eq!(prepare_frame_height(false, false, 760.0, 370.0), 280.0);
-        assert!((prepare_frame_height(false, false, 1440.0, 592.0) - 402.56).abs() < 0.01);
+        assert_eq!(prepare_frame_height(false, false, 760.0, 370.0), 300.0);
+        assert_eq!(prepare_frame_height(false, false, 1440.0, 592.0), 420.0);
         assert_eq!(prepare_frame_height(false, false, 1440.0, 900.0), 420.0);
     }
 

@@ -340,9 +340,10 @@ impl PrepareState {
             if pos > 0.0 || self.position == 0.0 {
                 self.position = pos;
             }
-            if self.trim_end > 0.0 && self.position >= self.trim_end {
+            if video.eos() || (self.trim_end > 0.0 && self.position >= self.trim_end) {
                 let _ = video.seek(Duration::from_secs_f64(self.trim_start), true);
                 self.position = self.trim_start;
+                video.set_paused(false);
             }
             return true;
         }
