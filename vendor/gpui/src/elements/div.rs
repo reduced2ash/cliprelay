@@ -21,7 +21,7 @@ use crate::{
     Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
     MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
     size,
 };
@@ -38,7 +38,7 @@ use std::{
     mem,
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::ResultExt;
 
@@ -47,6 +47,91 @@ use super::ImageCacheProvider;
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
+const SMOOTH_SCROLL_TIME_CONSTANT: f32 = 0.055;
+const SMOOTH_SCROLL_MAX_FRAME_TIME: f32 = 0.050;
+const SMOOTH_SCROLL_SETTLE_DISTANCE: f32 = 0.5;
+
+/// Interpolates only discrete, line-based wheel input. Precise pixel deltas
+/// already carry the platform's native trackpad motion and must remain 1:1.
+#[derive(Debug)]
+pub(crate) struct SmoothScrollState {
+    target: Point<Pixels>,
+    last_presented: Point<Pixels>,
+    last_frame: Option<Instant>,
+    active: bool,
+}
+
+impl Default for SmoothScrollState {
+    fn default() -> Self {
+        Self {
+            target: Point::default(),
+            last_presented: Point::default(),
+            last_frame: None,
+            active: false,
+        }
+    }
+}
+
+impl SmoothScrollState {
+    fn cancel_at(&mut self, position: Point<Pixels>) {
+        self.target = position;
+        self.last_presented = position;
+        self.last_frame = None;
+        self.active = false;
+    }
+
+    fn retarget(&mut self, current: Point<Pixels>, delta: Point<Pixels>) {
+        if !self.active || current != self.last_presented {
+            self.target = current;
+            self.last_presented = current;
+        }
+        self.target += delta;
+        if self.last_frame.is_none() {
+            self.last_frame = Some(Instant::now());
+        }
+        self.active = true;
+    }
+
+    fn advance(
+        &mut self,
+        current: Point<Pixels>,
+        scroll_max: Size<Pixels>,
+        now: Instant,
+    ) -> Point<Pixels> {
+        self.target.x = self.target.x.clamp(-scroll_max.width, px(0.));
+        self.target.y = self.target.y.clamp(-scroll_max.height, px(0.));
+
+        if current != self.last_presented {
+            self.cancel_at(current);
+            return current;
+        }
+
+        let elapsed = self
+            .last_frame
+            .replace(now)
+            .map_or(0.0, |last| (now - last).as_secs_f32())
+            .min(SMOOTH_SCROLL_MAX_FRAME_TIME);
+        let alpha = 1.0 - (-elapsed / SMOOTH_SCROLL_TIME_CONSTANT).exp();
+        let mut next = point(
+            current.x + (self.target.x - current.x) * alpha,
+            current.y + (self.target.y - current.y) * alpha,
+        );
+
+        if f32::from((self.target.x - next.x).abs()) <= SMOOTH_SCROLL_SETTLE_DISTANCE {
+            next.x = self.target.x;
+        }
+        if f32::from((self.target.y - next.y).abs()) <= SMOOTH_SCROLL_SETTLE_DISTANCE {
+            next.y = self.target.y;
+        }
+
+        self.last_presented = next;
+        if next == self.target {
+            self.last_frame = None;
+            self.active = false;
+        }
+        next
+    }
+}
 
 /// The styling information for a given group.
 pub struct GroupStyle {
@@ -1491,6 +1576,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) scroll_motion: Option<Rc<RefCell<SmoothScrollState>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -1599,7 +1685,9 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                    let scroll_handle = scroll_handle.0.borrow();
+                    self.scroll_offset = Some(scroll_handle.offset.clone());
+                    self.scroll_motion = Some(scroll_handle.motion.clone());
                 } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
                     && let Some(element_state) = element_state.as_mut()
@@ -1607,6 +1695,12 @@ impl Interactivity {
                     self.scroll_offset = Some(
                         element_state
                             .scroll_offset
+                            .get_or_insert_with(Rc::default)
+                            .clone(),
+                    );
+                    self.scroll_motion = Some(
+                        element_state
+                            .scroll_motion
                             .get_or_insert_with(Rc::default)
                             .clone(),
                     );
@@ -1750,12 +1844,32 @@ impl Interactivity {
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
+            let clamped = point(
+                scroll_offset.x.clamp(-scroll_max.width, px(0.)),
+                scroll_offset.y.clamp(-scroll_max.height, px(0.)),
+            );
+            if clamped != *scroll_offset
+                && let Some(motion) = self.scroll_motion.as_ref()
+            {
+                motion.borrow_mut().cancel_at(clamped);
+            }
+            *scroll_offset = clamped;
 
-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
             if scroll_to_bottom {
                 scroll_offset.y = -scroll_max.height;
-            } else {
-                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+                if let Some(motion) = self.scroll_motion.as_ref() {
+                    motion.borrow_mut().cancel_at(*scroll_offset);
+                }
+            } else if let Some(motion) = self.scroll_motion.as_ref() {
+                let mut motion = motion.borrow_mut();
+                if motion.active {
+                    *scroll_offset = motion.advance(*scroll_offset, scroll_max, Instant::now());
+                    if motion.active {
+                        window.request_animation_frame();
+                    }
+                } else {
+                    motion.cancel_at(*scroll_offset);
+                }
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
@@ -2407,7 +2521,9 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        if let Some(scroll_offset) = self.scroll_offset.clone() {
+        if let (Some(scroll_offset), Some(scroll_motion)) =
+            (self.scroll_offset.clone(), self.scroll_motion.clone())
+        {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -2416,8 +2532,6 @@ impl Interactivity {
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    let mut scroll_offset = scroll_offset.borrow_mut();
-                    let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
 
                     let mut delta_x = Pixels::ZERO;
@@ -2443,10 +2557,24 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
-                        cx.notify(current_view);
+                    let delta = point(delta_x, delta_y);
+                    if delta != Point::default() {
+                        let mut scroll_offset = scroll_offset.borrow_mut();
+                        let old_scroll_offset = *scroll_offset;
+                        match event.delta {
+                            ScrollDelta::Pixels(_) => {
+                                *scroll_offset += delta;
+                                scroll_motion.borrow_mut().cancel_at(*scroll_offset);
+                            }
+                            ScrollDelta::Lines(_) => {
+                                scroll_motion.borrow_mut().retarget(*scroll_offset, delta);
+                            }
+                        }
+                        if *scroll_offset != old_scroll_offset
+                            || matches!(event.delta, ScrollDelta::Lines(_))
+                        {
+                            cx.notify(current_view);
+                        }
                     }
                 }
             });
@@ -2571,6 +2699,7 @@ pub struct InteractiveElementState {
     pub(crate) hover_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    scroll_motion: Option<Rc<RefCell<SmoothScrollState>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
@@ -3040,6 +3169,7 @@ impl ScrollAnchor {
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
+    motion: Rc<RefCell<SmoothScrollState>>,
     bounds: Bounds<Pixels>,
     max_offset: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
@@ -3197,6 +3327,8 @@ impl ScrollHandle {
             None => Some(active_item),
         };
         state.active_item = active_item;
+        let position = *state.offset.borrow();
+        state.motion.borrow_mut().cancel_at(position);
     }
 
     /// Scrolls to the bottom.
@@ -3211,6 +3343,7 @@ impl ScrollHandle {
     pub fn set_offset(&self, mut position: Point<Pixels>) {
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
+        state.motion.borrow_mut().cancel_at(position);
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -3246,5 +3379,81 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
+    }
+}
+
+#[cfg(test)]
+mod smooth_scroll_tests {
+    use super::*;
+
+    #[test]
+    fn discrete_scroll_converges_without_overshoot() {
+        let start = Instant::now();
+        let mut motion = SmoothScrollState::default();
+        motion.retarget(Point::default(), point(px(0.), px(-120.)));
+        motion.last_frame = Some(start);
+
+        let mut current = Point::default();
+        for frame in 1..=60 {
+            current = motion.advance(
+                current,
+                size(px(0.), px(500.)),
+                start + Duration::from_millis(frame * 16),
+            );
+            assert!(current.y >= px(-120.));
+            assert!(current.y <= px(0.));
+        }
+
+        assert_eq!(current, point(px(0.), px(-120.)));
+        assert!(!motion.active);
+    }
+
+    #[test]
+    fn target_is_clamped_to_scroll_bounds() {
+        let start = Instant::now();
+        let mut motion = SmoothScrollState::default();
+        motion.retarget(Point::default(), point(px(0.), px(-800.)));
+        motion.last_frame = Some(start);
+
+        let mut current = Point::default();
+        for frame in 1..=60 {
+            current = motion.advance(
+                current,
+                size(px(0.), px(240.)),
+                start + Duration::from_millis(frame * 16),
+            );
+        }
+
+        assert_eq!(current, point(px(0.), px(-240.)));
+    }
+
+    #[test]
+    fn external_offset_change_cancels_interpolation() {
+        let mut motion = SmoothScrollState::default();
+        motion.retarget(Point::default(), point(px(0.), px(-120.)));
+
+        let external = point(px(0.), px(-36.));
+        let current = motion.advance(external, size(px(0.), px(500.)), Instant::now());
+
+        assert_eq!(current, external);
+        assert_eq!(motion.target, external);
+        assert!(!motion.active);
+    }
+
+    #[test]
+    fn explicit_handle_offset_stays_immediate() {
+        let handle = ScrollHandle::new();
+        handle
+            .0
+            .borrow()
+            .motion
+            .borrow_mut()
+            .retarget(Point::default(), point(px(0.), px(-120.)));
+
+        let explicit = point(px(0.), px(-48.));
+        handle.set_offset(explicit);
+
+        assert_eq!(handle.offset(), explicit);
+        assert!(!handle.0.borrow().motion.borrow().active);
     }
 }

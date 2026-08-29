@@ -38,15 +38,24 @@ pub enum DragHandle {
     MaskResize(usize),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShapeKind {
     Rectangle,
     Square,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskPreset {
+    Box,
+    Square,
+    LowerBar,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct Shape {
+    pub id: u64,
     pub kind: ShapeKind,
+    pub preset: MaskPreset,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -62,7 +71,7 @@ pub struct PrepareState {
     pub playing: bool,
     pub trim_start: f64,
     pub trim_end: f64,
-    pub inspector_tab: i64, // 0 Edit, 1 Publish
+    pub inspector_tab: i64, // 0 Edit, 1 Deliver, 2 Clean, 3 Setup
     pub studio_mode: bool,
     pub compact_inspector_open: bool,
     pub studio_width: f64,
@@ -76,6 +85,7 @@ pub struct PrepareState {
     pub cleanup_index: i64,
     pub crop_enabled: bool,
     pub crop: CropSpec,
+    pub guide_mode: i64, // 0 None, 1 Thirds, 2 Safe area
     pub shapes: Vec<Shape>,
     pub selected_shape: Option<usize>,
     pub active_action: String,
@@ -85,6 +95,7 @@ pub struct PrepareState {
     pub drag_start_y: f64,
     pub drag_start_value: f64,
     pub frame_rect: (f32, f32, f32, f32),
+    pub mask_frame_rect: (f32, f32, f32, f32),
     pub crop_start: CropSpec,
     pub shape_start: (f64, f64, f64, f64),
     pub dragging_shape: Option<usize>,
@@ -116,7 +127,7 @@ impl Default for PrepareState {
             inspector_tab: 0,
             studio_mode: false,
             compact_inspector_open: false,
-            studio_width: 420.0,
+            studio_width: 428.0,
             same_caption: true,
             telegram_mode_index: 0,
             destination: String::new(),
@@ -132,6 +143,7 @@ impl Default for PrepareState {
                 width: 1.0,
                 height: 1.0,
             },
+            guide_mode: 0,
             shapes: Vec::new(),
             selected_shape: None,
             active_action: String::new(),
@@ -141,6 +153,7 @@ impl Default for PrepareState {
             drag_start_y: 0.0,
             drag_start_value: 0.0,
             frame_rect: (0.0, 0.0, 0.0, 0.0),
+            mask_frame_rect: (0.0, 0.0, 0.0, 0.0),
             crop_start: CropSpec {
                 x: 0.0,
                 y: 0.0,
@@ -178,6 +191,7 @@ impl PrepareState {
                 width: 1.0,
                 height: 1.0,
             };
+            self.guide_mode = 0;
             self.shapes.clear();
             self.selected_shape = None;
             self.timeline_ready = false;
@@ -228,7 +242,13 @@ impl PrepareState {
             .iter()
             .map(|shape| {
                 serde_json::json!({
+                    "id": shape.id,
                     "type": "rectangle",
+                    "preset": match shape.preset {
+                        MaskPreset::Box => "box",
+                        MaskPreset::Square => "square",
+                        MaskPreset::LowerBar => "lower-bar",
+                    },
                     "x": shape.x,
                     "y": shape.y,
                     "width": shape.width,
@@ -248,9 +268,40 @@ impl PrepareState {
             self.crop_enabled = true;
             self.crop = crop;
         }
-        for overlay in spec.overlays {
+        let saved_overlays = value.get("overlays").and_then(serde_json::Value::as_array);
+        for (index, overlay) in spec.overlays.into_iter().enumerate() {
+            let saved = saved_overlays.and_then(|items| items.get(index));
+            let preset = saved
+                .and_then(|item| item.get("preset"))
+                .and_then(serde_json::Value::as_str)
+                .and_then(|preset| match preset {
+                    "box" => Some(MaskPreset::Box),
+                    "square" => Some(MaskPreset::Square),
+                    "lower-bar" => Some(MaskPreset::LowerBar),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    if (overlay.width - overlay.height).abs() < 0.015 {
+                        MaskPreset::Square
+                    } else if overlay.width > 0.60 && overlay.height <= 0.20 {
+                        MaskPreset::LowerBar
+                    } else {
+                        MaskPreset::Box
+                    }
+                });
+            let saved_id = saved
+                .and_then(|item| item.get("id"))
+                .and_then(serde_json::Value::as_u64)
+                .filter(|id| *id > 0 && self.shapes.iter().all(|shape| shape.id != *id));
+            let id = saved_id.unwrap_or_else(|| self.next_mask_id());
             self.shapes.push(Shape {
-                kind: ShapeKind::Rectangle,
+                id,
+                kind: if preset == MaskPreset::Square {
+                    ShapeKind::Square
+                } else {
+                    ShapeKind::Rectangle
+                },
+                preset,
                 x: overlay.x,
                 y: overlay.y,
                 width: overlay.width,
@@ -390,26 +441,127 @@ impl PrepareState {
         format!("{base}.{hundredths:02}")
     }
 
-    pub fn add_shape(&mut self, square: bool) {
-        let shape = if square {
-            Shape {
+    pub fn add_mask_preset(&mut self, preset: MaskPreset) {
+        let id = self.next_mask_id();
+        let shape = match preset {
+            MaskPreset::Box => Shape {
+                id,
+                kind: ShapeKind::Rectangle,
+                preset,
+                x: 0.34,
+                y: 0.39,
+                width: 0.32,
+                height: 0.22,
+            },
+            MaskPreset::Square => Shape {
+                id,
                 kind: ShapeKind::Square,
+                preset,
                 x: 0.38,
                 y: 0.36,
                 width: 0.24,
                 height: 0.24,
-            }
-        } else {
-            Shape {
+            },
+            MaskPreset::LowerBar => Shape {
+                id,
                 kind: ShapeKind::Rectangle,
-                x: 0.36,
-                y: 0.41,
-                width: 0.28,
-                height: 0.18,
-            }
+                preset,
+                x: 0.12,
+                y: 0.72,
+                width: 0.76,
+                height: 0.16,
+            },
         };
         self.shapes.push(shape);
         self.selected_shape = Some(self.shapes.len() - 1);
+    }
+
+    pub fn add_shape(&mut self, square: bool) {
+        self.add_mask_preset(if square {
+            MaskPreset::Square
+        } else {
+            MaskPreset::Box
+        });
+    }
+
+    pub fn duplicate_selected_shape(&mut self) -> bool {
+        let Some(index) = self.selected_shape else {
+            return false;
+        };
+        let Some(mut duplicate) = self.shapes.get(index).copied() else {
+            return false;
+        };
+        duplicate.id = self.next_mask_id();
+        duplicate.x = (duplicate.x + 0.035).min(1.0 - duplicate.width);
+        duplicate.y = (duplicate.y + 0.035).min(1.0 - duplicate.height);
+        self.shapes.push(duplicate);
+        self.selected_shape = Some(self.shapes.len() - 1);
+        true
+    }
+
+    fn next_mask_id(&self) -> u64 {
+        self.shapes
+            .iter()
+            .map(|shape| shape.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+            .max(1)
+    }
+
+    pub fn nudge_selected_shape(&mut self, dx: f64, dy: f64) -> bool {
+        let Some(index) = self.selected_shape else {
+            return false;
+        };
+        let Some(shape) = self.shapes.get_mut(index) else {
+            return false;
+        };
+        let next_x = (shape.x + dx).clamp(0.0, 1.0 - shape.width);
+        let next_y = (shape.y + dy).clamp(0.0, 1.0 - shape.height);
+        let changed = (shape.x - next_x).abs() > 0.0001 || (shape.y - next_y).abs() > 0.0001;
+        shape.x = next_x;
+        shape.y = next_y;
+        changed
+    }
+
+    pub fn resize_selected_shape(&mut self, scale_delta: f64) -> bool {
+        let Some(index) = self.selected_shape else {
+            return false;
+        };
+        let Some(shape) = self.shapes.get_mut(index) else {
+            return false;
+        };
+        let scale = (1.0 + scale_delta).max(0.1);
+        let next_width = (shape.width * scale).clamp(0.025, 1.0);
+        let next_height = (shape.height * scale).clamp(0.025, 1.0);
+        if (shape.width - next_width).abs() <= 0.0001
+            && (shape.height - next_height).abs() <= 0.0001
+        {
+            return false;
+        }
+        let center_x = shape.x + shape.width / 2.0;
+        let center_y = shape.y + shape.height / 2.0;
+        shape.width = next_width;
+        shape.height = next_height;
+        shape.x = (center_x - next_width / 2.0).clamp(0.0, 1.0 - next_width);
+        shape.y = (center_y - next_height / 2.0).clamp(0.0, 1.0 - next_height);
+        true
+    }
+
+    pub fn center_selected_shape(&mut self) -> bool {
+        let Some(index) = self.selected_shape else {
+            return false;
+        };
+        let Some(shape) = self.shapes.get_mut(index) else {
+            return false;
+        };
+        let centered_x = (1.0 - shape.width) / 2.0;
+        let centered_y = (1.0 - shape.height) / 2.0;
+        let changed =
+            (shape.x - centered_x).abs() > 0.0001 || (shape.y - centered_y).abs() > 0.0001;
+        shape.x = centered_x;
+        shape.y = centered_y;
+        changed
     }
 
     pub fn remove_selected_shape(&mut self) {
@@ -434,6 +586,32 @@ impl PrepareState {
             width: 1.0,
             height: 1.0,
         };
+    }
+
+    pub fn center_crop(&mut self) -> bool {
+        if !self.crop_enabled {
+            return false;
+        }
+        let centered_x = (1.0 - self.crop.width) / 2.0;
+        let centered_y = (1.0 - self.crop.height) / 2.0;
+        let changed =
+            (self.crop.x - centered_x).abs() > 0.0001 || (self.crop.y - centered_y).abs() > 0.0001;
+        self.crop.x = centered_x;
+        self.crop.y = centered_y;
+        changed
+    }
+
+    pub fn nudge_crop(&mut self, dx: f64, dy: f64) -> bool {
+        if !self.crop_enabled {
+            return false;
+        }
+        let next_x = (self.crop.x + dx).clamp(0.0, 1.0 - self.crop.width);
+        let next_y = (self.crop.y + dy).clamp(0.0, 1.0 - self.crop.height);
+        let changed =
+            (self.crop.x - next_x).abs() > 0.0001 || (self.crop.y - next_y).abs() > 0.0001;
+        self.crop.x = next_x;
+        self.crop.y = next_y;
+        changed
     }
 
     pub fn apply_crop_aspect(&mut self, target_ratio: f64, source_ratio: f64) {
@@ -558,6 +736,66 @@ mod prepare_tests {
         assert!((prepare.crop.height - 1.0).abs() < 1e-9);
         assert!((prepare.crop.x - (1.0 - prepare.crop.width) / 2.0).abs() < 1e-9);
         assert!(!prepare.crop_is_original());
+    }
+
+    #[test]
+    fn crop_position_tools_center_and_clamp() {
+        let mut prepare = PrepareState {
+            crop_enabled: true,
+            crop: CropSpec {
+                x: 0.0,
+                y: 0.0,
+                width: 0.5,
+                height: 0.4,
+            },
+            ..Default::default()
+        };
+        assert!(prepare.center_crop());
+        assert!((prepare.crop.x - 0.25).abs() < 1e-9);
+        assert!((prepare.crop.y - 0.30).abs() < 1e-9);
+        assert!(prepare.nudge_crop(1.0, -1.0));
+        assert!((prepare.crop.x - 0.5).abs() < 1e-9);
+        assert_eq!(prepare.crop.y, 0.0);
+    }
+
+    #[test]
+    fn mask_presets_can_be_centered_and_duplicated() {
+        let mut prepare = PrepareState::default();
+        prepare.add_mask_preset(MaskPreset::LowerBar);
+        assert_eq!(prepare.shapes.len(), 1);
+        assert_eq!(prepare.selected_shape, Some(0));
+        let first_id = prepare.shapes[0].id;
+        assert_eq!(prepare.shapes[0].preset, MaskPreset::LowerBar);
+        assert!((prepare.shapes[0].width - 0.76).abs() < 1e-9);
+        assert!(prepare.center_selected_shape());
+        assert!((prepare.shapes[0].x - 0.12).abs() < 1e-9);
+        assert!((prepare.shapes[0].y - 0.42).abs() < 1e-9);
+        assert!(prepare.duplicate_selected_shape());
+        assert_eq!(prepare.shapes.len(), 2);
+        assert_eq!(prepare.selected_shape, Some(1));
+        assert_ne!(prepare.shapes[1].id, first_id);
+        assert_eq!(prepare.shapes[1].preset, MaskPreset::LowerBar);
+        assert!(prepare.shapes[1].y > prepare.shapes[0].y);
+    }
+
+    #[test]
+    fn mask_keyboard_tools_and_metadata_survive_draft_round_trip() {
+        let mut prepare = PrepareState::default();
+        prepare.add_mask_preset(MaskPreset::Square);
+        let original_id = prepare.shapes[0].id;
+        let original_ratio = prepare.shapes[0].width / prepare.shapes[0].height;
+
+        assert!(prepare.nudge_selected_shape(-0.02, 0.03));
+        assert!(prepare.resize_selected_shape(0.10));
+        assert!((prepare.shapes[0].width / prepare.shapes[0].height - original_ratio).abs() < 1e-9);
+
+        let saved = prepare.edit_spec();
+        let mut restored = PrepareState::default();
+        restored.load_edit_spec(&saved);
+        assert_eq!(restored.shapes.len(), 1);
+        assert_eq!(restored.shapes[0].id, original_id);
+        assert_eq!(restored.shapes[0].preset, MaskPreset::Square);
+        assert_eq!(restored.shapes[0].kind, ShapeKind::Square);
     }
 
     #[test]

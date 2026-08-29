@@ -215,7 +215,12 @@ pub fn button(
     };
     button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.tab_index(0)
-            .focus(move |style| style.bg(focus_fill))
+            .focus(move |style| {
+                style
+                    .bg(focus_fill)
+                    .border_2()
+                    .border_color(current_theme().accent)
+            })
             .on_click(cx.listener(move |app, _event, window, cx| {
                 // Pointer presses use the transient `active` fill below. Drop
                 // pointer-acquired focus before invoking the action so the
@@ -452,7 +457,12 @@ pub fn workbench_button(
         .when(enabled, |this| {
             this.active(move |style| style.bg(pressed_fill))
                 .tab_index(0)
-                .focus(move |style| style.bg(focus_fill))
+                .focus(move |style| {
+                    style
+                        .bg(focus_fill)
+                        .border_2()
+                        .border_color(current_theme().accent)
+                })
                 .on_click(cx.listener(move |app, _event, window, cx| {
                     window.blur();
                     click(app, cx);
@@ -500,7 +510,7 @@ pub fn tracked(text: &str) -> String {
 pub fn tabular<E: Styled + 'static>(element: E) -> E {
     element.font(gpui::Font {
         features: gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])),
-        ..gpui::font(".SystemUIFont")
+        ..gpui::font(crate::platform_ui_font_family())
     })
 }
 
@@ -642,9 +652,15 @@ pub fn text_area(
     height: f32,
     state: &FieldState,
     focused: bool,
+    subtle_focus: bool,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
     let theme = current_theme();
+    let focus_border = if subtle_focus {
+        theme.border_strong
+    } else {
+        theme.accent
+    };
     let mut element = div()
         .id(id)
         .flex_1()
@@ -654,7 +670,7 @@ pub fn text_area(
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
-        .border_color(if focused { theme.accent } else { theme.border })
+        .border_color(if focused { focus_border } else { theme.border })
         .text_size(px(13.0))
         .text_color(theme.text)
         .cursor_text();
@@ -667,7 +683,14 @@ pub fn text_area(
         );
     }
     if focused {
-        element = element.border_2().border_color(theme.accent);
+        element = if subtle_focus {
+            element
+                .bg(theme.hover)
+                .border_1()
+                .border_color(focus_border)
+        } else {
+            element.border_2().border_color(focus_border)
+        };
     }
     let display = if state.text.is_empty() {
         placeholder.to_string()
@@ -686,7 +709,16 @@ pub fn text_area(
     );
     element
         .tab_index(0)
-        .focus(|style| style.border_2().border_color(current_theme().accent))
+        .focus(move |style| {
+            if subtle_focus {
+                style
+                    .bg(current_theme().hover)
+                    .border_1()
+                    .border_color(current_theme().border_strong)
+            } else {
+                style.border_2().border_color(current_theme().accent)
+            }
+        })
         .on_click(cx.listener(move |app, _event, _window, cx| {
             app.focus_field(id, cx);
         }))

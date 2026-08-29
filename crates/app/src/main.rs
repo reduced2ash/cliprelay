@@ -40,6 +40,26 @@ actions!(
     [FocusNext, FocusPrevious, Activate, ActivateSpace]
 );
 
+#[cfg(target_os = "macos")]
+pub(crate) fn platform_ui_font_family() -> &'static str {
+    ".SystemUIFont"
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn platform_ui_font_family() -> &'static str {
+    "Segoe UI"
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn platform_ui_font_family() -> &'static str {
+    "system-ui"
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+pub(crate) fn platform_ui_font_family() -> &'static str {
+    "sans-serif"
+}
+
 #[derive(Clone)]
 pub struct Toast {
     pub id: u64,
@@ -134,6 +154,8 @@ pub struct App {
     pub history_scroll: gpui::ScrollHandle,
     pub tab_scroll: gpui::ScrollHandle,
     pub settings_scroll: gpui::ScrollHandle,
+    pub prepare_edit_scroll: gpui::ScrollHandle,
+    pub prepare_publish_scroll: gpui::ScrollHandle,
     pub thumbnail_states: HashMap<i64, String>,
     pub thumbnail_requested: std::collections::HashSet<i64>,
     pub preview_hover_generation: u64,
@@ -271,7 +293,18 @@ impl App {
         let open_workspace_menu_at_boot = std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
         let exercise_workflow_at_boot = std::env::var("CLIPRELAY_EXERCISE_WORKFLOW").is_ok();
         let open_studio_in_workflow = std::env::var("CLIPRELAY_WORKFLOW_OPEN_STUDIO").is_ok();
+        let studio_inspector_tab_in_workflow =
+            match std::env::var("CLIPRELAY_WORKFLOW_STUDIO_TAB").as_deref() {
+                Ok("edit") => 0,
+                Ok("clean") => 2,
+                Ok("setup") => 3,
+                _ => 1,
+            };
         let keep_checking_in_workflow = std::env::var("CLIPRELAY_WORKFLOW_KEEP_CHECKING").is_ok();
+        let separate_captions_in_workflow =
+            std::env::var("CLIPRELAY_WORKFLOW_SEPARATE_CAPTIONS").as_deref() == Ok("1");
+        let edit_demo_in_workflow =
+            std::env::var("CLIPRELAY_WORKFLOW_EDIT_DEMO").as_deref() == Ok("1");
         let settings_scroll_boot: f32 = std::env::var("CLIPRELAY_SETTINGS_SCROLL")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -389,6 +422,8 @@ impl App {
             history_scroll: gpui::ScrollHandle::new(),
             tab_scroll: gpui::ScrollHandle::new(),
             settings_scroll: gpui::ScrollHandle::new(),
+            prepare_edit_scroll: gpui::ScrollHandle::new(),
+            prepare_publish_scroll: gpui::ScrollHandle::new(),
             thumbnail_states: HashMap::new(),
             thumbnail_requested: std::collections::HashSet::new(),
             preview_hover_generation: 0,
@@ -509,6 +544,18 @@ impl App {
                 if open_studio_in_workflow {
                     let _ = this.update(cx, |app, cx| {
                         app.prepare.studio_mode = true;
+                        app.prepare.inspector_tab = studio_inspector_tab_in_workflow;
+                        if separate_captions_in_workflow {
+                            app.prepare.same_caption = false;
+                            log::info!("ui-test workflow opened separate destination captions");
+                        }
+                        if edit_demo_in_workflow {
+                            app.apply_crop_preset(2);
+                            app.prepare.guide_mode = 1;
+                            app.prepare
+                                .add_mask_preset(crate::prepare::MaskPreset::LowerBar);
+                            log::info!("ui-test workflow opened the active Edit console state");
+                        }
                         if keep_checking_in_workflow {
                             app.checking = true;
                             log::info!("ui-test workflow kept Prepare validation pending");
@@ -1076,6 +1123,8 @@ impl App {
             return;
         }
         let duration = self.prepare.duration;
+        let edit_scroll_y = draft.edit_scroll_y.max(0.0);
+        let publish_scroll_y = draft.publish_scroll_y.max(0.0);
         self.prepare.trim_start = draft.trim_start.clamp(0.0, duration.max(0.0));
         self.prepare.trim_end = if draft.trim_end > 0.0 {
             draft.trim_end.clamp(
@@ -1085,7 +1134,7 @@ impl App {
         } else {
             duration
         };
-        self.prepare.inspector_tab = draft.inspector_tab.clamp(0, 1);
+        self.prepare.inspector_tab = draft.inspector_tab.clamp(0, 3);
         self.prepare.studio_mode = draft.studio_tab > 0;
         self.prepare.same_caption = draft.same_caption;
         self.prepare.telegram_mode_index = draft.telegram_mode_index.clamp(0, 1);
@@ -1103,7 +1152,14 @@ impl App {
         self.prepare.compression_index = draft.compression_index.clamp(0, 6);
         self.prepare.target_mb = draft.target_size;
         self.prepare.cleanup_index = draft.cleanup_index.clamp(0, 2);
-        self.prepare.studio_width = draft.studio_inspector_width.clamp(380.0, 500.0);
+        self.prepare.guide_mode = draft.guide_mode.clamp(0, 2);
+        self.prepare.edit_scroll_y = edit_scroll_y;
+        self.prepare.publish_scroll_y = publish_scroll_y;
+        self.prepare_edit_scroll
+            .set_offset(point(px(0.0), px(-(edit_scroll_y as f32))));
+        self.prepare_publish_scroll
+            .set_offset(point(px(0.0), px(-(publish_scroll_y as f32))));
+        self.prepare.studio_width = draft.studio_inspector_width.clamp(400.0, 520.0);
         self.prepare.load_edit_spec(&draft.edits);
         // The model captions changed externally: clear the field states so
         // the caption areas show the restored values and stale edits can't
@@ -1134,8 +1190,9 @@ impl App {
             compression_index: self.prepare.compression_index,
             target_size: self.prepare.target_mb.clone(),
             cleanup_index: self.prepare.cleanup_index,
-            edit_scroll_y: self.prepare.edit_scroll_y,
-            publish_scroll_y: self.prepare.publish_scroll_y,
+            guide_mode: self.prepare.guide_mode,
+            edit_scroll_y: (-f32::from(self.prepare_edit_scroll.offset().y)).max(0.0) as f64,
+            publish_scroll_y: (-f32::from(self.prepare_publish_scroll.offset().y)).max(0.0) as f64,
             studio_inspector_width: self.prepare.studio_width,
             edits: self.prepare.edit_spec(),
         }
@@ -1561,11 +1618,7 @@ impl App {
         self.prepare_video_error = None;
         let expected_path = media_path.clone();
         let load = cx.background_spawn(async move {
-            Self::load_prepare_video(
-                media_path,
-                Self::prepare_video_options(),
-                &cancel,
-            )
+            Self::load_prepare_video(media_path, Self::prepare_video_options(), &cancel)
         });
         self.prepare_video_load_task = Some(cx.spawn(async move |this, cx| match load.await {
             Ok((video, proxy_path)) => {
@@ -2252,7 +2305,7 @@ impl App {
             .bg(theme.workbench_chrome)
             .text_color(theme.text)
             .text_size(px(15.0))
-            .font_family("Open Sans")
+            .font_family(platform_ui_font_family())
             .track_focus(&self.focus_handle)
             .key_context("cliprelay")
             .on_action(cx.listener(|_app, _: &FocusNext, window, _cx| {
@@ -2277,9 +2330,8 @@ impl App {
                 app.on_key_down(event, window, cx);
             }));
 
-        let focused_studio = self.page == Page::Library
-            && self.prepare.studio_mode
-            && self.selected.is_some();
+        let focused_studio =
+            self.page == Page::Library && self.prepare.studio_mode && self.selected.is_some();
         let explorer_owns_rail_seam = self.page == Page::Library
             && !self.settings_value(LIBRARY_ROOT).is_empty()
             && self.explorer_visible()
@@ -2349,8 +2401,11 @@ impl App {
                 window.focus(&focus);
             });
         }
-        // Workspace tabs at the window bottom (mirrors the original).
-        root = root.child(self.render_workspace_tabs(cx));
+        // Focused Studio owns the full window like the reference editor. The
+        // workspace strip returns as soon as the user exits Studio.
+        if !focused_studio {
+            root = root.child(self.render_workspace_tabs(cx));
+        }
 
         // Toasts.
         let toasts = self.toasts.clone();

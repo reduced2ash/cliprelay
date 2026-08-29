@@ -94,6 +94,40 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Focused Prepare is a dark, color-managed editing environment even when
+    /// the surrounding workbench uses a lighter application theme. Keeping the
+    /// palette here lets fields, combos, focus states, and media controls share
+    /// one semantic set instead of accumulating one-off paint values.
+    pub fn prepare_studio() -> Self {
+        Self::from_palette(
+            ThemeMode::Relay,
+            "#0C1014",
+            "#14181D",
+            "#171C21",
+            "#1B2127",
+            "#222A32",
+            "#1D242B",
+            "#EEF1F4",
+            "#C7CDD4",
+            "#929BA6",
+            "#707A85",
+            "#2C343D",
+            "#414B56",
+            "#F06B4E",
+            "#DA5B40",
+            "#2B1C19",
+            "#FF8062",
+            "#0B0E11",
+            "#36D184",
+            "#10271B",
+            "#F1B32B",
+            "#2B2412",
+            "#F27B83",
+            "#30191F",
+            "#081019",
+        )
+    }
+
     pub fn relay() -> Self {
         Self::from_palette(
             ThemeMode::Relay,

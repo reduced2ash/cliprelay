@@ -167,6 +167,8 @@ pub struct PrepareDraft {
     pub compression_index: i64,
     pub target_size: String,
     pub cleanup_index: i64,
+    #[serde(default)]
+    pub guide_mode: i64,
     pub edit_scroll_y: f64,
     pub publish_scroll_y: f64,
     pub studio_inspector_width: f64,

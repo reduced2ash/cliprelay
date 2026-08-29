@@ -1603,21 +1603,24 @@ impl crate::App {
                         .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(div().flex_1().min_w(px(0.0)))
-                .child(workbench_button(
-                    "toolbar-open-studio",
-                    "Open Studio",
-                    "maximize",
-                    ButtonKind::Secondary,
-                    true,
-                    false,
-                    "Open the focused Prepare workspace",
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = true;
-                        cx.notify();
-                    },
+                .child(
+                    workbench_button(
+                        "toolbar-open-studio",
+                        "Open Studio",
+                        "maximize",
+                        ButtonKind::Secondary,
+                        true,
+                        false,
+                        "Open the focused Prepare workspace",
+                        cx,
+                        |app, cx| {
+                            app.prepare.inspector_tab = 1;
+                            app.prepare.studio_mode = true;
+                            cx.notify();
+                        },
+                    )
+                    .h(px(32.0)),
                 )
-                .h(px(32.0)))
                 .child(div().w(px(1.0)).h(px(22.0)).bg(theme.border))
                 .child(workbench_button(
                     "toolbar-close",
@@ -2284,13 +2287,11 @@ impl crate::App {
                             }
                         }),
                     )
-                    .on_click(cx.listener(
-                        |_app, event: &gpui::ClickEvent, window, _cx| {
-                            if event.click_count() >= 2 && !window.is_fullscreen() {
-                                window.zoom_window();
-                            }
-                        },
-                    )),
+                    .on_click(cx.listener(|_app, event: &gpui::ClickEvent, window, _cx| {
+                        if event.click_count() >= 2 && !window.is_fullscreen() {
+                            window.zoom_window();
+                        }
+                    })),
             );
         }
 
@@ -2973,13 +2974,13 @@ impl crate::App {
         };
 
         sidebar = sidebar.child(nav_item(
-                self,
-                "nav-history",
-                "History",
-                "history",
-                Page::History,
-                cx,
-            ));
+            self,
+            "nav-history",
+            "History",
+            "history",
+            Page::History,
+            cx,
+        ));
         if self.prepare.studio_mode {
             sidebar = sidebar.child(
                 div()
@@ -3018,16 +3019,14 @@ impl crate::App {
                     ),
             );
         }
-        sidebar = sidebar
-            .child(div().flex_1())
-            .child(nav_item(
-                self,
-                "nav-settings",
-                "Settings",
-                "settings",
-                Page::Settings,
-                cx,
-            ));
+        sidebar = sidebar.child(div().flex_1()).child(nav_item(
+            self,
+            "nav-settings",
+            "Settings",
+            "settings",
+            Page::Settings,
+            cx,
+        ));
         if !collapsed && !narrow {
             sidebar = sidebar.child(
                 div()
@@ -3051,9 +3050,7 @@ impl crate::App {
                             .text_size(px(12.0))
                             .text_color(theme.muted),
                     )
-                    .tooltip(move |_window, cx| {
-                        crate::tooltip_view(cx, "Collapse sidebar".into())
-                    })
+                    .tooltip(move |_window, cx| crate::tooltip_view(cx, "Collapse sidebar".into()))
                     .on_click(cx.listener(|app, _event, window, cx| {
                         window.blur();
                         app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
@@ -3062,12 +3059,10 @@ impl crate::App {
                         app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
                         cx.stop_propagation();
                     }))
-                    .on_action(
-                        cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
-                            app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
-                            cx.stop_propagation();
-                        }),
-                    ),
+                    .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(true), cx);
+                        cx.stop_propagation();
+                    })),
             );
         }
         sidebar
@@ -3113,211 +3108,203 @@ impl crate::App {
             );
         }
 
-        // Docked Prepare is intentionally a review surface. Advanced editing
-        // and configuration move to Studio so the media proof can dominate.
+        // Keep the complete Prepare workflow available in the dock. Studio is
+        // a focused presentation of the same workflow, not the only place
+        // where editing and delivery settings can be reached.
         panel = panel.child(self.render_prepare_stage(cx, &theme, dock_width));
-        if self.window_size.1 >= 900.0 {
-            panel = panel.child(self.render_prepare_dock_summary(cx, &theme));
-        } else if self.window_size.1 >= 720.0 {
-            panel = panel.child(self.render_prepare_dock_compact_summary(&theme));
-        }
+        panel = panel.child(self.render_prepare_tabs(cx));
+        panel = panel.child(self.render_prepare_inspector(cx, &theme, dock_width));
         panel = panel.child(self.render_prepare_dock_footer(cx, &theme));
         panel
     }
 
     pub fn render_prepare_studio(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let theme = self.theme.clone();
+        let app_theme = self.theme.clone();
+        let theme = crate::theme::Theme::prepare_studio();
+        crate::widgets::set_current_theme(&theme);
         let width = self.window_size.0;
         let checking = self.checking;
-        // A narrow Studio becomes a deliberate stage-only workspace. Keeping
-        // the inspector's real minimum width matters more than showing a
-        // crushed, unusable sliver of it; widening the window restores it.
-        let compact_studio = width < 900.0;
+        // A narrow Studio becomes a deliberate one-pane workspace. Keeping a
+        // usable inspector matters more than squeezing both panes into slivers.
+        let compact_studio = width < 980.0;
         let compact_inspector_open = self.prepare.compact_inspector_open;
-        let inspector_width = self.prepare.studio_width.clamp(380.0, 500.0) as f32;
+        let inspector_width = self.prepare.studio_width.clamp(400.0, 520.0) as f32;
+        let studio_inset = 12.0;
+        let splitter_width = 12.0;
         let stage_width = if compact_studio {
-            width
+            (width - studio_inset * 2.0).max(420.0)
         } else {
-            (width - inspector_width - 5.0).max(420.0)
+            (width - studio_inset * 2.0 - inspector_width - splitter_width).max(420.0)
         };
-
-        let mut studio = div()
-            .id("prepare-studio")
-            .flex_1()
-            .min_w(px(0.0))
-            .bg(theme.ink)
-            .flex()
-            .flex_row();
 
         let selected_name = self
             .selected
             .as_ref()
             .map(|m| m.name.clone())
             .unwrap_or_default();
-        let source_detail = self
-            .selected
-            .as_ref()
-            .map(|m| {
-                let mut parts = vec![cliprelay_core::utils::format_bytes(m.size_bytes as f64)];
-                if m.width > 0 && m.height > 0 {
-                    parts.push(format!("{}×{}", m.width, m.height));
-                }
-                if let Some(folder) = std::path::Path::new(&m.path)
-                    .parent()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                {
-                    parts.push(folder.to_string());
-                }
-                parts.join("  ·  ")
-            })
-            .unwrap_or_default();
 
-        // The context row belongs to the media workspace, not to a decorative
-        // page title. It preserves a direct route back to the library.
-        let mut stage_col = div()
-            .id("studio-stage")
-            .w(px(stage_width))
+        let header = div()
+            .id("studio-header")
+            .w_full()
+            .h(px(52.0))
+            .flex_none()
+            .px(px(9.0))
+            .bg(theme.ink)
+            .border_b_1()
+            .border_color(theme.border)
             .flex()
-            .flex_col();
-        stage_col = stage_col.child(
-            div()
-                .w_full()
-                .h(px(44.0))
-                .px(px(10.0))
-                .border_b_1()
-                .border_color(theme.border)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(workbench_button(
-                    "studio-back",
-                    "Back to Library",
-                    "chevron-left",
-                    ButtonKind::Ghost,
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                button(
+                    "studio-exit",
+                    "",
+                    ButtonKind::Danger,
+                    Some("close"),
                     true,
-                    false,
-                    "Return to the library  ·  Escape",
                     cx,
                     |app, cx| {
                         app.prepare.studio_mode = false;
                         cx.notify();
                     },
-                ))
-                .child(div().w(px(1.0)).h(px(20.0)).bg(theme.border))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(1.0))
-                        .child(
-                            div()
-                                .child(selected_name)
-                                .text_size(px(12.0))
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_ellipsis(),
-                        )
-                        .child(
-                            div()
-                                .child(source_detail)
-                                .text_size(px(10.0))
-                                .text_color(theme.muted)
-                                .text_ellipsis(),
-                        ),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(
-                            div()
-                                .w(px(6.0))
-                                .h(px(6.0))
-                                .rounded(px(3.0))
-                                .bg(if checking {
-                                    theme.warning
-                                } else {
-                                    theme.success
-                                }),
-                        )
-                        .child(
-                            div()
-                                .child(if checking { "Checking" } else { "Ready" })
-                                .text_size(px(11.0))
-                                .text_color(theme.text_soft),
-                        ),
+                .w(px(32.0))
+                .h(px(34.0))
+                .px(px(0.0))
+                .rounded(px(2.0))
+                .bg(theme.transparent())
+                .border_1()
+                .border_color(theme.accent),
+            )
+            .child(
+                workbench_button(
+                    "studio-back",
+                    "",
+                    "chevron-left",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Back to Library  ·  Escape",
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = false;
+                        cx.notify();
+                    },
                 )
-                .when(compact_studio, |header| {
-                    header.child(workbench_button(
-                        "studio-compact-inspector",
+                .mr(px(18.0)),
+            )
+            .child(
+                div()
+                    .ml(px(4.0))
+                    .child("Prepare")
+                    .text_size(px(14.0))
+                    .text_color(theme.text_soft)
+                    .font_weight(FontWeight::MEDIUM),
+            )
+            .child(
+                div()
+                    .child("/")
+                    .text_size(px(14.0))
+                    .text_color(theme.muted_soft),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(80.0))
+                    .child(selected_name)
+                    .text_size(px(14.0))
+                    .text_color(theme.muted)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_ellipsis(),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(7.0))
+                    .child(
+                        div()
+                            .w(px(8.0))
+                            .h(px(8.0))
+                            .rounded(px(4.0))
+                            .bg(if checking {
+                                theme.warning
+                            } else {
+                                theme.success
+                            }),
+                    )
+                    .child(
+                        div()
+                            .child(if checking { "Checking" } else { "Ready" })
+                            .text_size(px(13.5))
+                            .text_color(theme.text_soft),
+                    ),
+            )
+            .child(
+                button(
+                    "studio-mode-active",
+                    if compact_studio {
                         if compact_inspector_open {
                             "Video"
                         } else {
                             "Inspector"
-                        },
-                        "panel",
-                        ButtonKind::Ghost,
-                        true,
-                        false,
-                        if compact_inspector_open {
-                            "Return to the video stage"
-                        } else {
-                            "Open edit and delivery inspector"
-                        },
-                        cx,
-                        |app, cx| {
+                        }
+                    } else {
+                        "Back to Prepare"
+                    },
+                    ButtonKind::Secondary,
+                    Some(if compact_studio {
+                        "panel"
+                    } else {
+                        "arrow-left"
+                    }),
+                    true,
+                    cx,
+                    move |app, cx| {
+                        if compact_studio {
                             app.prepare.compact_inspector_open =
                                 !app.prepare.compact_inspector_open;
-                            cx.notify();
-                        },
-                    ))
-                })
-                .child(workbench_button(
-                    "studio-open-player",
-                    "",
-                    "external",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Open in default player",
-                    cx,
-                    |app, cx| app.open_selected_in_player(cx),
-                ))
-                .child(workbench_button(
-                    "studio-exit",
-                    "",
-                    "maximize",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Exit full-screen editor  ·  Escape",
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = false;
+                        } else {
+                            app.prepare.studio_mode = false;
+                            app.prepare.compact_inspector_open = false;
+                        }
                         cx.notify();
                     },
-                ))
-                .child(workbench_button(
-                    "studio-close",
-                    "",
-                    "close",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Close selected video",
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = false;
-                        app.command(Command::ClearSelection);
-                        cx.notify();
-                    },
-                )),
-        );
+                )
+                .h(px(34.0))
+                .px(px(12.0))
+                .rounded(px(2.0))
+                .bg(theme.surface_soft),
+            )
+            .child(div().mx(px(8.0)).w(px(1.0)).h(px(26.0)).bg(theme.border))
+            .child(workbench_button(
+                "studio-close",
+                "",
+                "close",
+                ButtonKind::Ghost,
+                true,
+                true,
+                "Close selected video",
+                cx,
+                |app, cx| {
+                    app.prepare.studio_mode = false;
+                    app.command(Command::ClearSelection);
+                    cx.notify();
+                },
+            ));
+
+        let mut stage_col = div()
+            .id("studio-stage")
+            .w(px(stage_width))
+            .h_full()
+            .min_h(px(0.0))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.ink)
+            .flex()
+            .flex_col();
         if self.checking {
             stage_col = stage_col.child(
                 div()
@@ -3352,20 +3339,26 @@ impl crate::App {
         } else {
             stage_col = stage_col.child(self.render_prepare_stage(cx, &theme, stage_width));
         }
-        studio = studio.child(stage_col);
 
-        // Inspector divider (draggable splitter) + inspector. Compact windows
-        // intentionally omit both rather than squeezing the editor.
+        let mut workbench = div()
+            .id("studio-workbench")
+            .flex_1()
+            .min_h(px(0.0))
+            .min_w(px(0.0))
+            .px(px(studio_inset))
+            .pb(px(studio_inset))
+            .bg(theme.ink)
+            .flex()
+            .flex_row()
+            .child(stage_col);
+
         if !compact_studio {
-            studio = studio
+            workbench = workbench
                 .child(
                     div()
                         .id("studio-splitter")
-                        .w(px(5.0))
+                        .w(px(splitter_width))
                         .h_full()
-                        .border_l_1()
-                        .border_r_1()
-                        .border_color(theme.border)
                         .bg(theme.ink)
                         .cursor_ew_resize()
                         .on_mouse_down(
@@ -3377,13 +3370,13 @@ impl crate::App {
                                 cx.notify();
                             }),
                         )
-                        .on_mouse_move(
-                            cx.listener(move |app, event: &MouseMoveEvent, _window, cx| {
+                        .on_mouse_move(cx.listener(
+                            move |app, event: &MouseMoveEvent, _window, cx| {
                                 let x: f32 = event.position.x.into();
                                 let y: f32 = event.position.y.into();
                                 app.prepare_drag_move(x, y, 0.0, 1.0, 1.0, cx);
-                            }),
-                        )
+                            },
+                        ))
                         .on_mouse_up(
                             MouseButton::Left,
                             cx.listener(|app, _event: &MouseUpEvent, _window, cx| {
@@ -3394,7 +3387,7 @@ impl crate::App {
                         )
                         .on_click(cx.listener(|app, event: &ClickEvent, _window, cx| {
                             if event.click_count() >= 2 {
-                                app.prepare.studio_width = 420.0;
+                                app.prepare.studio_width = 428.0;
                                 app.save_draft();
                                 cx.notify();
                             }
@@ -3405,13 +3398,28 @@ impl crate::App {
                         .w(px(inspector_width))
                         .flex_none()
                         .h_full()
+                        .min_h(px(0.0))
                         .bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border)
                         .flex()
                         .flex_col()
                         .child(self.render_prepare_tabs(cx))
                         .child(self.render_prepare_inspector(cx, &theme, inspector_width)),
                 );
         }
+
+        let studio = div()
+            .id("prepare-studio")
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .bg(theme.ink)
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(workbench);
+        crate::widgets::set_current_theme(&app_theme);
         studio
     }
 
@@ -4160,13 +4168,11 @@ impl crate::App {
                         None,
                         cx,
                     )
-                    .on_click(
-                        cx.listener(move |app, _event, _window, cx| {
-                            let _ = std::process::Command::new("open").arg(&link).spawn();
-                            app.history_more_menu_post = None;
-                            cx.notify();
-                        }),
-                    ),
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        let _ = std::process::Command::new("open").arg(&link).spawn();
+                        app.history_more_menu_post = None;
+                        cx.notify();
+                    })),
                 );
             }
             let path = post

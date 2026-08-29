@@ -1,7 +1,14 @@
+//! THESIS: Focused Prepare is one continuous delivery workstation; Edit is a spatial framing console, never a legacy checkbox form or miniature NLE.
+//! OWN-WORLD: Blue-black planes, hairline steel borders, square controls, coral commit actions, and cyan temporal focus.
+//! STORY: Review the clip, set an exact range, shape the frame with visual presets and guides, cover private regions, then prepare delivery without leaving context.
+//! FIRST VIEWPORT: A 52px breadcrumb header spans the window; the media/timeline stack fills the left and a 428px inspector turns Edit into a full-width preset rail, live geometry readout, and mask workbench.
+//! FORM: User-pinned 1672×941 editor workbench, ranked first in the inherited surface hand; seed 0181ccb2.
+//! FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+//!
 //! Prepare workspace renderers: stage (frame + transport + timeline +
 //! source strip), inspector tabs, edit/publish inspectors, action dock.
 
-use crate::prepare::{DragHandle, ShapeKind};
+use crate::prepare::{DragHandle, MaskPreset, ShapeKind};
 use crate::prepare::{CLEANUP_OPTIONS, COMPRESSION_OPTIONS};
 use crate::settings_import::*;
 use crate::state::*;
@@ -10,12 +17,14 @@ use crate::video_element::video as video_element;
 use crate::widgets::*;
 use cliprelay_core::media::CropSpec;
 use cliprelay_core::utils::format_bytes;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use serde_json::json;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 const PREPARE_GUTTER: f32 = 10.0;
-const PREPARE_CONTROL_HEIGHT: f32 = 32.0;
+const PREPARE_CONTROL_HEIGHT: f32 = 44.0;
 const PREPARE_SECTION_GAP: f32 = 10.0;
 
 fn prepare_frame_height(
@@ -25,7 +34,7 @@ fn prepare_frame_height(
     track_width: f32,
 ) -> f32 {
     if is_studio {
-        let reserved_height = if checking { 468.0 } else { 434.0 };
+        let reserved_height = if checking { 427.0 } else { 393.0 };
         // Focused Prepare gives the video the largest single region, but it is
         // an editor rather than a player. Reserve a real lower workbench for
         // the filmstrip and exact range controls instead of letting the frame
@@ -35,23 +44,47 @@ fn prepare_frame_height(
         let width_aware_height = (track_width * 0.58).max(minimum_height);
         available_height.min(width_aware_height)
     } else {
-        // The dock reserves room for the expanded filmstrip, source details,
-        // and its always-available delivery footer. Tall windows still reach
-        // the width-aware preview size; short windows yield from the video
-        // well instead of pushing the primary action below the workspace bar.
-        let reserved_height = if checking { 454.0 } else { 420.0 };
-        let available_height = (window_height - reserved_height).max(220.0);
-        // A wide dock earns a visibly larger proofing canvas, but the lower
-        // delivery handoff and filmstrip must stay above the workspace tabs.
+        // Docked Prepare also owns the full tabbed inspector. Let the proofing
+        // canvas yield first so those controls remain present at laptop
+        // heights, with overflow handled by the inspector's scroll region.
+        let reserved_height = if checking { 540.0 } else { 506.0 };
+        let available_height = (window_height - reserved_height).max(118.0);
         let width_aware_height = (track_width * 0.87).clamp(280.0, 420.0);
-        let viewport_cap = if window_height < 1000.0 {
-            300.0
+        let viewport_cap = if window_height < 820.0 {
+            220.0
+        } else if window_height < 1000.0 {
+            280.0
         } else if window_height < 1200.0 {
-            360.0
+            320.0
         } else {
-            420.0
+            380.0
         };
         available_height.min(width_aware_height).min(viewport_cap)
+    }
+}
+
+fn fitted_media_rect(
+    container_width: f32,
+    container_height: f32,
+    source_ratio: f32,
+) -> (f32, f32, f32, f32) {
+    let container_ratio = container_width / container_height.max(1.0);
+    if source_ratio > container_ratio {
+        let height = container_width / source_ratio.max(0.01);
+        (
+            0.0,
+            (container_height - height) / 2.0,
+            container_width,
+            height,
+        )
+    } else {
+        let width = container_height * source_ratio.max(0.01);
+        (
+            (container_width - width) / 2.0,
+            0.0,
+            width,
+            container_height,
+        )
     }
 }
 
@@ -156,6 +189,552 @@ fn prepare_dock_destination_row(
         }))
 }
 
+fn prepare_inspector_tab(
+    theme: &crate::theme::Theme,
+    id: &'static str,
+    label: &'static str,
+    tab: i64,
+    active_tab: i64,
+    compact: bool,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_1()
+        .min_w(px(0.0))
+        .h_full()
+        .px(px(if compact { 6.0 } else { 8.0 }))
+        .cursor_pointer()
+        .relative()
+        .flex()
+        .items_center()
+        .justify_center()
+        .tab_index(0)
+        .bg(if active_tab == tab {
+            theme.surface_soft
+        } else {
+            theme.transparent()
+        })
+        .hover(|style| style.bg(current_theme().hover))
+        .active(|style| style.bg(current_theme().accent_soft))
+        .focus(|style| {
+            style
+                .bg(current_theme().hover)
+                .border_1()
+                .border_color(current_theme().accent)
+        })
+        .child(
+            div()
+                .child(label)
+                .text_size(px(if compact { 12.5 } else { 14.0 }))
+                .text_color(if active_tab == tab {
+                    theme.accent_text
+                } else {
+                    theme.text_soft
+                })
+                .font_weight(FontWeight::MEDIUM),
+        )
+        .when(active_tab == tab, |tab| {
+            tab.child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left(px(0.0))
+                    .w_full()
+                    .h(px(2.0))
+                    .bg(theme.accent),
+            )
+        })
+        .on_click(cx.listener(move |app, _event, window, cx| {
+            window.blur();
+            app.prepare.inspector_tab = tab;
+            app.save_draft();
+            cx.notify();
+        }))
+        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+            app.prepare.inspector_tab = tab;
+            app.save_draft();
+            cx.notify();
+            cx.stop_propagation();
+        }))
+        .on_action(
+            cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                app.prepare.inspector_tab = tab;
+                app.save_draft();
+                cx.notify();
+                cx.stop_propagation();
+            }),
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn studio_destination_row(
+    theme: &crate::theme::Theme,
+    id: &'static str,
+    glyph: &'static str,
+    title: &'static str,
+    badge: &'static str,
+    detail: String,
+    badge_color: Hsla,
+    compact: bool,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w_full()
+        .when(compact, |row| {
+            row.h(px(68.0))
+                .px(px(10.0))
+                .rounded(px(2.0))
+                .bg(theme.surface_soft)
+                .border_1()
+        })
+        .when(!compact, |row| {
+            row.min_h(px(99.0)).py(px(12.0)).border_b_1()
+        })
+        .border_color(theme.border)
+        .cursor_pointer()
+        .tab_index(0)
+        .hover(|style| style.bg(current_theme().hover))
+        .active(|style| style.bg(current_theme().accent_soft))
+        .focus(|style| {
+            style
+                .bg(current_theme().hover)
+                .border_1()
+                .border_color(current_theme().accent)
+        })
+        .flex()
+        .when(compact, |row| row.items_center())
+        .when(!compact, |row| row.items_start())
+        .gap(px(if compact { 10.0 } else { 12.0 }))
+        .child(icon(
+            glyph,
+            if compact { 18.0 } else { 26.0 },
+            theme.text_soft,
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .gap(px(if compact { 2.0 } else { 10.0 }))
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(if compact { 24.0 } else { 34.0 }))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(title)
+                                .text_size(px(if compact { 13.0 } else { 15.0 }))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::MEDIUM),
+                        )
+                        .child(
+                            div()
+                                .h(px(if compact { 22.0 } else { 34.0 }))
+                                .px(px(if compact { 8.0 } else { 11.0 }))
+                                .rounded(px(2.0))
+                                .bg(badge_color.opacity(0.10))
+                                .border_1()
+                                .border_color(badge_color.opacity(0.32))
+                                .flex()
+                                .items_center()
+                                .child(badge)
+                                .text_size(px(if compact { 10.5 } else { 12.0 }))
+                                .text_color(badge_color)
+                                .font_weight(FontWeight::MEDIUM),
+                        )
+                        .child(icon(
+                            "chevron-right",
+                            if compact { 14.0 } else { 18.0 },
+                            theme.muted,
+                        )),
+                )
+                .child(
+                    div()
+                        .child(detail)
+                        .text_size(px(if compact { 11.0 } else { 13.0 }))
+                        .text_color(theme.muted)
+                        .when(compact, |detail| detail.text_ellipsis()),
+                ),
+        )
+        .on_click(cx.listener(|app, _event, window, cx| {
+            window.blur();
+            app.prepare.inspector_tab = 3;
+            app.save_draft();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+            app.prepare.inspector_tab = 3;
+            app.save_draft();
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+            app.prepare.inspector_tab = 3;
+            app.save_draft();
+            cx.stop_propagation();
+            cx.notify();
+        }))
+}
+
+#[derive(Clone, Copy)]
+enum EditTileVisual {
+    FreeFrame,
+    FrameRatio(f32, f32),
+    Guides(i64),
+    Mask(MaskPreset),
+}
+
+fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, selected: bool) -> Div {
+    let line = if selected {
+        theme.accent_text
+    } else {
+        theme.muted
+    };
+    let canvas = theme.ink;
+    match visual {
+        EditTileVisual::FreeFrame => div()
+            .w(px(32.0))
+            .h(px(22.0))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(30.0))
+                    .h(px(20.0))
+                    .rounded(px(2.0))
+                    .border_1()
+                    .border_color(line.opacity(0.48)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(5.0))
+                    .left(px(7.0))
+                    .w(px(18.0))
+                    .h(px(12.0))
+                    .border_1()
+                    .border_color(line),
+            ),
+        EditTileVisual::FrameRatio(width, height) => div()
+            .w(px(32.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(width))
+                    .h(px(height))
+                    .rounded(px(2.0))
+                    .bg(canvas)
+                    .border_1()
+                    .border_color(line),
+            ),
+        EditTileVisual::Guides(mode) => {
+            let mut preview = div()
+                .w(px(32.0))
+                .h(px(22.0))
+                .rounded(px(2.0))
+                .bg(canvas)
+                .border_1()
+                .border_color(line.opacity(if mode == 0 { 0.42 } else { 0.82 }))
+                .relative();
+            if mode == 1 {
+                for position in [10.0, 21.0] {
+                    preview = preview.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(px(position))
+                            .w(px(1.0))
+                            .h_full()
+                            .bg(line.opacity(0.72)),
+                    );
+                }
+                for position in [7.0, 14.0] {
+                    preview = preview.child(
+                        div()
+                            .absolute()
+                            .top(px(position))
+                            .left_0()
+                            .w_full()
+                            .h(px(1.0))
+                            .bg(line.opacity(0.72)),
+                    );
+                }
+            } else if mode == 2 {
+                preview = preview
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(4.0))
+                            .left(px(5.0))
+                            .w(px(20.0))
+                            .h(px(12.0))
+                            .border_1()
+                            .border_color(line.opacity(0.80)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(10.0))
+                            .left(px(14.0))
+                            .w(px(4.0))
+                            .h(px(1.0))
+                            .bg(line.opacity(0.80)),
+                    );
+            }
+            preview
+        }
+        EditTileVisual::Mask(preset) => {
+            let (left, top, width, height) = match preset {
+                MaskPreset::Box => (8.0, 6.0, 16.0, 10.0),
+                MaskPreset::Square => (10.0, 5.0, 12.0, 12.0),
+                MaskPreset::LowerBar => (5.0, 13.0, 22.0, 5.0),
+            };
+            div()
+                .w(px(32.0))
+                .h(px(22.0))
+                .rounded(px(2.0))
+                .bg(canvas)
+                .border_1()
+                .border_color(line.opacity(0.52))
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(top))
+                        .left(px(left))
+                        .w(px(width))
+                        .h(px(height))
+                        .bg(line),
+                )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn edit_choice_tile(
+    theme: &crate::theme::Theme,
+    id: &'static str,
+    label: &'static str,
+    selected: bool,
+    enabled: bool,
+    height: f32,
+    visual: EditTileVisual,
+    cx: &mut Context<crate::App>,
+    on_select: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
+) -> Stateful<Div> {
+    let on_select = Rc::new(on_select);
+    let click = Rc::clone(&on_select);
+    let activate = Rc::clone(&on_select);
+    div()
+        .id(id)
+        .flex_1()
+        .min_w(px(0.0))
+        .h(px(height))
+        .rounded(px(2.0))
+        .bg(if selected {
+            theme.active
+        } else {
+            theme.surface_soft
+        })
+        .border_1()
+        .border_color(if selected { theme.accent } else { theme.border })
+        .cursor_pointer()
+        .opacity(if enabled { 1.0 } else { 0.42 })
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(5.0))
+        .child(edit_tile_preview(theme, visual, selected))
+        .child(
+            div()
+                .child(label)
+                .text_size(px(11.0))
+                .text_color(if selected {
+                    theme.accent_text
+                } else {
+                    theme.text_soft
+                })
+                .font_weight(FontWeight::MEDIUM)
+                .text_ellipsis(),
+        )
+        .when(enabled, |tile| {
+            tile.tab_index(0)
+                .hover(|style| {
+                    style
+                        .bg(current_theme().hover)
+                        .border_color(current_theme().border_strong)
+                })
+                .active(|style| style.bg(current_theme().accent_soft))
+                .focus(|style| style.border_2().border_color(current_theme().accent))
+                .on_click(cx.listener(move |app, _event, window, cx| {
+                    window.blur();
+                    click(app, cx);
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    activate(app, cx);
+                    cx.stop_propagation();
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        on_select(app, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+        })
+}
+
+fn toggle_prepare_crop(app: &mut crate::App, cx: &mut Context<crate::App>) {
+    if app.prepare.crop_enabled {
+        app.prepare.reset_crop();
+    } else {
+        app.apply_crop_preset(0);
+    }
+    app.save_draft();
+    cx.notify();
+}
+
+fn edit_crop_switch(
+    theme: &crate::theme::Theme,
+    enabled: bool,
+    is_studio: bool,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
+    let mut track = div()
+        .w(px(if is_studio { 42.0 } else { 36.0 }))
+        .h(px(if is_studio { 22.0 } else { 20.0 }))
+        .px(px(3.0))
+        .rounded(px(if is_studio { 11.0 } else { 10.0 }))
+        .bg(if enabled { theme.accent } else { theme.raised })
+        .border_1()
+        .border_color(if enabled {
+            theme.accent
+        } else {
+            theme.border_strong
+        })
+        .flex()
+        .items_center();
+    track = if enabled {
+        track.justify_end()
+    } else {
+        track.justify_start()
+    };
+    track = track.child(
+        div()
+            .w(px(if is_studio { 14.0 } else { 12.0 }))
+            .h(px(if is_studio { 14.0 } else { 12.0 }))
+            .rounded(px(if is_studio { 7.0 } else { 6.0 }))
+            .bg(if enabled {
+                theme.accent_content
+            } else {
+                theme.muted
+            }),
+    );
+
+    div()
+        .id("edit-crop-switch")
+        .w_full()
+        .h(px(if is_studio { 68.0 } else { 50.0 }))
+        .px(px(if is_studio { 14.0 } else { 10.0 }))
+        .rounded(px(2.0))
+        .bg(if enabled {
+            theme.accent_soft
+        } else {
+            theme.surface_soft
+        })
+        .border_1()
+        .border_color(if enabled {
+            theme.accent.opacity(if is_studio { 0.72 } else { 0.38 })
+        } else {
+            theme.border
+        })
+        .cursor_pointer()
+        .tab_index(0)
+        .flex()
+        .items_center()
+        .gap(px(if is_studio { 11.0 } else { 8.0 }))
+        .hover(|style| {
+            style
+                .bg(current_theme().hover)
+                .border_color(current_theme().border_strong)
+        })
+        .active(|style| style.bg(current_theme().accent_soft))
+        .focus(|style| style.border_2().border_color(current_theme().accent))
+        .child(icon(
+            "crop",
+            if is_studio { 21.0 } else { 18.0 },
+            if enabled {
+                theme.accent_text
+            } else {
+                theme.text_soft
+            },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .gap(px(if is_studio { 3.0 } else { 0.0 }))
+                .child(
+                    div()
+                        .child("Crop frame")
+                        .text_size(px(if is_studio { 14.0 } else { 13.0 }))
+                        .text_color(theme.text)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+                .when(is_studio, |copy| {
+                    copy.child(
+                        div()
+                            .child(if enabled {
+                                "Drag the frame or use the position controls"
+                            } else {
+                                "Keep every pixel from the source"
+                            })
+                            .text_size(px(11.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .child(if enabled { "ON" } else { "OFF" })
+                .text_size(px(if is_studio { 10.0 } else { 9.5 }))
+                .text_color(if enabled {
+                    theme.accent_text
+                } else {
+                    theme.muted
+                })
+                .font_weight(FontWeight::SEMIBOLD),
+        )
+        .child(track)
+        .on_click(cx.listener(|app, _event, window, cx| {
+            window.blur();
+            toggle_prepare_crop(app, cx);
+        }))
+        .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+            toggle_prepare_crop(app, cx);
+            cx.stop_propagation();
+        }))
+        .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+            toggle_prepare_crop(app, cx);
+            cx.stop_propagation();
+        }))
+}
+
 impl crate::App {
     /// The media stage: frame, transport, timeline, source strip.
     pub fn render_prepare_stage(
@@ -184,10 +763,13 @@ impl crate::App {
         let disabled = checking;
         let (play_enabled, seek_enabled) =
             crate::prepare::playback_control_availability(self.prepare.video.is_some(), duration);
-        let track_width = (panel_width - PREPARE_GUTTER * 2.0).max(100.0);
-        let track_height = if self.prepare.studio_mode && self.window_size.1 <= 560.0 {
+        let is_studio = self.prepare.studio_mode;
+        let stage_gutter = if is_studio { 16.0 } else { PREPARE_GUTTER };
+        let studio_media_right_inset = if is_studio { 13.0 } else { 0.0 };
+        let track_width = (panel_width - stage_gutter * 2.0 - studio_media_right_inset).max(100.0);
+        let track_height = if is_studio && self.window_size.1 <= 560.0 {
             48.0
-        } else if self.prepare.studio_mode {
+        } else if is_studio {
             78.0
         } else if self.window_size.1 >= 1200.0 {
             92.0
@@ -199,30 +781,29 @@ impl crate::App {
             58.0
         };
         // Track origin in window coordinates.
-        let is_studio = self.prepare.studio_mode;
         let track_left = if is_studio {
-            // Focused Studio replaces the global sidebar and command chrome.
-            PREPARE_GUTTER
+            // The focused workbench has a 12px outer inset and a 1px panel
+            // seam before the stage's own media gutter.
+            13.0 + stage_gutter
         } else {
             self.window_size.0 - panel_width + PREPARE_GUTTER
         };
-        let stage_gap = if is_studio && self.window_size.1 <= 560.0 {
-            4.0
-        } else if !is_studio {
-            6.0
-        } else {
-            6.0
-        };
+        let stage_gap = if is_studio { 0.0 } else { 6.0 };
 
         let mut stage = div()
             .id("prepare-stage")
             .w_full()
+            .min_h(px(0.0))
             .flex()
             .flex_col()
-            .px(px(PREPARE_GUTTER))
-            .py(px(6.0))
+            .px(px(stage_gutter))
+            .pt(px(if is_studio { 17.0 } else { 6.0 }))
+            .pb(px(if is_studio { 0.0 } else { 6.0 }))
             .gap(px(stage_gap))
             .bg(theme.ink);
+        if is_studio {
+            stage = stage.h_full();
+        }
         stage.interactivity().on_mouse_move(cx.listener(
             move |app, event: &MouseMoveEvent, _window, cx| {
                 let x: f32 = event.position.x.into();
@@ -262,13 +843,39 @@ impl crate::App {
         // header, and this stage's compact top inset.
         let frame_x = track_left;
         let frame_top = if is_studio {
-            44.0 + if self.checking { 34.0 } else { 0.0 }
+            52.0 + 1.0 + 17.0 + if self.checking { 34.0 } else { 0.0 }
         } else {
-            TITLE_BAR_HEIGHT
-                + CONTEXT_TOOLBAR_HEIGHT
-                + if self.checking { 34.0 } else { 0.0 }
+            TITLE_BAR_HEIGHT + CONTEXT_TOOLBAR_HEIGHT + if self.checking { 34.0 } else { 0.0 }
         } + 6.0;
-        self.prepare.frame_rect = (frame_x, frame_top, track_width, frame_height);
+        let source_ratio = self
+            .selected
+            .as_ref()
+            .map(|media| {
+                if media.width > 0 && media.height > 0 {
+                    media.width as f32 / media.height as f32
+                } else {
+                    16.0 / 9.0
+                }
+            })
+            .unwrap_or(16.0 / 9.0);
+        let (media_left, media_top, media_width, media_height) =
+            fitted_media_rect(track_width, frame_height, source_ratio);
+        self.prepare.frame_rect = (
+            frame_x + media_left,
+            frame_top + media_top,
+            media_width,
+            media_height,
+        );
+        self.prepare.mask_frame_rect = if self.prepare.crop_enabled {
+            (
+                frame_x + media_left + self.prepare.crop.x as f32 * media_width,
+                frame_top + media_top + self.prepare.crop.y as f32 * media_height,
+                self.prepare.crop.width as f32 * media_width,
+                self.prepare.crop.height as f32 * media_height,
+            )
+        } else {
+            self.prepare.frame_rect
+        };
         let has_edits = self.prepare.has_edits();
         let mut frame = div()
             .id("prepare-frame")
@@ -326,7 +933,14 @@ impl crate::App {
             );
         }
         // Edit overlays (crop + masks).
-        frame = frame.child(self.render_edit_overlays(cx, theme, track_width, frame_height));
+        frame = frame.child(self.render_edit_overlays(
+            cx,
+            theme,
+            media_left,
+            media_top,
+            media_width,
+            media_height,
+        ));
         stage = stage.child(frame);
 
         // Transport row (precise centiseconds like the original).
@@ -404,9 +1018,9 @@ impl crate::App {
                 .h(px(transport_control)),
             );
         let transport_height = if is_studio && self.window_size.1 <= 560.0 {
-            PREPARE_CONTROL_HEIGHT
+            32.0
         } else if is_studio {
-            48.0
+            52.0
         } else {
             48.0
         };
@@ -427,7 +1041,7 @@ impl crate::App {
                         .flex_1()
                         .min_w(px(70.0))
                         .child(time_label)
-                        .text_size(px(12.0))
+                        .text_size(px(if is_studio { 13.0 } else { 12.0 }))
                         .text_color(theme.text_soft),
                 ))
                 .child(transport_group)
@@ -436,7 +1050,7 @@ impl crate::App {
                         .flex_1()
                         .min_w(px(70.0))
                         .child(duration_label)
-                        .text_size(px(12.0))
+                        .text_size(px(if is_studio { 13.0 } else { 12.0 }))
                         .text_color(theme.muted)
                         .text_right(),
                 ),
@@ -645,36 +1259,59 @@ impl crate::App {
                 track_width,
                 duration,
             ));
-        stage = stage.child(track);
+        stage = stage.child(track.mt(px(if is_studio { 9.0 } else { 0.0 })));
 
-        // Tick labels are detail for a wide editing surface, not a
-        // permanent second ruler in the compact dock.
-        if is_studio && panel_width > 620.0 {
-            let mut ticks = div().w(px(track_width)).h(px(14.0)).relative().flex_none();
-            for index in 0..5 {
-                let fraction = index as f32 / 4.0;
-                let seconds = duration * fraction as f64;
-                let label = self.prepare.format_time(seconds);
-                ticks = ticks.child(tabular(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(px(
-                            (fraction * track_width - 16.0).clamp(0.0, track_width - 32.0)
-                        ))
-                        .w(px(32.0))
-                        .child(label)
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft),
-                ));
-            }
-            stage = stage.child(ticks);
+        if is_studio {
+            stage = stage.child(
+                div()
+                    .id("studio-range-summary")
+                    .w_full()
+                    .h(px(50.0))
+                    .flex_none()
+                    .px(px(8.0))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .flex()
+                    .items_center()
+                    .child(tabular(
+                        div()
+                            .flex_1()
+                            .child(format!(
+                                "IN   {}",
+                                self.prepare.format_time_precise(trim_start)
+                            ))
+                            .text_size(px(13.0))
+                            .text_color(theme.accent_text),
+                    ))
+                    .child(tabular(
+                        div()
+                            .flex_1()
+                            .child(format!(
+                                "CUT   {}",
+                                self.prepare.format_time_precise(trim_end - trim_start)
+                            ))
+                            .text_size(px(13.0))
+                            .text_color(theme.accent_text)
+                            .text_center(),
+                    ))
+                    .child(tabular(
+                        div()
+                            .flex_1()
+                            .child(format!(
+                                "OUT   {}",
+                                self.prepare.format_time_precise(trim_end)
+                            ))
+                            .text_size(px(13.0))
+                            .text_color(theme.accent_text)
+                            .text_right(),
+                    )),
+            );
         }
 
         // Exact time fields belong in focused Studio. The dock keeps the same
         // information as quiet readouts anchored to the trim lane.
+        let mut studio_precision: Option<AnyElement> = None;
         if is_studio {
-            let show_mark_labels = panel_width >= 560.0;
             let in_text = if self.focused_field.as_deref() == Some("prepare-in") {
                 self.field_text("prepare-in")
             } else {
@@ -685,152 +1322,182 @@ impl crate::App {
             } else {
                 self.prepare.format_time_precise(trim_end)
             };
-            let mut precision = div()
+            let duration_text = self.prepare.format_time_precise(trim_end - trim_start);
+            let precision = div()
+                .id("studio-precision")
                 .w_full()
                 .min_w(px(0.0))
-                .h(px(40.0))
-                .px(px(8.0))
+                .h(px(70.0))
+                .flex_none()
                 .bg(theme.surface)
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()
-                .flex_row()
                 .items_center()
-                .gap(px(6.0))
+                .gap(px(8.0))
                 .child(
                     div()
-                        .child("IN")
-                        .text_size(px(10.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::SEMIBOLD),
+                        .flex()
+                        .items_center()
+                        .child(
+                            button(
+                                "mark-in-playhead",
+                                "In",
+                                ButtonKind::Secondary,
+                                None,
+                                !disabled && duration > 0.0,
+                                cx,
+                                |app, cx| {
+                                    if app.prepare.mark_in_at_playhead() {
+                                        app.save_draft();
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                            .w(px(40.0))
+                            .h(px(42.0))
+                            .text_size(px(13.0))
+                            .rounded(px(2.0)),
+                        )
+                        .child(
+                            field(
+                                "prepare-in",
+                                "00:00.00",
+                                &self.fields.get("prepare-in").cloned().unwrap_or_else(|| {
+                                    crate::widgets::FieldState {
+                                        text: in_text.clone(),
+                                        caret: in_text.chars().count(),
+                                        committed: false,
+                                        marked_range: None,
+                                    }
+                                }),
+                                self.focused_field.as_deref() == Some("prepare-in"),
+                                !disabled,
+                                false,
+                                cx,
+                            )
+                            .w(px(104.0))
+                            .h(px(42.0)),
+                        ),
                 )
                 .child(
-                    field(
-                        "prepare-in",
-                        "00:00.00",
-                        &self.fields.get("prepare-in").cloned().unwrap_or_else(|| {
-                            crate::widgets::FieldState {
-                                text: in_text.clone(),
-                                caret: in_text.chars().count(),
-                                committed: false,
-                                marked_range: None,
-                            }
-                        }),
-                        self.focused_field.as_deref() == Some("prepare-in"),
-                        !disabled,
-                        false,
-                        cx,
-                    )
-                    .flex_none()
-                    .w(px(92.0))
-                    .h(px(PREPARE_CONTROL_HEIGHT)),
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(
+                            button(
+                                "mark-out-playhead",
+                                "Out",
+                                ButtonKind::Secondary,
+                                None,
+                                !disabled && duration > 0.0,
+                                cx,
+                                |app, cx| {
+                                    if app.prepare.mark_out_at_playhead() {
+                                        app.save_draft();
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                            .w(px(44.0))
+                            .h(px(42.0))
+                            .text_size(px(13.0))
+                            .rounded(px(2.0)),
+                        )
+                        .child(
+                            field(
+                                "prepare-out",
+                                "00:00.00",
+                                &self.fields.get("prepare-out").cloned().unwrap_or_else(|| {
+                                    crate::widgets::FieldState {
+                                        text: out_text.clone(),
+                                        caret: out_text.chars().count(),
+                                        committed: false,
+                                        marked_range: None,
+                                    }
+                                }),
+                                self.focused_field.as_deref() == Some("prepare-out"),
+                                !disabled,
+                                false,
+                                cx,
+                            )
+                            .w(px(104.0))
+                            .h(px(42.0)),
+                        ),
                 )
-                .child(workbench_button(
-                    "mark-in-playhead",
-                    if show_mark_labels { "Set In" } else { "" },
-                    "mark-in",
-                    ButtonKind::Secondary,
-                    !disabled && duration > 0.0,
-                    !show_mark_labels,
-                    "Set In to playhead  ·  I",
-                    cx,
-                    |app, cx| {
-                        if app.prepare.mark_in_at_playhead() {
-                            app.save_draft();
-                        }
-                        cx.notify();
-                    },
-                ))
+                .child(
+                    div()
+                        .h(px(42.0))
+                        .flex()
+                        .items_center()
+                        .bg(theme.raised)
+                        .border_1()
+                        .border_color(theme.border)
+                        .rounded(px(2.0))
+                        .child(
+                            div()
+                                .h_full()
+                                .px(px(10.0))
+                                .border_r_1()
+                                .border_color(theme.border)
+                                .flex()
+                                .items_center()
+                                .child("Duration")
+                                .text_size(px(12.0))
+                                .text_color(theme.muted),
+                        )
+                        .child(tabular(
+                            div()
+                                .w(px(98.0))
+                                .text_center()
+                                .child(duration_text)
+                                .text_size(px(13.0))
+                                .text_color(theme.text),
+                        )),
+                )
                 .child(div().flex_1())
-                .child(if cut_active {
-                    tabular(
-                        div()
-                            .child(format!(
-                                "CUT  {}",
-                                self.prepare.format_time_precise(trim_end - trim_start)
-                            ))
-                            .text_size(px(11.0))
-                            .text_color(theme.accent_text)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .into_any()
-                } else {
-                    tabular(
-                        div()
-                            .child(format!(
-                                "FULL  {}",
-                                self.prepare.format_time_precise(duration)
-                            ))
-                            .text_size(px(11.0))
-                            .text_color(theme.muted)
-                            .font_weight(FontWeight::MEDIUM),
-                    )
-                    .into_any()
+                .when(cut_active, |row| {
+                    row.child(workbench_button(
+                        "reset-cut",
+                        "",
+                        "refresh",
+                        ButtonKind::Ghost,
+                        true,
+                        true,
+                        "Reset cut to full video",
+                        cx,
+                        |app, cx| {
+                            app.prepare.reset_cut();
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
                 })
-                .child(div().flex_1())
-                .child(workbench_button(
-                    "mark-out-playhead",
-                    if show_mark_labels { "Set Out" } else { "" },
-                    "mark-out",
-                    ButtonKind::Secondary,
-                    !disabled && duration > 0.0,
-                    !show_mark_labels,
-                    "Set Out to playhead  ·  O",
-                    cx,
-                    |app, cx| {
-                        if app.prepare.mark_out_at_playhead() {
-                            app.save_draft();
-                        }
-                        cx.notify();
-                    },
-                ))
                 .child(
-                    div()
-                        .child("OUT")
-                        .text_size(px(10.0))
-                        .text_color(theme.muted)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    field(
-                        "prepare-out",
-                        "00:00.00",
-                        &self.fields.get("prepare-out").cloned().unwrap_or_else(|| {
-                            crate::widgets::FieldState {
-                                text: out_text.clone(),
-                                caret: out_text.chars().count(),
-                                committed: false,
-                                marked_range: None,
-                            }
-                        }),
-                        self.focused_field.as_deref() == Some("prepare-out"),
-                        !disabled,
-                        false,
+                    button(
+                        "set-active-playhead",
+                        "Set to playhead",
+                        ButtonKind::Secondary,
+                        Some("play"),
+                        !disabled && duration > 0.0,
                         cx,
+                        |app, cx| {
+                            let changed = if app.focused_field.as_deref() == Some("prepare-out") {
+                                app.prepare.mark_out_at_playhead()
+                            } else {
+                                app.prepare.mark_in_at_playhead()
+                            };
+                            if changed {
+                                app.save_draft();
+                            }
+                            cx.notify();
+                        },
                     )
-                    .flex_none()
-                    .w(px(92.0))
-                    .h(px(PREPARE_CONTROL_HEIGHT)),
+                    .h(px(42.0))
+                    .px(px(16.0)),
                 );
-            if cut_active {
-                precision = precision.child(workbench_button(
-                    "reset-cut",
-                    "",
-                    "refresh",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Reset cut to full video",
-                    cx,
-                    |app, cx| {
-                        app.prepare.reset_cut();
-                        app.save_draft();
-                        cx.notify();
-                    },
-                ));
-            }
-            stage = stage.child(precision);
+            studio_precision = Some(precision.into_any());
         } else {
             let mut range_readout = div()
                 .id("dock-range-readout")
@@ -935,7 +1602,7 @@ impl crate::App {
             stage = stage.child(
                 div()
                     .w_full()
-                    .h(px(34.0))
+                    .h(px(48.0))
                     .border_t_1()
                     .border_color(theme.border)
                     .flex()
@@ -948,7 +1615,7 @@ impl crate::App {
                             .flex_1()
                             .min_w(px(40.0))
                             .child(name)
-                            .text_size(px(12.0))
+                            .text_size(px(13.0))
                             .text_color(theme.text_soft)
                             .font_weight(FontWeight::MEDIUM)
                             .text_ellipsis()
@@ -960,7 +1627,7 @@ impl crate::App {
                         div()
                             .flex_none()
                             .child(source_details)
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(theme.muted)
                             .text_ellipsis(),
                     )
@@ -1017,22 +1684,27 @@ impl crate::App {
                                 crate::tooltip_view(cx, source_tooltip.clone().into())
                             }),
                     )
-                    .child(workbench_button(
-                        "reveal-in-library",
-                        if panel_width >= 390.0 { "Reveal" } else { "" },
-                        "folder",
-                        ButtonKind::Secondary,
-                        true,
-                        panel_width < 390.0,
-                        "Reveal in library",
-                        cx,
-                        |app, cx| {
-                            app.command(Command::RevealSelectedInLibrary);
-                            cx.notify();
-                        },
-                    )
-                    .mr(px(10.0))),
+                    .child(
+                        workbench_button(
+                            "reveal-in-library",
+                            if panel_width >= 390.0 { "Reveal" } else { "" },
+                            "folder",
+                            ButtonKind::Secondary,
+                            true,
+                            panel_width < 390.0,
+                            "Reveal in library",
+                            cx,
+                            |app, cx| {
+                                app.command(Command::RevealSelectedInLibrary);
+                                cx.notify();
+                            },
+                        )
+                        .mr(px(10.0)),
+                    ),
             );
+        }
+        if let Some(precision) = studio_precision {
+            stage = stage.child(precision);
         }
         stage
     }
@@ -1050,7 +1722,7 @@ impl crate::App {
         track_width: f32,
         duration: f64,
     ) -> impl Element {
-        let theme = self.theme.clone();
+        let theme = current_theme();
         let label: SharedString = if is_in {
             format!(
                 "IN  {}",
@@ -1215,8 +1887,20 @@ impl crate::App {
     /// Start a crop or mask drag; records the pointer + starting geometry.
     fn start_edit_drag(&mut self, handle: DragHandle, pointer_x: f32, pointer_y: f32) {
         self.prepare.drag = handle;
-        self.prepare.drag_start_x = pointer_x as f64;
-        self.prepare.drag_start_y = pointer_y as f64;
+        let (frame_x, frame_y, frame_width, frame_height) = match handle {
+            DragHandle::MaskMove(_) | DragHandle::MaskResize(_) => self.prepare.mask_frame_rect,
+            _ => self.prepare.frame_rect,
+        };
+        self.prepare.drag_start_x = if frame_width > 0.0 {
+            ((pointer_x - frame_x) / frame_width).clamp(0.0, 1.0) as f64
+        } else {
+            0.0
+        };
+        self.prepare.drag_start_y = if frame_height > 0.0 {
+            ((pointer_y - frame_y) / frame_height).clamp(0.0, 1.0) as f64
+        } else {
+            0.0
+        };
         self.prepare.crop_start = self.prepare.crop;
         if let DragHandle::MaskMove(index) | DragHandle::MaskResize(index) = handle {
             if let Some(shape) = self.prepare.shapes.get(index) {
@@ -1286,7 +1970,7 @@ impl crate::App {
     }
 
     fn mask_drag_move(&mut self, pointer_x: f32, pointer_y: f32, cx: &mut Context<Self>) {
-        let (fx, fy, fw, fh) = self.prepare.frame_rect;
+        let (fx, fy, fw, fh) = self.prepare.mask_frame_rect;
         if fw <= 0.0 || fh <= 0.0 {
             return;
         }
@@ -1314,8 +1998,14 @@ impl crate::App {
                 if (shape.width - shape.height).abs() < 0.015 {
                     // Snap to square when the user drags near a square ratio.
                     shape.kind = ShapeKind::Square;
+                    shape.preset = MaskPreset::Square;
                 } else {
                     shape.kind = ShapeKind::Rectangle;
+                    shape.preset = if shape.width > 0.60 && shape.height <= 0.20 {
+                        MaskPreset::LowerBar
+                    } else {
+                        MaskPreset::Box
+                    };
                 }
             }
             _ => {}
@@ -1329,8 +2019,10 @@ impl crate::App {
         &mut self,
         cx: &mut Context<Self>,
         theme: &crate::theme::Theme,
-        frame_width: f32,
-        frame_height: f32,
+        media_left: f32,
+        media_top: f32,
+        media_width: f32,
+        media_height: f32,
     ) -> impl Element {
         let mut overlays = div()
             .id("edit-overlays")
@@ -1340,23 +2032,31 @@ impl crate::App {
             .size_full();
         let crop = self.prepare.crop;
         let crop_enabled = self.prepare.crop_enabled;
+        let guide_mode = if self.prepare.inspector_tab == 0 {
+            self.prepare.guide_mode
+        } else {
+            0
+        };
         let shapes = self.prepare.shapes.clone();
         let selected_shape = self.prepare.selected_shape;
 
         if crop_enabled {
-            let x = (crop.x as f32 * frame_width).max(0.0);
-            let y = (crop.y as f32 * frame_height).max(0.0);
-            let w = (crop.width as f32 * frame_width).clamp(0.0, frame_width - x);
-            let h = (crop.height as f32 * frame_height).clamp(0.0, frame_height - y);
+            let x = media_left + (crop.x as f32 * media_width).max(0.0);
+            let y = media_top + (crop.y as f32 * media_height).max(0.0);
+            let w = (crop.width as f32 * media_width).clamp(0.0, media_left + media_width - x);
+            let h = (crop.height as f32 * media_height).clamp(0.0, media_top + media_height - y);
             // Dim outside.
-            for (top, height) in [(0.0, y), (y + h, frame_height - y - h)] {
+            for (top, height) in [
+                (media_top, y - media_top),
+                (y + h, media_top + media_height - y - h),
+            ] {
                 if height > 0.5 {
                     overlays = overlays.child(
                         div()
                             .absolute()
                             .top(px(top))
-                            .left_0()
-                            .w_full()
+                            .left(px(media_left))
+                            .w(px(media_width))
                             .h(px(height))
                             .bg(Hsla {
                                 h: 0.0,
@@ -1367,7 +2067,10 @@ impl crate::App {
                     );
                 }
             }
-            for (left, width) in [(0.0, x), (x + w, frame_width - x - w)] {
+            for (left, width) in [
+                (media_left, x - media_left),
+                (x + w, media_left + media_width - x - w),
+            ] {
                 if width > 0.5 {
                     overlays = overlays.child(
                         div()
@@ -1393,6 +2096,8 @@ impl crate::App {
                 .left(px(x))
                 .w(px(w))
                 .h(px(h))
+                .border_1()
+                .border_color(theme.accent)
                 .cursor_move();
             body.interactivity().on_mouse_down(
                 MouseButton::Left,
@@ -1421,11 +2126,15 @@ impl crate::App {
                     .left(px(hx - 9.0))
                     .w(px(18.0))
                     .h(px(18.0))
-                    .rounded(px(4.0))
-                    .bg(theme.accent)
+                    .rounded(px(2.0))
+                    .bg(theme.ink)
                     .border_2()
-                    .border_color(theme.accent_content)
-                    .cursor_pointer();
+                    .border_color(theme.accent)
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().w(px(4.0)).h(px(4.0)).bg(theme.accent));
                 handle.interactivity().on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
@@ -1441,14 +2150,95 @@ impl crate::App {
                 overlays = overlays.child(handle);
             }
         }
+
+        if guide_mode > 0 {
+            let (x, y, w, h) = if crop_enabled {
+                (
+                    media_left + crop.x as f32 * media_width,
+                    media_top + crop.y as f32 * media_height,
+                    crop.width as f32 * media_width,
+                    crop.height as f32 * media_height,
+                )
+            } else {
+                (media_left, media_top, media_width, media_height)
+            };
+            let guide_color = theme.text.opacity(0.48);
+            if guide_mode == 1 {
+                for fraction in [1.0 / 3.0, 2.0 / 3.0] {
+                    overlays = overlays
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(y))
+                                .left(px(x + w * fraction))
+                                .w(px(1.0))
+                                .h(px(h))
+                                .bg(guide_color),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(y + h * fraction))
+                                .left(px(x))
+                                .w(px(w))
+                                .h(px(1.0))
+                                .bg(guide_color),
+                        );
+                }
+            } else {
+                let inset_x = w * 0.10;
+                let inset_y = h * 0.10;
+                overlays = overlays
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(y + inset_y))
+                            .left(px(x + inset_x))
+                            .w(px((w - inset_x * 2.0).max(1.0)))
+                            .h(px((h - inset_y * 2.0).max(1.0)))
+                            .border_1()
+                            .border_color(guide_color),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(y + h / 2.0))
+                            .left(px(x + w / 2.0 - 8.0))
+                            .w(px(16.0))
+                            .h(px(1.0))
+                            .bg(guide_color),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(y + h / 2.0 - 8.0))
+                            .left(px(x + w / 2.0))
+                            .w(px(1.0))
+                            .h(px(16.0))
+                            .bg(guide_color),
+                    );
+            }
+        }
+
+        let (mask_left, mask_top, mask_width, mask_height) = if crop_enabled {
+            (
+                media_left + crop.x as f32 * media_width,
+                media_top + crop.y as f32 * media_height,
+                crop.width as f32 * media_width,
+                crop.height as f32 * media_height,
+            )
+        } else {
+            (media_left, media_top, media_width, media_height)
+        };
         for (index, shape) in shapes.iter().enumerate() {
             let selected = selected_shape == Some(index);
-            let x = shape.x as f32 * frame_width;
-            let y = shape.y as f32 * frame_height;
-            let w = shape.width as f32 * frame_width;
-            let h = shape.height as f32 * frame_height;
+            let shape_id = shape.id;
+            let x = mask_left + shape.x as f32 * mask_width;
+            let y = mask_top + shape.y as f32 * mask_height;
+            let w = shape.width as f32 * mask_width;
+            let h = shape.height as f32 * mask_height;
             let mut mask = div()
-                .id(SharedString::from(format!("mask-{index}")))
+                .id(SharedString::from(format!("mask-{shape_id}")))
                 .absolute()
                 .top(px(y))
                 .left(px(x))
@@ -1483,17 +2273,21 @@ impl crate::App {
             if selected {
                 // Bottom-right resize handle.
                 let mut resize = div()
-                    .id(SharedString::from(format!("mask-resize-{index}")))
+                    .id(SharedString::from(format!("mask-resize-{shape_id}")))
                     .absolute()
                     .top(px(y + h - 9.0))
                     .left(px(x + w - 9.0))
                     .w(px(18.0))
                     .h(px(18.0))
-                    .rounded(px(4.0))
-                    .bg(theme.accent)
+                    .rounded(px(2.0))
+                    .bg(theme.ink)
                     .border_2()
-                    .border_color(theme.accent_content)
-                    .cursor_pointer();
+                    .border_color(theme.accent)
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().w(px(4.0)).h(px(4.0)).bg(theme.accent));
                 resize.interactivity().on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
@@ -1514,199 +2308,30 @@ impl crate::App {
     // ---- inspector ------------------------------------------------------
 
     pub fn render_prepare_tabs(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let theme = self.theme.clone();
+        let theme = current_theme();
         let active_tab = self.prepare.inspector_tab;
-        let edits = self.prepare.has_edits();
-        let publish_active = self.publish.active;
-        let publish_error = !self.publish.error.is_empty();
-        let publish_label = if publish_active {
-            "Working"
-        } else if publish_error {
-            "Result"
-        } else if self.bot_connected() || self.personal_configured() {
-            "Ready"
-        } else {
-            "Setup"
-        };
-
-        let mut edit_tab = div()
-            .id("tab-edit")
-            .flex_1()
-            .min_w(px(94.0))
-            .h_full()
-            .px(px(10.0))
-            .cursor_pointer()
-            .relative()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .bg(if active_tab == 0 {
-                theme.surface
-            } else {
-                theme.transparent()
-            })
-            .hover(|style| style.bg(theme.hover))
-            .active(|style| style.bg(theme.accent_soft))
-            .tab_index(0)
-            .focus(|style| style.bg(current_theme().hover))
-            .child(icon(
-                "square",
-                13.0,
-                if active_tab == 0 {
-                    theme.accent_text
-                } else {
-                    theme.muted
-                },
-            ))
-            .child(
-                div()
-                    .child("Edit")
-                    .text_size(px(12.0))
-                    .text_color(if active_tab == 0 {
-                        theme.text
-                    } else {
-                        theme.text_soft
-                    })
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(
-                div()
-                    .child(if edits { "Edited" } else { "Clean" })
-                    .text_size(px(10.0))
-                    .text_color(if edits {
-                        theme.accent_text
-                    } else {
-                        theme.muted
-                    }),
-            )
-            .on_click(cx.listener(|app, _event, window, cx| {
-                window.blur();
-                app.prepare.inspector_tab = 0;
-                app.save_draft();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
-                app.prepare.inspector_tab = 0;
-                app.save_draft();
-                cx.notify();
-                cx.stop_propagation();
-            }))
-            .on_action(
-                cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
-                    app.prepare.inspector_tab = 0;
-                    app.save_draft();
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            );
-        if active_tab == 0 {
-            edit_tab = edit_tab.child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(2.0))
-                    .bg(theme.accent),
-            );
-        }
-
-        let mut publish_tab = div()
-            .id("tab-publish")
-            .flex_1()
-            .min_w(px(94.0))
-            .h_full()
-            .px(px(10.0))
-            .cursor_pointer()
-            .relative()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .bg(if active_tab == 1 {
-                theme.surface
-            } else {
-                theme.transparent()
-            })
-            .hover(|style| style.bg(theme.hover))
-            .active(|style| style.bg(theme.accent_soft))
-            .tab_index(0)
-            .focus(|style| style.bg(current_theme().hover))
-            .child(icon(
-                "send",
-                13.0,
-                if active_tab == 1 {
-                    theme.accent_text
-                } else {
-                    theme.muted
-                },
-            ))
-            .child(
-                div()
-                    .child("Deliver")
-                    .text_size(px(12.0))
-                    .text_color(if active_tab == 1 {
-                        theme.text
-                    } else {
-                        theme.text_soft
-                    })
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(div().child(publish_label).text_size(px(10.0)).text_color(
-                if publish_active || publish_error {
-                    theme.accent_text
-                } else {
-                    theme.muted
-                },
-            ))
-            .on_click(cx.listener(|app, _event, window, cx| {
-                window.blur();
-                app.prepare.inspector_tab = 1;
-                app.save_draft();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
-                app.prepare.inspector_tab = 1;
-                app.save_draft();
-                cx.notify();
-                cx.stop_propagation();
-            }))
-            .on_action(
-                cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
-                    app.prepare.inspector_tab = 1;
-                    app.save_draft();
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            );
-        if active_tab == 1 {
-            publish_tab = publish_tab.child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(2.0))
-                    .bg(theme.accent),
-            );
-        }
+        let compact = !self.prepare.studio_mode;
+        let edit = prepare_inspector_tab(&theme, "tab-edit", "Edit", 0, active_tab, compact, cx);
+        let clean = prepare_inspector_tab(&theme, "tab-clean", "Clean", 2, active_tab, compact, cx);
+        let deliver =
+            prepare_inspector_tab(&theme, "tab-deliver", "Deliver", 1, active_tab, compact, cx);
+        let setup = prepare_inspector_tab(&theme, "tab-setup", "Setup", 3, active_tab, compact, cx);
 
         div()
             .id("prepare-tabs")
             .w_full()
-            .h(px(42.0))
-            .bg(theme.ink)
-            .border_t_1()
+            .h(px(if compact { 38.0 } else { 42.0 }))
+            .flex_none()
+            .bg(theme.surface_soft)
             .border_b_1()
             .border_color(theme.border)
             .flex()
             .flex_row()
-            .child(edit_tab)
-            .child(publish_tab)
-            .child(div().flex_1())
+            .child(edit)
+            .child(clean)
+            .child(deliver)
+            .child(setup)
     }
-
     pub fn render_prepare_inspector(
         &mut self,
         cx: &mut Context<Self>,
@@ -1721,13 +2346,25 @@ impl crate::App {
             .flex()
             .flex_col()
             .overflow_hidden();
-        let content = if self.prepare.inspector_tab == 0 {
-            self.render_edit_inspector(cx, theme, panel_width)
-                .into_any()
-        } else {
-            self.render_publish_inspector(cx, theme, panel_width)
-                .into_any()
+        let content = match self.prepare.inspector_tab {
+            0 => self.render_edit_console(cx, theme, panel_width).into_any(),
+            2 => self
+                .render_cleanup_inspector(cx, theme, panel_width)
+                .into_any(),
+            3 => self
+                .render_setup_inspector(cx, theme, panel_width)
+                .into_any(),
+            _ => self
+                .render_publish_inspector(cx, theme, panel_width)
+                .into_any(),
         };
+        let inspector_padding = if self.prepare.studio_mode {
+            20.0
+        } else {
+            PREPARE_GUTTER
+        };
+        let inspector_top = if self.prepare.studio_mode { 26.0 } else { 8.0 };
+        let inspector_bottom = if self.prepare.studio_mode { 20.0 } else { 14.0 };
         let mut scroll = div()
             .id("inspector-scroll")
             .flex_1()
@@ -1739,21 +2376,968 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_col()
-                    .px(px(PREPARE_GUTTER))
-                    .pt(px(10.0))
-                    .pb(px(12.0))
+                    .px(px(inspector_padding))
+                    .pt(px(inspector_top))
+                    .pb(px(inspector_bottom))
                     .child(content),
             );
+        scroll = match self.prepare.inspector_tab {
+            0 => scroll
+                .track_scroll(&self.prepare_edit_scroll)
+                .on_scroll_wheel(cx.listener(|app, _event, _window, cx| {
+                    let next = (-f32::from(app.prepare_edit_scroll.offset().y)).max(0.0) as f64;
+                    if (app.prepare.edit_scroll_y - next).abs() > 0.5 {
+                        app.prepare.edit_scroll_y = next;
+                        app.save_draft();
+                    }
+                    cx.notify();
+                })),
+            1 => scroll
+                .track_scroll(&self.prepare_publish_scroll)
+                .on_scroll_wheel(cx.listener(|app, _event, _window, cx| {
+                    let next = (-f32::from(app.prepare_publish_scroll.offset().y)).max(0.0) as f64;
+                    if (app.prepare.publish_scroll_y - next).abs() > 0.5 {
+                        app.prepare.publish_scroll_y = next;
+                        app.save_draft();
+                    }
+                    cx.notify();
+                })),
+            _ => scroll,
+        };
         if self.checking {
             scroll = scroll.opacity(0.5);
         }
         column = column.child(scroll);
-        if self.prepare.inspector_tab == 1 {
+        if self.prepare.studio_mode && self.prepare.inspector_tab == 1 {
             column = column.child(self.render_action_dock(cx, theme, panel_width));
         }
         column
     }
 
+    fn render_edit_console(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+        _panel_width: f32,
+    ) -> impl Element {
+        let is_studio = self.prepare.studio_mode;
+        let crop_enabled = self.prepare.crop_enabled;
+        let crop_preset = self.prepare_crop_preset();
+        let guide_mode = self.prepare.guide_mode;
+        let shape_count = self.prepare.shapes.len();
+        let selected_shape = self.prepare.selected_shape;
+        let has_edits = self.prepare.has_edits();
+        let tile_height = if is_studio { 66.0 } else { 50.0 };
+        let compact_control = if is_studio { 36.0 } else { 30.0 };
+        let crop = self.prepare.crop;
+        let crop_position = if crop_enabled {
+            format!(
+                "X {:02}%  ·  Y {:02}%",
+                (crop.x * 100.0).round() as i64,
+                (crop.y * 100.0).round() as i64
+            )
+        } else {
+            "X 00%  ·  Y 00%".to_string()
+        };
+        let crop_size = if crop_enabled {
+            format!(
+                "{:02}% × {:02}%",
+                (crop.width * 100.0).round() as i64,
+                (crop.height * 100.0).round() as i64
+            )
+        } else {
+            "100% × 100%".to_string()
+        };
+
+        let mut column = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(if is_studio { 14.0 } else { 8.0 }))
+            .when(is_studio, |column| column.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_start()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .child("Frame & privacy")
+                                    .text_size(px(15.0))
+                                    .text_color(theme.text)
+                                    .font_weight(FontWeight::SEMIBOLD),
+                            )
+                            .child(
+                                div()
+                                    .child("Shape the composition and cover anything that should not ship.")
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted),
+                            ),
+                    )
+                    .child(if has_edits {
+                        button(
+                            "reset-frame-edits",
+                            "Reset all",
+                            ButtonKind::Ghost,
+                            Some("refresh"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.prepare.reset_crop();
+                                app.prepare.clear_shapes();
+                                app.save_draft();
+                                cx.notify();
+                            },
+                        )
+                        .h(px(32.0))
+                        .px(px(8.0))
+                        .into_any()
+                    } else {
+                        div().into_any()
+                    }),
+            ))
+            .when(!is_studio && has_edits, |column| {
+                column.child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .justify_end()
+                        .child(
+                            button(
+                                "reset-frame-edits",
+                                "Reset all",
+                                ButtonKind::Ghost,
+                                Some("refresh"),
+                                true,
+                                cx,
+                                |app, cx| {
+                                    app.prepare.reset_crop();
+                                    app.prepare.clear_shapes();
+                                    app.save_draft();
+                                    cx.notify();
+                                },
+                            )
+                            .h(px(28.0))
+                            .px(px(7.0))
+                            .text_size(px(11.0)),
+                        ),
+                )
+            })
+            .child(edit_crop_switch(theme, crop_enabled, is_studio, cx))
+            .child(
+                div()
+                    .child("Framing preset")
+                    .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                    .text_color(if is_studio {
+                        theme.text_soft
+                    } else {
+                        theme.muted
+                    })
+                    .font_weight(if is_studio {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::MEDIUM
+                    }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .gap(px(6.0))
+                    .child(edit_choice_tile(
+                        theme,
+                        "crop-preset-free",
+                        "Free",
+                        crop_preset == 0,
+                        true,
+                        tile_height,
+                        EditTileVisual::FreeFrame,
+                        cx,
+                        |app, cx| {
+                            app.apply_crop_preset(0);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "crop-preset-full",
+                        "Full",
+                        crop_preset == 1,
+                        true,
+                        tile_height,
+                        EditTileVisual::FrameRatio(30.0, 20.0),
+                        cx,
+                        |app, cx| {
+                            app.apply_crop_preset(1);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "crop-preset-square",
+                        "1:1",
+                        crop_preset == 2,
+                        true,
+                        tile_height,
+                        EditTileVisual::FrameRatio(20.0, 20.0),
+                        cx,
+                        |app, cx| {
+                            app.apply_crop_preset(2);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "crop-preset-landscape",
+                        "16:9",
+                        crop_preset == 3,
+                        true,
+                        tile_height,
+                        EditTileVisual::FrameRatio(30.0, 17.0),
+                        cx,
+                        |app, cx| {
+                            app.apply_crop_preset(3);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "crop-preset-portrait",
+                        "9:16",
+                        crop_preset == 4,
+                        true,
+                        tile_height,
+                        EditTileVisual::FrameRatio(12.0, 21.0),
+                        cx,
+                        |app, cx| {
+                            app.apply_crop_preset(4);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_h(px(if is_studio { 62.0 } else { 46.0 }))
+                    .px(px(if is_studio { 10.0 } else { 8.0 }))
+                    .rounded(px(2.0))
+                    .bg(theme.surface_soft)
+                    .border_1()
+                    .border_color(if is_studio {
+                        theme.border
+                    } else {
+                        theme.border.opacity(0.72)
+                    })
+                    .flex()
+                    .items_center()
+                    .gap(px(if is_studio { 9.0 } else { 7.0 }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .child(
+                                div()
+                                    .child(crop_position)
+                                    .text_size(px(if is_studio { 12.0 } else { 11.0 }))
+                                    .text_color(theme.text_soft)
+                                    .font_weight(FontWeight::MEDIUM),
+                            )
+                            .child(tabular(
+                                div()
+                                    .child(crop_size)
+                                    .text_size(px(if is_studio { 11.0 } else { 10.0 }))
+                                    .text_color(theme.muted),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .gap(px(3.0))
+                            .child(
+                                workbench_button(
+                                    "crop-nudge-left",
+                                    "",
+                                    "arrow-left",
+                                    ButtonKind::Secondary,
+                                    crop_enabled,
+                                    true,
+                                    "Nudge crop left",
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_crop(-0.01, 0.0) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(compact_control))
+                                .h(px(compact_control)),
+                            )
+                            .child(
+                                workbench_button(
+                                    "crop-nudge-up",
+                                    "",
+                                    "arrow-up",
+                                    ButtonKind::Secondary,
+                                    crop_enabled,
+                                    true,
+                                    "Nudge crop up",
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_crop(0.0, -0.01) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(compact_control))
+                                .h(px(compact_control)),
+                            )
+                            .child(
+                                workbench_button(
+                                    "crop-center",
+                                    "",
+                                    "target",
+                                    ButtonKind::Secondary,
+                                    crop_enabled,
+                                    true,
+                                    "Center crop",
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.center_crop() {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(compact_control))
+                                .h(px(compact_control)),
+                            )
+                            .child(
+                                workbench_button(
+                                    "crop-nudge-down",
+                                    "",
+                                    "arrow-down",
+                                    ButtonKind::Secondary,
+                                    crop_enabled,
+                                    true,
+                                    "Nudge crop down",
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_crop(0.0, 0.01) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(compact_control))
+                                .h(px(compact_control)),
+                            )
+                            .child(
+                                workbench_button(
+                                    "crop-nudge-right",
+                                    "",
+                                    "arrow-right",
+                                    ButtonKind::Secondary,
+                                    crop_enabled,
+                                    true,
+                                    "Nudge crop right",
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_crop(0.01, 0.0) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(compact_control))
+                                .h(px(compact_control)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child("Preview guides")
+                            .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                            .text_color(if is_studio {
+                                theme.text_soft
+                            } else {
+                                theme.muted
+                            })
+                            .font_weight(if is_studio {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::MEDIUM
+                            }),
+                    )
+                    .child(
+                        div()
+                            .child("preview only")
+                            .text_size(px(if is_studio { 10.0 } else { 9.5 }))
+                            .text_color(theme.muted_soft),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .gap(px(6.0))
+                    .child(edit_choice_tile(
+                        theme,
+                        "guide-none",
+                        "Off",
+                        guide_mode == 0,
+                        true,
+                        tile_height,
+                        EditTileVisual::Guides(0),
+                        cx,
+                        |app, cx| {
+                            app.prepare.guide_mode = 0;
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "guide-thirds",
+                        "Thirds",
+                        guide_mode == 1,
+                        true,
+                        tile_height,
+                        EditTileVisual::Guides(1),
+                        cx,
+                        |app, cx| {
+                            app.prepare.guide_mode = 1;
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "guide-safe",
+                        "Safe area",
+                        guide_mode == 2,
+                        true,
+                        tile_height,
+                        EditTileVisual::Guides(2),
+                        cx,
+                        |app, cx| {
+                            app.prepare.guide_mode = 2;
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    )),
+            )
+            .child(divider())
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .when(is_studio, |header| header.items_start())
+                    .when(!is_studio, |header| header.items_center())
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .child(
+                                div()
+                                    .child("Privacy masks")
+                                    .text_size(px(if is_studio { 14.0 } else { 12.0 }))
+                                    .text_color(theme.text)
+                                    .font_weight(if is_studio {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    }),
+                            )
+                            .when(is_studio, |header| header.child(
+                                div()
+                                    .child("Cover a face, handle, notification, or lower-third.")
+                                    .text_size(px(11.0))
+                                    .text_color(theme.muted),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .child(if shape_count == 1 {
+                                "1 mask".to_string()
+                            } else {
+                                format!("{shape_count} masks")
+                            })
+                            .text_size(px(if is_studio { 11.0 } else { 10.0 }))
+                            .text_color(if shape_count > 0 {
+                                theme.text_soft
+                            } else {
+                                theme.muted
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .gap(px(6.0))
+                    .child(edit_choice_tile(
+                        theme,
+                        "mask-preset-box",
+                        "Box",
+                        false,
+                        true,
+                        tile_height,
+                        EditTileVisual::Mask(MaskPreset::Box),
+                        cx,
+                        |app, cx| {
+                            app.prepare.add_mask_preset(MaskPreset::Box);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "mask-preset-square",
+                        "Square",
+                        false,
+                        true,
+                        tile_height,
+                        EditTileVisual::Mask(MaskPreset::Square),
+                        cx,
+                        |app, cx| {
+                            app.prepare.add_mask_preset(MaskPreset::Square);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    ))
+                    .child(edit_choice_tile(
+                        theme,
+                        "mask-preset-lower-bar",
+                        "Lower bar",
+                        false,
+                        true,
+                        tile_height,
+                        EditTileVisual::Mask(MaskPreset::LowerBar),
+                        cx,
+                        |app, cx| {
+                            app.prepare.add_mask_preset(MaskPreset::LowerBar);
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    )),
+            );
+
+        if self.prepare.shapes.is_empty() {
+            column = column.child(
+                div()
+                    .w_full()
+                    .min_h(px(if is_studio { 64.0 } else { 52.0 }))
+                    .px(px(if is_studio { 12.0 } else { 9.0 }))
+                    .rounded(px(2.0))
+                    .bg(if is_studio {
+                        theme.surface_soft
+                    } else {
+                        theme.surface_soft.opacity(0.68)
+                    })
+                    .border_1()
+                    .border_color(if is_studio {
+                        theme.border
+                    } else {
+                        theme.border.opacity(0.68)
+                    })
+                    .flex()
+                    .items_center()
+                    .gap(px(if is_studio { 11.0 } else { 8.0 }))
+                    .child(edit_tile_preview(
+                        theme,
+                        EditTileVisual::Mask(MaskPreset::Box),
+                        false,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .child(
+                                div()
+                                    .child("No masks on this clip")
+                                    .text_size(px(if is_studio { 12.0 } else { 11.0 }))
+                                    .text_color(theme.text_soft)
+                                    .font_weight(FontWeight::MEDIUM),
+                            )
+                            .when(is_studio, |empty| {
+                                empty.child(
+                                div()
+                                    .child(
+                                        "Choose a shape above, then drag it directly on the video.",
+                                    )
+                                    .text_size(px(11.0))
+                                    .text_color(theme.muted),
+                            )
+                            }),
+                    ),
+            );
+        } else {
+            let mut list = div()
+                .id("mask-console-list")
+                .w_full()
+                .rounded(px(2.0))
+                .bg(theme.surface_soft)
+                .border_1()
+                .border_color(theme.border)
+                .flex()
+                .flex_col()
+                .overflow_hidden();
+            let shapes = self.prepare.shapes.clone();
+            for (index, shape) in shapes.iter().enumerate() {
+                let is_selected = selected_shape == Some(index);
+                let preset = shape.preset;
+                let kind = match preset {
+                    MaskPreset::Square => "Square",
+                    MaskPreset::LowerBar => "Lower bar",
+                    MaskPreset::Box => "Box",
+                };
+                let detail = format!(
+                    "{:.0}% × {:.0}%  ·  X {:.0}%  Y {:.0}%",
+                    shape.width * 100.0,
+                    shape.height * 100.0,
+                    shape.x * 100.0,
+                    shape.y * 100.0
+                );
+                list = list.child(
+                    div()
+                        .id(SharedString::from(format!("mask-console-row-{}", shape.id)))
+                        .w_full()
+                        .h(px(if is_studio { 58.0 } else { 46.0 }))
+                        .px(px(if is_studio { 10.0 } else { 8.0 }))
+                        .cursor_pointer()
+                        .tab_index(0)
+                        .bg(if is_selected {
+                            theme.active
+                        } else {
+                            theme.transparent()
+                        })
+                        .border_b_1()
+                        .border_color(theme.border.opacity(0.72))
+                        .flex()
+                        .items_center()
+                        .gap(px(if is_studio { 10.0 } else { 8.0 }))
+                        .hover(|style| style.bg(current_theme().hover))
+                        .active(|style| style.bg(current_theme().accent_soft))
+                        .focus(|style| style.border_2().border_color(current_theme().accent))
+                        .child(edit_tile_preview(
+                            theme,
+                            EditTileVisual::Mask(preset),
+                            is_selected,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .child(
+                                    div()
+                                        .child(format!("Mask {}", index + 1))
+                                        .text_size(px(if is_studio { 12.0 } else { 11.0 }))
+                                        .text_color(if is_selected {
+                                            theme.accent_text
+                                        } else {
+                                            theme.text
+                                        })
+                                        .font_weight(FontWeight::SEMIBOLD),
+                                )
+                                .child(
+                                    div()
+                                        .child(format!("{kind}  ·  {detail}"))
+                                        .text_size(px(if is_studio { 10.5 } else { 9.5 }))
+                                        .text_color(theme.muted)
+                                        .text_ellipsis(),
+                                ),
+                        )
+                        .child(if is_selected {
+                            div()
+                                .child("SELECTED")
+                                .text_size(px(if is_studio { 9.0 } else { 8.5 }))
+                                .text_color(theme.accent_text)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .into_any()
+                        } else {
+                            div().into_any()
+                        })
+                        .on_click(cx.listener(move |app, _event, window, cx| {
+                            window.blur();
+                            app.prepare.selected_shape = Some(index);
+                            cx.notify();
+                        }))
+                        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                            app.prepare.selected_shape = Some(index);
+                            cx.stop_propagation();
+                            cx.notify();
+                        })),
+                );
+            }
+            column = column.child(list);
+
+            if selected_shape.is_some() {
+                column = column
+                    .child(
+                        div()
+                            .child("SELECTED MASK POSITION")
+                            .text_size(px(10.0))
+                            .text_color(theme.muted)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(
+                                button(
+                                    "nudge-selected-mask-left",
+                                    "Left",
+                                    ButtonKind::Secondary,
+                                    Some("arrow-left"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_selected_shape(-0.01, 0.0) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "nudge-selected-mask-up",
+                                    "Up",
+                                    ButtonKind::Secondary,
+                                    Some("arrow-up"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_selected_shape(0.0, -0.01) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "nudge-selected-mask-down",
+                                    "Down",
+                                    ButtonKind::Secondary,
+                                    Some("arrow-down"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_selected_shape(0.0, 0.01) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "nudge-selected-mask-right",
+                                    "Right",
+                                    ButtonKind::Secondary,
+                                    Some("arrow-right"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.nudge_selected_shape(0.01, 0.0) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(
+                                button(
+                                    "shrink-selected-mask",
+                                    "Smaller",
+                                    ButtonKind::Secondary,
+                                    Some("contract"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.resize_selected_shape(-0.08) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "grow-selected-mask",
+                                    "Larger",
+                                    ButtonKind::Secondary,
+                                    Some("expand"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.resize_selected_shape(0.08) {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "center-selected-mask",
+                                    "Center",
+                                    ButtonKind::Secondary,
+                                    Some("target"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.center_selected_shape() {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(
+                                button(
+                                    "duplicate-selected-mask",
+                                    "Duplicate",
+                                    ButtonKind::Secondary,
+                                    Some("copy"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        if app.prepare.duplicate_selected_shape() {
+                                            app.save_draft();
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "remove-selected-mask",
+                                    "Remove",
+                                    ButtonKind::Danger,
+                                    Some("trash"),
+                                    true,
+                                    cx,
+                                    |app, cx| {
+                                        app.prepare.remove_selected_shape();
+                                        app.save_draft();
+                                        cx.notify();
+                                    },
+                                )
+                                .h(px(compact_control))
+                                .flex_1(),
+                            ),
+                    );
+            }
+            if shape_count > 1 {
+                column = column.child(
+                    button(
+                        "clear-all-masks",
+                        "Clear all masks",
+                        ButtonKind::Ghost,
+                        Some("trash"),
+                        true,
+                        cx,
+                        |app, cx| {
+                            app.prepare.clear_shapes();
+                            app.save_draft();
+                            cx.notify();
+                        },
+                    )
+                    .h(px(compact_control)),
+                );
+            }
+        }
+
+        column.child(
+            div()
+                .w_full()
+                .pt(px(2.0))
+                .flex()
+                .when(is_studio, |row| row.items_start())
+                .when(!is_studio, |row| row.items_center())
+                .gap(px(if is_studio { 8.0 } else { 6.0 }))
+                .child(icon(
+                    "info",
+                    if is_studio { 14.0 } else { 12.0 },
+                    theme.muted,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .child("Drag on video, or edit a selected mask with the keyboard.")
+                        .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                        .text_color(theme.muted),
+                ),
+        )
+    }
+
+    #[allow(dead_code)]
     fn render_edit_inspector(
         &mut self,
         cx: &mut Context<Self>,
@@ -1996,7 +3580,7 @@ impl crate::App {
                 let label = format!("{kind} {}", index + 1);
                 list = list.child(
                     div()
-                        .id(SharedString::from(format!("mask-row-{index}")))
+                        .id(SharedString::from(format!("mask-row-{}", shape.id)))
                         .w_full()
                         .h(px(PREPARE_CONTROL_HEIGHT))
                         .px(px(9.0))
@@ -2088,26 +3672,303 @@ impl crate::App {
         column
     }
 
+    fn render_cleanup_inspector(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+        _panel_width: f32,
+    ) -> impl Element {
+        let is_studio = self.prepare.studio_mode;
+        let cleanup_index = self.prepare.cleanup_index as usize;
+        let cleanup_detail = match cleanup_index {
+            1 => "Move the generated copy to trash after every requested destination succeeds.",
+            2 => "Move the generated copy to trash after Telegram accepts the upload.",
+            _ => "Keep the generated copy in ClipRelay's export folder.",
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(if is_studio { 12.0 } else { 9.0 }))
+            .when(is_studio, |column| column.child(
+                div()
+                    .child(tracked("GENERATED COPY"))
+                    .text_size(px(11.0))
+                    .text_color(theme.text_soft)
+                    .font_weight(FontWeight::SEMIBOLD),
+            ))
+            .child(
+                div()
+                    .child("Choose what happens to the prepared derivative after delivery.")
+                    .text_size(px(if is_studio { 12.0 } else { 11.5 }))
+                    .text_color(theme.muted),
+            )
+            .child(cleanup_combo(self, cx, theme, !is_studio))
+            .child(
+                div()
+                    .child(cleanup_detail)
+                    .text_size(px(if is_studio { 12.0 } else { 11.0 }))
+                    .text_color(theme.text_soft),
+            )
+            .child(divider())
+            .child(
+                div()
+                    .w_full()
+                    .min_h(px(if is_studio { 64.0 } else { 54.0 }))
+                    .px(px(if is_studio { 12.0 } else { 10.0 }))
+                    .py(px(if is_studio { 10.0 } else { 8.0 }))
+                    .bg(if is_studio {
+                        theme.raised
+                    } else {
+                        theme.surface_soft
+                    })
+                    .border_1()
+                    .border_color(if is_studio {
+                        theme.border
+                    } else {
+                        theme.border.opacity(0.72)
+                    })
+                    .flex()
+                    .items_center()
+                    .gap(px(if is_studio { 10.0 } else { 8.0 }))
+                    .child(icon(
+                        "check",
+                        if is_studio { 17.0 } else { 14.0 },
+                        theme.success,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .child(
+                                div()
+                                    .child("Source protected")
+                                    .text_size(px(if is_studio { 13.0 } else { 12.0 }))
+                                    .text_color(theme.text)
+                                    .font_weight(if is_studio {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .child("Cleanup applies only to generated copies. Your original video is never modified or removed.")
+                                    .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                                    .text_color(theme.muted),
+                            ),
+                    ),
+            )
+    }
+
+    fn render_setup_inspector(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+        _panel_width: f32,
+    ) -> impl Element {
+        let is_studio = self.prepare.studio_mode;
+        let telegram_connected = self.bot_connected() || self.personal_configured();
+        let telegram_mode = self.prepare.telegram_mode_index as usize;
+        let telegram_status = if telegram_connected {
+            "Telegram connection available"
+        } else {
+            "Telegram needs setup"
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(if is_studio { 12.0 } else { 9.0 }))
+            .when(is_studio, |column| {
+                column.child(
+                    div()
+                        .child(tracked("DELIVERY SETUP"))
+                        .text_size(px(11.0))
+                        .text_color(theme.text_soft)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+            })
+            .child(
+                div()
+                    .child("Manage destination credentials and handoff defaults in Settings.")
+                    .text_size(px(if is_studio { 12.0 } else { 11.5 }))
+                    .text_color(theme.muted),
+            )
+            .child(divider())
+            .child(
+                div()
+                    .w_full()
+                    .min_h(px(if is_studio { 72.0 } else { 58.0 }))
+                    .flex()
+                    .items_center()
+                    .gap(px(if is_studio { 12.0 } else { 9.0 }))
+                    .child(icon(
+                        "send",
+                        if is_studio { 20.0 } else { 17.0 },
+                        if telegram_connected {
+                            theme.success
+                        } else {
+                            theme.text_soft
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .child("Telegram")
+                                    .text_size(px(if is_studio { 13.0 } else { 12.0 }))
+                                    .text_color(theme.text)
+                                    .font_weight(if is_studio {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .child(telegram_status)
+                                    .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                                    .text_color(if telegram_connected {
+                                        theme.success
+                                    } else {
+                                        theme.warning
+                                    }),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(mode_combo(self, cx, theme, !is_studio))
+                    .child(
+                        field(
+                            "tg-destination-field",
+                            if telegram_mode == 1 {
+                                "Username or chat ID"
+                            } else {
+                                "@channel or chat ID"
+                            },
+                            &self
+                                .fields
+                                .get("tg-destination-field")
+                                .cloned()
+                                .unwrap_or_default(),
+                            self.focused_field.as_deref() == Some("tg-destination-field"),
+                            true,
+                            false,
+                            cx,
+                        )
+                        .flex_1()
+                        .h(px(if is_studio {
+                            PREPARE_CONTROL_HEIGHT
+                        } else {
+                            38.0
+                        })),
+                    ),
+            )
+            .child(divider())
+            .child(
+                div()
+                    .w_full()
+                    .min_h(px(if is_studio { 72.0 } else { 58.0 }))
+                    .flex()
+                    .items_center()
+                    .gap(px(if is_studio { 12.0 } else { 9.0 }))
+                    .child(
+                        div()
+                            .w(px(if is_studio { 20.0 } else { 17.0 }))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child("X")
+                            .text_size(px(if is_studio { 18.0 } else { 15.0 }))
+                            .text_color(theme.text),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .child("X")
+                                    .text_size(px(if is_studio { 13.0 } else { 12.0 }))
+                                    .text_color(theme.text)
+                                    .font_weight(if is_studio {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::MEDIUM
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .child("Manual browser handoff · no API connection required")
+                                    .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                                    .text_color(theme.muted),
+                            ),
+                    ),
+            )
+            .child(divider())
+            .child(
+                button(
+                    "open-delivery-settings",
+                    "Open Settings",
+                    ButtonKind::Secondary,
+                    Some("settings"),
+                    true,
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = false;
+                        app.navigate_to(Page::Settings, cx);
+                    },
+                )
+                .h(px(if is_studio { 38.0 } else { 34.0 })),
+            )
+    }
+
     fn render_publish_inspector(
         &mut self,
         cx: &mut Context<Self>,
         theme: &crate::theme::Theme,
         _panel_width: f32,
     ) -> impl Element {
+        let is_studio = self.prepare.studio_mode;
+        let compact = !is_studio;
         let estimated = self.estimate_output_size_label();
         let compression_index = self.prepare.compression_index as usize;
-        let _cleanup_index = self.prepare.cleanup_index as usize;
         let mode_index = self.prepare.telegram_mode_index as usize;
-        let bot_ready = self.bot_connected();
-        let personal_ready = self.personal_configured();
         let connected = if mode_index == 1 {
-            personal_ready
+            self.personal_configured()
         } else {
-            bot_ready
+            self.bot_connected()
         };
-        let destination = self.prepare.destination.clone();
-        let destination_ready = !destination.trim().is_empty();
+        let destination_ready = !self.prepare.destination.trim().is_empty();
         let telegram_ready = connected && destination_ready;
+        let telegram_detail = if !connected {
+            if mode_index == 1 {
+                "Sign in to your personal account in Settings before sending."
+            } else {
+                "Connect a bot in Settings before sending."
+            }
+        } else if !destination_ready {
+            "Choose a Telegram destination in Setup before sending."
+        } else {
+            "Connected and ready for the selected destination."
+        }
+        .to_string();
         let x_duration_warning = {
             let limit = self
                 .settings
@@ -2116,56 +3977,182 @@ impl crate::App {
                 .unwrap_or(140) as f64;
             self.prepare.duration > 0.0 && (self.prepare.trim_end - self.prepare.trim_start) > limit
         };
+        let x_detail = if x_duration_warning {
+            "Current cut exceeds the configured duration limit."
+        } else {
+            "Manual browser handoff."
+        }
+        .to_string();
+        let same_caption = self.prepare.same_caption;
+
+        let shared_toggle = button(
+            "caption-mode-shared",
+            "One for both",
+            ButtonKind::Secondary,
+            None,
+            true,
+            cx,
+            |app, cx| {
+                app.prepare.same_caption = true;
+                app.save_draft();
+                cx.notify();
+            },
+        )
+        .h(px(if is_studio { 44.0 } else { 28.0 }))
+        .px(px(if is_studio { 12.0 } else { 8.0 }))
+        .text_size(px(if is_studio { 14.0 } else { 11.5 }))
+        .flex_1()
+        .bg(if same_caption {
+            if is_studio {
+                theme.accent_soft
+            } else {
+                theme.active
+            }
+        } else {
+            if is_studio {
+                theme.raised
+            } else {
+                theme.transparent()
+            }
+        })
+        .border_color(if same_caption {
+            if is_studio {
+                theme.accent
+            } else {
+                theme.border_strong
+            }
+        } else {
+            if is_studio {
+                theme.border
+            } else {
+                theme.transparent()
+            }
+        })
+        .text_color(if same_caption {
+            theme.accent_text
+        } else {
+            theme.text_soft
+        });
+        let separate_toggle = button(
+            "caption-mode-separate",
+            "Separate",
+            ButtonKind::Secondary,
+            None,
+            true,
+            cx,
+            |app, cx| {
+                if app.prepare.x_caption.is_empty() {
+                    app.prepare.x_caption = app.prepare.caption.clone();
+                }
+                app.prepare.same_caption = false;
+                app.save_draft();
+                cx.notify();
+            },
+        )
+        .h(px(if is_studio { 44.0 } else { 28.0 }))
+        .px(px(if is_studio { 12.0 } else { 8.0 }))
+        .text_size(px(if is_studio { 14.0 } else { 11.5 }))
+        .flex_1()
+        .bg(if same_caption {
+            if is_studio {
+                theme.raised
+            } else {
+                theme.transparent()
+            }
+        } else {
+            if is_studio {
+                theme.accent_soft
+            } else {
+                theme.active
+            }
+        })
+        .border_color(if same_caption {
+            if is_studio {
+                theme.border
+            } else {
+                theme.transparent()
+            }
+        } else {
+            if is_studio {
+                theme.accent
+            } else {
+                theme.border_strong
+            }
+        })
+        .text_color(if same_caption {
+            theme.text_soft
+        } else {
+            theme.accent_text
+        });
 
         let mut column = div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(PREPARE_SECTION_GAP));
-
-        // OUTPUT.
-        column = column
+            .gap(px(if is_studio { 12.0 } else { 9.0 }))
+            .child(
+                div()
+                    .child(tracked("OUTPUT"))
+                    .text_size(px(if is_studio { 13.0 } else { 11.0 }))
+                    .text_color(if is_studio {
+                        theme.text_soft
+                    } else {
+                        theme.muted
+                    })
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
+            .when(is_studio, |column| {
+                column.child(
+                    div()
+                        .child("Choose a destination-aware generated copy.")
+                        .text_size(px(13.0))
+                        .text_color(theme.muted),
+                )
+            })
             .child(
                 div()
                     .w_full()
+                    .mt(px(if is_studio { 2.0 } else { 0.0 }))
                     .flex()
-                    .flex_row()
+                    .items_center()
+                    .gap(px(if is_studio { 12.0 } else { 8.0 }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(compression_combo(self, cx, theme, compact)),
+                    )
+                    .child(
+                        div()
+                            .h(px(if is_studio {
+                                PREPARE_CONTROL_HEIGHT
+                            } else {
+                                38.0
+                            }))
+                            .px(px(if is_studio { 10.0 } else { 8.0 }))
+                            .rounded(px(2.0))
+                            .bg(theme.raised)
+                            .border_1()
+                            .border_color(theme.border_strong)
+                            .flex()
+                            .items_center()
+                            .child(estimated)
+                            .text_size(px(if is_studio { 12.5 } else { 11.5 }))
+                            .text_color(theme.text_soft),
+                    ),
+            );
+        if compression_index == 6 {
+            column = column.child(
+                div()
+                    .w_full()
+                    .flex()
                     .items_center()
                     .gap(px(8.0))
                     .child(
                         div()
                             .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(
-                                div()
-                                    .child(tracked("OUTPUT"))
-                                    .text_size(px(11.0))
-                                    .text_color(theme.muted)
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            )
-                            .child(
-                                div()
-                                    .child("Choose a destination-aware generated copy.")
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_soft),
-                            ),
-                    )
-                    .child(status_pill("pill-estimate", &estimated, PillState::Neutral)),
-            )
-            .child(compression_combo(self, cx, theme))
-            .child(if compression_index == 6 {
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        div()
                             .child("Maximum generated size")
-                            .text_size(px(12.0))
+                            .text_size(px(if is_studio { 13.0 } else { 12.0 }))
                             .text_color(theme.text_soft),
                     )
                     .child(
@@ -2179,314 +4166,260 @@ impl crate::App {
                             cx,
                         )
                         .w(px(112.0))
-                        .h(px(PREPARE_CONTROL_HEIGHT)),
-                    )
-            } else {
-                div()
-            })
-            .child(
-                div()
-                    .child(match compression_index {
-                        0 => "Uses the source when it already fits.",
-                        5 => "Prioritizes the smallest practical file.",
-                        _ => "The estimate follows the current cut.",
-                    })
-                    .text_size(px(12.0))
-                    .text_color(theme.muted),
-            )
-            .child(divider());
-
-        // DESTINATIONS.
+                        .h(px(if is_studio {
+                            PREPARE_CONTROL_HEIGHT
+                        } else {
+                            38.0
+                        })),
+                    ),
+            );
+        }
         column = column
+            .when(is_studio, |column| {
+                column.child(
+                    div()
+                        .child("The estimate follows the current cut.")
+                        .text_size(px(13.0))
+                        .text_color(theme.muted),
+                )
+            })
+            .child(divider())
             .child(
                 div()
                     .child(tracked("DESTINATIONS"))
-                    .text_size(px(11.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(icon(
-                        "send",
-                        16.0,
-                        if telegram_ready {
-                            theme.success
-                        } else {
-                            theme.muted
-                        },
-                    ))
-                    .child(
-                        div()
-                            .child("Telegram")
-                            .text_size(px(13.0))
-                            .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(div().flex_1())
-                    .child(status_pill(
-                        "pill-tg",
-                        if telegram_ready {
-                            "Ready"
-                        } else {
-                            "Needs setup"
-                        },
-                        if telegram_ready {
-                            PillState::Success
-                        } else {
-                            PillState::Warning
-                        },
-                    )),
-            )
-            .child(mode_combo(self, cx, theme))
-            .child(
-                field(
-                    "tg-destination-field",
-                    if mode_index == 1 {
-                        "Username or chat ID"
+                    .text_size(px(if is_studio { 13.0 } else { 11.0 }))
+                    .text_color(if is_studio {
+                        theme.text_soft
                     } else {
-                        "@channel or chat ID"
-                    },
-                    &self
-                        .fields
-                        .get("tg-destination-field")
-                        .cloned()
-                        .unwrap_or_default(),
-                    self.focused_field.as_deref() == Some("tg-destination-field"),
-                    true,
-                    false,
-                    cx,
-                )
-                .h(px(PREPARE_CONTROL_HEIGHT)),
-            )
-            .child(
-                div()
-                    .child(if !connected {
-                        if mode_index == 1 {
-                            "Sign in under Settings before sending."
-                        } else {
-                            "Connect a bot in Settings before sending."
-                        }
-                    } else if !destination_ready {
-                        "Enter a destination before sending."
-                    } else if mode_index == 1 {
-                        "Personal account connected to the selected destination."
-                    } else {
-                        "Bot connected to the selected destination."
+                        theme.muted
                     })
-                    .text_size(px(12.0))
-                    .text_color(if telegram_ready {
-                        theme.success
-                    } else {
-                        theme.warning
-                    }),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
+            .child(studio_destination_row(
+                theme,
+                "deliver-destination-telegram",
+                "send",
+                "Telegram",
+                if telegram_ready {
+                    "Ready"
+                } else {
+                    "Needs setup"
+                },
+                telegram_detail,
+                if telegram_ready {
+                    theme.success
+                } else {
+                    theme.warning
+                },
+                compact,
+                cx,
+            ))
+            .child(studio_destination_row(
+                theme,
+                "deliver-destination-x",
+                "x-brand",
+                "X",
+                if x_duration_warning {
+                    "Check cut"
+                } else {
+                    "Manual"
+                },
+                x_detail,
+                if x_duration_warning {
+                    theme.warning
+                } else {
+                    theme.text_soft
+                },
+                compact,
+                cx,
+            ))
             .child(
                 div()
                     .w_full()
+                    .h(px(if is_studio { 44.0 } else { 32.0 }))
                     .flex()
-                    .flex_row()
                     .items_center()
-                    .gap(px(8.0))
-                    .child(icon(
-                        "external",
-                        16.0,
-                        if x_duration_warning {
-                            theme.warning
-                        } else {
-                            theme.text_soft
-                        },
+                    .gap(px(if is_studio { 6.0 } else { 8.0 }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(tracked("CAPTIONS"))
+                            .text_size(px(if is_studio { 13.0 } else { 10.5 }))
+                            .text_color(if is_studio {
+                                theme.text_soft
+                            } else {
+                                theme.muted
+                            })
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .w(px(if is_studio { 236.0 } else { 184.0 }))
+                            .h_full()
+                            .when(compact, |group| {
+                                group
+                                    .px(px(2.0))
+                                    .py(px(2.0))
+                                    .rounded(px(2.0))
+                                    .bg(theme.surface_soft)
+                                    .border_1()
+                                    .border_color(theme.border.opacity(0.72))
+                            })
+                            .flex()
+                            .gap(px(if is_studio { 6.0 } else { 2.0 }))
+                            .child(shared_toggle)
+                            .child(separate_toggle),
+                    ),
+            );
+
+        let caption_limit = if mode_index == 1 { 4096 } else { 1024 };
+        if same_caption {
+            let caption = self.prepare.caption.clone();
+            let caption_len = caption.chars().count();
+            column = column.child(
+                div()
+                    .w_full()
+                    .h(px(if is_studio { 44.0 } else { 40.0 }))
+                    .relative()
+                    .child(caption_area(
+                        self,
+                        cx,
+                        "caption-shared",
+                        "Add a caption for Telegram and X (optional)",
+                        &caption,
+                        if is_studio { 44.0 } else { 40.0 },
+                        76.0,
+                        false,
+                        compact,
                     ))
                     .child(
                         div()
-                            .child("X")
-                            .text_size(px(13.0))
-                            .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(div().flex_1())
-                    .child(status_pill(
-                        "pill-x",
-                        if x_duration_warning {
-                            "Check cut"
-                        } else {
-                            "Manual"
-                        },
-                        if x_duration_warning {
-                            PillState::Warning
-                        } else {
-                            PillState::Neutral
-                        },
-                    )),
-            )
-            .child(if x_duration_warning {
-                div()
-                    .child("Current cut exceeds the configured duration limit.")
-                    .text_size(px(12.0))
-                    .text_color(theme.warning)
-            } else {
-                div()
-                    .child("Manual browser handoff")
-                    .text_size(px(12.0))
-                    .text_color(theme.muted)
-            })
-            .child(divider());
-
-        // CAPTIONS.
-        column = column
-            .child(
-                div()
-                    .child(tracked("CAPTIONS"))
-                    .text_size(px(11.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
-            .child(checkbox(
-                "shared-caption",
-                "Shared caption",
-                self.prepare.same_caption,
-                true,
-                cx,
-                |app, cx, value| {
-                    app.prepare.same_caption = value;
-                    app.save_draft();
-                    cx.notify();
-                },
-            ));
-        let caption_limit = if mode_index == 1 { 4096 } else { 1024 };
-        if self.prepare.same_caption {
-            let caption = self.prepare.caption.clone();
-            let caption_len = caption.chars().count();
-            column = column
-                .child(
-                    div()
-                        .child("Telegram and X")
-                        .text_size(px(12.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(caption_area(
-                    self,
-                    cx,
-                    "caption-shared",
-                    "Caption for Telegram and X",
-                    &caption,
-                    76.0,
-                    0.0,
-                    false,
-                ))
-                .child(
-                    div()
-                        .w_full()
-                        .text_right()
-                        .child(format!(
-                            "Telegram {} / {}  ·  X {} / 280",
-                            group_digits(caption_len),
-                            group_digits(caption_limit),
-                            group_digits(caption_len)
-                        ))
-                        .text_size(px(12.0))
-                        .text_color(if caption_len > caption_limit || caption_len > 280 {
-                            theme.warning
-                        } else {
-                            theme.muted
-                        }),
-                );
+                            .absolute()
+                            .right(px(12.0))
+                            .top(px(if is_studio { 15.0 } else { 13.0 }))
+                            .child(format!("{} / 280", group_digits(caption_len)))
+                            .text_size(px(11.0))
+                            .text_color(if caption_len > caption_limit || caption_len > 280 {
+                                theme.warning
+                            } else {
+                                theme.muted
+                            }),
+                    ),
+            );
         } else {
-            let caption = self.prepare.caption.clone();
+            let telegram_caption = self.prepare.caption.clone();
             let x_caption = self.prepare.x_caption.clone();
-            let caption_len = caption.chars().count();
+            let telegram_len = telegram_caption.chars().count();
             let x_len = x_caption.chars().count();
             column = column
                 .child(
                     div()
                         .child("Telegram")
-                        .text_size(px(12.0))
+                        .text_size(px(if is_studio { 12.0 } else { 11.0 }))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
+                        .font_weight(FontWeight::MEDIUM),
                 )
-                .child(caption_area(
-                    self,
-                    cx,
-                    "caption-tg",
-                    "Telegram message",
-                    &caption,
-                    76.0,
-                    0.0,
-                    false,
-                ))
                 .child(
                     div()
                         .w_full()
-                        .text_right()
-                        .child(format!(
-                            "Telegram {} / {}",
-                            group_digits(caption_len),
-                            group_digits(caption_limit)
+                        .h(px(if is_studio { 44.0 } else { 40.0 }))
+                        .relative()
+                        .child(caption_area(
+                            self,
+                            cx,
+                            "caption-tg",
+                            "Telegram caption (optional)",
+                            &telegram_caption,
+                            if is_studio { 44.0 } else { 40.0 },
+                            84.0,
+                            false,
+                            compact,
                         ))
-                        .text_size(px(12.0))
-                        .text_color(if caption_len > caption_limit {
-                            theme.warning
-                        } else {
-                            theme.muted
-                        }),
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(12.0))
+                                .top(px(if is_studio { 15.0 } else { 13.0 }))
+                                .child(format!(
+                                    "{} / {}",
+                                    group_digits(telegram_len),
+                                    group_digits(caption_limit)
+                                ))
+                                .text_size(px(11.0))
+                                .text_color(if telegram_len > caption_limit {
+                                    theme.warning
+                                } else {
+                                    theme.muted
+                                }),
+                        ),
                 )
                 .child(
                     div()
                         .child("X")
-                        .text_size(px(12.0))
+                        .text_size(px(if is_studio { 12.0 } else { 11.0 }))
                         .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
+                        .font_weight(FontWeight::MEDIUM),
                 )
-                .child(caption_area(
-                    self,
-                    cx,
-                    "caption-x",
-                    "X post text",
-                    &x_caption,
-                    76.0,
-                    0.0,
-                    false,
-                ))
                 .child(
                     div()
                         .w_full()
-                        .text_right()
-                        .child(format!("X {} / 280", group_digits(x_len)))
-                        .text_size(px(12.0))
-                        .text_color(if x_len > 280 {
-                            theme.warning
-                        } else {
-                            theme.muted
-                        }),
+                        .h(px(if is_studio { 44.0 } else { 40.0 }))
+                        .relative()
+                        .child(caption_area(
+                            self,
+                            cx,
+                            "caption-x",
+                            "X caption (optional)",
+                            &x_caption,
+                            if is_studio { 44.0 } else { 40.0 },
+                            76.0,
+                            false,
+                            compact,
+                        ))
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(12.0))
+                                .top(px(if is_studio { 15.0 } else { 13.0 }))
+                                .child(format!("{} / 280", group_digits(x_len)))
+                                .text_size(px(11.0))
+                                .text_color(if x_len > 280 {
+                                    theme.warning
+                                } else {
+                                    theme.muted
+                                }),
+                        ),
                 );
         }
-        column = column.child(divider());
 
-        // Generated copy.
-        column = column
-            .child(
-                div()
-                    .child("Generated copy")
-                    .text_size(px(12.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
-            .child(
-                div()
-                    .child("Cleanup never applies to the source.")
-                    .text_size(px(11.0))
-                    .text_color(theme.muted),
-            )
-            .child(cleanup_combo(self, cx, theme));
-        column
+        column.child(
+            div()
+                .mt(px(if is_studio { 4.0 } else { 2.0 }))
+                .min_h(px(if is_studio { 62.0 } else { 44.0 }))
+                .pt(px(if is_studio { 14.0 } else { 8.0 }))
+                .border_t_1()
+                .border_color(theme.border)
+                .flex()
+                .when(is_studio, |row| row.items_start())
+                .when(compact, |row| row.items_center())
+                .gap(px(if is_studio { 10.0 } else { 8.0 }))
+                .child(icon(
+                    "delivery-info",
+                    if is_studio { 30.0 } else { 16.0 },
+                    theme.muted,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child("The trimmed clip will be prepared and delivered to the destinations above.")
+                        .text_size(px(if is_studio { 13.0 } else { 11.0 }))
+                        .text_color(theme.muted)
+                        .whitespace_normal()
+                        .line_clamp(2),
+                ),
+        )
     }
-
     fn render_action_dock(
         &mut self,
         cx: &mut Context<Self>,
@@ -2500,7 +4433,7 @@ impl crate::App {
         // The X handoff row only shows when X was an actual destination of
         // the last publish (mirrors the original's lastSubmitXEnabled).
         let output_x_ready = output_ready && self.prepare.last_submit_x_enabled;
-        let wide = panel_width >= 560.0;
+        let _panel_width = panel_width;
 
         let mut dock = div()
             .id("action-dock")
@@ -2508,11 +4441,13 @@ impl crate::App {
             .bg(theme.surface_soft)
             .border_t_1()
             .border_color(theme.border)
-            .px(px(PREPARE_GUTTER))
-            .py(px(8.0))
+            .px(px(12.0))
+            .py(px(12.0))
+            .min_h(px(156.0))
+            .flex_none()
             .flex()
             .flex_col()
-            .gap(px(6.0));
+            .gap(px(10.0));
 
         if checking {
             dock = dock.child(
@@ -2698,139 +4633,175 @@ impl crate::App {
         } else {
             let error = publish.error.clone();
             let estimate_label = self.estimate_output_size_label();
-            dock = dock.child(
-                div()
-                    .w_full()
-                    .child(if !error.is_empty() {
-                        format!("Failed · {error}")
-                    } else {
-                        format!(
-                            "{}  ·  X manual{}",
-                            if telegram_ready {
-                                "Telegram ready".to_string()
-                            } else {
-                                "Telegram needs setup".to_string()
-                            },
-                            if estimate_label.is_empty() {
-                                String::new()
-                            } else {
-                                format!("  ·  {estimate_label}")
-                            }
-                        )
-                    })
-                    .text_size(px(12.0))
-                    .text_color(if !error.is_empty() {
-                        theme.error
-                    } else if telegram_ready {
-                        theme.text_soft
-                    } else {
-                        theme.warning
-                    }),
-            );
-            if wide {
+            if !error.is_empty() {
                 dock = dock.child(
                     div()
                         .w_full()
+                        .h(px(34.0))
                         .flex()
-                        .flex_row()
-                        .gap(px(6.0))
-                        .child(
-                            button(
-                                "prepare-x",
-                                "Prepare X",
-                                ButtonKind::Secondary,
-                                Some("external"),
-                                true,
-                                cx,
-                                |app, cx| {
-                                    app.submit_publish("x", cx);
-                                },
-                            )
-                            .h(px(PREPARE_CONTROL_HEIGHT))
-                            .flex_1(),
-                        )
-                        .child(
-                            button(
-                                "send-telegram",
-                                "Send Telegram",
-                                ButtonKind::Secondary,
-                                Some("send"),
-                                telegram_ready,
-                                cx,
-                                |app, cx| {
-                                    app.submit_publish("telegram", cx);
-                                },
-                            )
-                            .h(px(PREPARE_CONTROL_HEIGHT))
-                            .flex_1(),
-                        )
-                        .child(
-                            button(
-                                "send-both",
-                                "Send + prepare X",
-                                ButtonKind::Primary,
-                                Some("shuffle"),
-                                telegram_ready,
-                                cx,
-                                |app, cx| {
-                                    app.submit_publish("both", cx);
-                                },
-                            )
-                            .h(px(PREPARE_CONTROL_HEIGHT))
-                            .flex_1(),
-                        ),
+                        .items_center()
+                        .child(format!("Failed · {error}"))
+                        .text_size(px(12.0))
+                        .text_color(theme.error),
                 );
             } else {
-                dock = dock
-                    .child(
+                dock =
+                    dock.child(
                         div()
                             .w_full()
+                            .h(px(34.0))
                             .flex()
-                            .flex_row()
-                            .gap(px(6.0))
+                            .items_center()
+                            .gap(px(7.0))
+                            .child(div().w(px(7.0)).h(px(7.0)).rounded(px(4.0)).bg(
+                                if telegram_ready {
+                                    theme.success
+                                } else {
+                                    theme.warning
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .child(if telegram_ready {
+                                        "Telegram ready"
+                                    } else {
+                                        "Telegram needs setup"
+                                    })
+                                    .text_size(px(12.5))
+                                    .text_color(if telegram_ready {
+                                        theme.text_soft
+                                    } else {
+                                        theme.warning
+                                    }),
+                            )
+                            .child(div().child("·").text_size(px(12.5)).text_color(theme.muted))
+                            .child(
+                                div()
+                                    .child("X manual")
+                                    .text_size(px(12.5))
+                                    .text_color(theme.muted),
+                            )
+                            .when(!estimate_label.is_empty(), |row| {
+                                row.child(
+                                    div()
+                                        .child(format!("·  {estimate_label}"))
+                                        .text_size(px(12.5))
+                                        .text_color(theme.muted),
+                                )
+                            }),
+                    );
+                if telegram_ready {
+                    dock = dock.child(
+                        div()
+                            .w_full()
+                            .h(px(66.0))
+                            .flex()
+                            .gap(px(8.0))
                             .child(
                                 button(
-                                    "prepare-x-narrow",
+                                    "prepare-x",
                                     "Prepare X",
                                     ButtonKind::Secondary,
-                                    Some("external"),
+                                    Some("x-brand"),
                                     true,
                                     cx,
-                                    |app, cx| {
-                                        app.submit_publish("x", cx);
-                                    },
+                                    |app, cx| app.submit_publish("x", cx),
                                 )
-                                .h(px(PREPARE_CONTROL_HEIGHT)),
+                                .h_full()
+                                .flex_1(),
                             )
                             .child(
                                 button(
-                                    "send-telegram-narrow",
+                                    "send-telegram",
                                     "Send Telegram",
                                     ButtonKind::Secondary,
                                     Some("send"),
-                                    telegram_ready,
+                                    true,
+                                    cx,
+                                    |app, cx| app.submit_publish("telegram", cx),
+                                )
+                                .h_full()
+                                .flex_1(),
+                            )
+                            .child(
+                                button(
+                                    "send-both",
+                                    "Both",
+                                    ButtonKind::Primary,
+                                    Some("shuffle"),
+                                    true,
+                                    cx,
+                                    |app, cx| app.submit_publish("both", cx),
+                                )
+                                .h_full()
+                                .flex_1(),
+                            ),
+                    );
+                } else {
+                    dock = dock.child(
+                        div()
+                            .w_full()
+                            .h(px(66.0))
+                            .flex()
+                            .gap(px(10.0))
+                            .child(
+                                button(
+                                    "studio-action-back",
+                                    "",
+                                    ButtonKind::Secondary,
+                                    None,
+                                    true,
                                     cx,
                                     |app, cx| {
-                                        app.submit_publish("telegram", cx);
+                                        app.prepare.studio_mode = false;
+                                        app.prepare.compact_inspector_open = false;
+                                        cx.notify();
                                     },
                                 )
-                                .h(px(PREPARE_CONTROL_HEIGHT)),
+                                .h_full()
+                                .flex_1()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
+                                        .child(icon("arrow-left", 19.0, theme.text))
+                                        .child(
+                                            div()
+                                                .child("Back to Prepare")
+                                                .text_size(px(15.0))
+                                                .text_color(theme.text),
+                                        ),
+                                ),
+                            )
+                            .child(
+                                button(
+                                    "prepare-x",
+                                    "",
+                                    ButtonKind::Primary,
+                                    None,
+                                    true,
+                                    cx,
+                                    |app, cx| app.submit_publish("x", cx),
+                                )
+                                .h_full()
+                                .flex_1()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
+                                        .child(icon("send", 21.0, theme.accent_content))
+                                        .child(
+                                            div()
+                                                .child("Prepare X")
+                                                .text_size(px(15.0))
+                                                .text_color(theme.accent_content),
+                                        ),
+                                ),
                             ),
-                    )
-                    .child(
-                        button(
-                            "send-both-narrow",
-                            "Send + prepare X",
-                            ButtonKind::Primary,
-                            Some("shuffle"),
-                            telegram_ready,
-                            cx,
-                            |app, cx| {
-                                app.submit_publish("both", cx);
-                            },
-                        )
-                        .h(px(PREPARE_CONTROL_HEIGHT)),
                     );
+                }
             }
         }
         dock
@@ -2895,6 +4866,7 @@ impl crate::App {
             36.0,
             58.0,
             true,
+            false,
         );
 
         div()
@@ -3093,49 +5065,44 @@ impl crate::App {
 
     /// Laptop-height docks keep a compact destination handoff visible instead
     /// of leaving the lower panel blank or duplicating Studio's form controls.
-    pub fn render_prepare_dock_compact_summary(
-        &self,
-        theme: &crate::theme::Theme,
-    ) -> impl Element {
+    pub fn render_prepare_dock_compact_summary(&self, theme: &crate::theme::Theme) -> impl Element {
         let telegram_ready = self.telegram_ready();
-        let destination = |glyph: &'static str,
-                           label: &'static str,
-                           state: &'static str,
-                           state_color: Hsla| {
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .h(px(48.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(icon(glyph, 15.0, theme.text_soft))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child(label)
-                        .text_size(px(11.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_ellipsis(),
-                )
-                .child(
-                    div()
-                        .h(px(22.0))
-                        .px(px(8.0))
-                        .rounded(px(11.0))
-                        .bg(state_color.opacity(0.10))
-                        .border_1()
-                        .border_color(state_color.opacity(0.22))
-                        .flex()
-                        .items_center()
-                        .child(state)
-                        .text_size(px(10.0))
-                        .text_color(state_color),
-                )
-        };
+        let destination =
+            |glyph: &'static str, label: &'static str, state: &'static str, state_color: Hsla| {
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h(px(48.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(icon(glyph, 15.0, theme.text_soft))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(label)
+                            .text_size(px(11.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_ellipsis(),
+                    )
+                    .child(
+                        div()
+                            .h(px(22.0))
+                            .px(px(8.0))
+                            .rounded(px(11.0))
+                            .bg(state_color.opacity(0.10))
+                            .border_1()
+                            .border_color(state_color.opacity(0.22))
+                            .flex()
+                            .items_center()
+                            .child(state)
+                            .text_size(px(10.0))
+                            .text_color(state_color),
+                    )
+            };
 
         div()
             .id("prepare-dock-compact-summary")
@@ -3483,7 +5450,7 @@ fn crop_aspect_combo(
         .child(
             div()
                 .child(options[selected])
-                .text_size(px(13.0))
+                .text_size(px(14.0))
                 .text_color(theme.text),
         )
         .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted));
@@ -3549,14 +5516,19 @@ fn compression_combo(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
+    compact: bool,
 ) -> impl Element {
     let selected = app.prepare.compression_index as usize;
     let open = app.open_combos.contains("compression");
     let trigger = div()
         .id("compression-trigger")
         .w_full()
-        .h(px(PREPARE_CONTROL_HEIGHT))
-        .px(px(12.0))
+        .h(px(if compact {
+            38.0
+        } else {
+            PREPARE_CONTROL_HEIGHT
+        }))
+        .px(px(if compact { 10.0 } else { 12.0 }))
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
@@ -3569,10 +5541,10 @@ fn compression_combo(
         .child(
             div()
                 .child(COMPRESSION_OPTIONS[selected].0)
-                .text_size(px(13.0))
+                .text_size(px(if compact { 12.0 } else { 13.0 }))
                 .text_color(theme.text),
         )
-        .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted))
+        .child(icon(if open { "▴" } else { "▾" }, 14.0, theme.muted))
         .on_click(cx.listener(|app, _event, _window, cx| {
             app.toggle_combo("compression", cx);
         }));
@@ -3594,7 +5566,11 @@ fn compression_combo(
             menu.child(
                 div()
                     .id(SharedString::from(format!("compression-{index}")))
-                    .h(px(PREPARE_CONTROL_HEIGHT))
+                    .h(px(if compact {
+                        38.0
+                    } else {
+                        PREPARE_CONTROL_HEIGHT
+                    }))
                     .px(px(10.0))
                     .cursor_pointer()
                     .flex()
@@ -3605,7 +5581,7 @@ fn compression_combo(
                         div()
                             .w(px(13.0))
                             .child(if index == selected { "✓" } else { "" })
-                            .text_size(px(13.0))
+                            .text_size(px(14.0))
                             .text_color(theme.accent_text),
                     )
                     .child(div().child(*label).text_size(px(13.0)).text_color(
@@ -3630,15 +5606,20 @@ fn mode_combo(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
+    compact: bool,
 ) -> impl Element {
     let options: [&str; 2] = ["Bot", "Personal"];
     let selected = app.prepare.telegram_mode_index as usize;
     let open = app.open_combos.contains("tg-mode");
     let trigger = div()
         .id("tg-mode-trigger")
-        .w(px(126.0))
-        .h(px(PREPARE_CONTROL_HEIGHT))
-        .px(px(12.0))
+        .w(px(if compact { 112.0 } else { 126.0 }))
+        .h(px(if compact {
+            38.0
+        } else {
+            PREPARE_CONTROL_HEIGHT
+        }))
+        .px(px(if compact { 10.0 } else { 12.0 }))
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
@@ -3651,7 +5632,7 @@ fn mode_combo(
         .child(
             div()
                 .child(options[selected])
-                .text_size(px(13.0))
+                .text_size(px(if compact { 12.0 } else { 13.0 }))
                 .text_color(theme.text),
         )
         .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted))
@@ -3663,7 +5644,7 @@ fn mode_combo(
     }
     let mut menu = div()
         .id("tg-mode")
-        .w(px(126.0))
+        .w(px(if compact { 112.0 } else { 126.0 }))
         .rounded(px(10.0))
         .bg(theme.surface_soft)
         .border_1()
@@ -3676,7 +5657,11 @@ fn mode_combo(
         menu = menu.child(
             div()
                 .id(SharedString::from(format!("tg-mode-{index}")))
-                .h(px(PREPARE_CONTROL_HEIGHT))
+                .h(px(if compact {
+                    38.0
+                } else {
+                    PREPARE_CONTROL_HEIGHT
+                }))
                 .px(px(10.0))
                 .cursor_pointer()
                 .flex()
@@ -3716,14 +5701,19 @@ fn cleanup_combo(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
+    compact: bool,
 ) -> impl Element {
     let selected = app.prepare.cleanup_index as usize;
     let open = app.open_combos.contains("cleanup");
     let trigger = div()
         .id("cleanup-trigger")
-        .w(px(184.0))
-        .h(px(PREPARE_CONTROL_HEIGHT))
-        .px(px(12.0))
+        .w(px(if compact { 172.0 } else { 184.0 }))
+        .h(px(if compact {
+            38.0
+        } else {
+            PREPARE_CONTROL_HEIGHT
+        }))
+        .px(px(if compact { 10.0 } else { 12.0 }))
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
@@ -3736,7 +5726,7 @@ fn cleanup_combo(
         .child(
             div()
                 .child(CLEANUP_OPTIONS[selected].0)
-                .text_size(px(13.0))
+                .text_size(px(if compact { 12.0 } else { 13.0 }))
                 .text_color(theme.text),
         )
         .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted))
@@ -3748,7 +5738,7 @@ fn cleanup_combo(
     }
     let mut menu = div()
         .id("cleanup")
-        .w(px(184.0))
+        .w(px(if compact { 172.0 } else { 184.0 }))
         .rounded(px(10.0))
         .bg(theme.surface_soft)
         .border_1()
@@ -3760,7 +5750,11 @@ fn cleanup_combo(
         menu = menu.child(
             div()
                 .id(SharedString::from(format!("cleanup-{index}")))
-                .h(px(PREPARE_CONTROL_HEIGHT))
+                .h(px(if compact {
+                    38.0
+                } else {
+                    PREPARE_CONTROL_HEIGHT
+                }))
                 .px(px(10.0))
                 .cursor_pointer()
                 .flex()
@@ -3792,6 +5786,7 @@ fn cleanup_combo(
     menu
 }
 
+#[allow(clippy::too_many_arguments)]
 fn caption_area(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
@@ -3801,6 +5796,7 @@ fn caption_area(
     height: f32,
     right_padding: f32,
     compact_dock: bool,
+    subtle_focus: bool,
 ) -> impl Element {
     // Show the committed value while not editing; once the user types, the
     // field holds the live text (and on_field_changed commits it).
@@ -3824,6 +5820,7 @@ fn caption_area(
         height,
         &display,
         app.focused_field.as_deref() == Some(id),
+        subtle_focus,
         cx,
     );
     if right_padding > 0.0 {
@@ -3847,14 +5844,28 @@ impl crate::App {
         let full_frame = (crop.width - 1.0).abs() < 0.001 && (crop.height - 1.0).abs() < 0.001;
         if !self.prepare.crop_enabled || full_frame {
             1
-        } else if (crop.width - crop.height).abs() < 0.001 {
-            2
-        } else if crop.width / crop.height.max(0.001) > 1.5 {
-            3
-        } else if crop.height / crop.width.max(0.001) > 1.5 {
-            4
         } else {
-            0
+            let source_ratio = self
+                .selected
+                .as_ref()
+                .map(|media| {
+                    if media.width > 0 && media.height > 0 {
+                        media.width as f64 / media.height as f64
+                    } else {
+                        16.0 / 9.0
+                    }
+                })
+                .unwrap_or(16.0 / 9.0);
+            let visible_ratio = source_ratio * crop.width / crop.height.max(0.001);
+            if (visible_ratio - 1.0).abs() < 0.02 {
+                2
+            } else if (visible_ratio - 16.0 / 9.0).abs() < 0.03 {
+                3
+            } else if (visible_ratio - 9.0 / 16.0).abs() < 0.03 {
+                4
+            } else {
+                0
+            }
         }
     }
 
@@ -3909,20 +5920,36 @@ pub fn group_digits(value: usize) -> String {
 
 #[cfg(test)]
 mod prepare_tests {
-    use super::{group_digits, prepare_frame_height};
+    use super::{fitted_media_rect, group_digits, prepare_frame_height};
 
     #[test]
     fn studio_stage_balances_media_and_the_editing_workbench() {
         assert!((prepare_frame_height(true, false, 1404.0, 1580.0) - 916.4).abs() < 0.01);
-        assert_eq!(prepare_frame_height(true, false, 760.0, 880.0), 326.0);
+        assert_eq!(prepare_frame_height(true, false, 941.0, 1176.0), 548.0);
+        assert_eq!(prepare_frame_height(true, false, 760.0, 880.0), 367.0);
         assert_eq!(prepare_frame_height(true, true, 520.0, 600.0), 118.0);
     }
 
     #[test]
-    fn dock_stage_grows_with_a_wide_panel_without_overstretching() {
-        assert_eq!(prepare_frame_height(false, false, 760.0, 370.0), 300.0);
-        assert_eq!(prepare_frame_height(false, false, 1440.0, 592.0), 420.0);
-        assert_eq!(prepare_frame_height(false, false, 1440.0, 900.0), 420.0);
+    fn dock_stage_yields_to_the_persistent_inspector() {
+        assert_eq!(prepare_frame_height(false, false, 760.0, 370.0), 220.0);
+        assert_eq!(prepare_frame_height(false, false, 1440.0, 592.0), 380.0);
+        assert_eq!(prepare_frame_height(false, false, 1440.0, 900.0), 380.0);
+    }
+
+    #[test]
+    fn edit_overlays_follow_the_contained_video_pixels() {
+        let portrait = fitted_media_rect(1000.0, 500.0, 9.0 / 16.0);
+        assert_eq!(portrait.1, 0.0);
+        assert_eq!(portrait.3, 500.0);
+        assert!((portrait.2 - 281.25).abs() < 0.01);
+        assert!((portrait.0 - 359.375).abs() < 0.01);
+
+        let landscape = fitted_media_rect(500.0, 500.0, 16.0 / 9.0);
+        assert_eq!(landscape.0, 0.0);
+        assert_eq!(landscape.2, 500.0);
+        assert!((landscape.3 - 281.25).abs() < 0.01);
+        assert!((landscape.1 - 109.375).abs() < 0.01);
     }
 
     #[test]
