@@ -125,6 +125,118 @@ pub struct LibraryPage {
     pub generation: u64,
 }
 
+/// The controller's current browsing request, independent of the preview video
+/// and of whichever page has finished loading most recently.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LibraryLocation {
+    pub folder: String,
+    pub generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderIndicators {
+    pub browsed: bool,
+    pub previewed: bool,
+}
+
+impl LibraryLocation {
+    pub fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+
+    pub fn accepts_reveal(&self, folder: &str, generation: u64) -> bool {
+        self.is_current(generation) && self.folder == folder
+    }
+
+    pub fn folder_indicators(
+        &self,
+        folder: &str,
+        preview_folder: Option<&str>,
+    ) -> FolderIndicators {
+        FolderIndicators {
+            browsed: self.folder == folder,
+            previewed: preview_folder == Some(folder),
+        }
+    }
+}
+
+#[cfg(test)]
+mod library_folder_state_tests {
+    use super::{FolderIndicators, LibraryLocation};
+
+    #[test]
+    fn browsing_and_preview_are_independent() {
+        let mut location = LibraryLocation {
+            folder: "clips/current".into(),
+            generation: 4,
+        };
+        let preview = Some("clips/previous");
+        assert_eq!(
+            location.folder_indicators("clips/current", preview),
+            FolderIndicators {
+                browsed: true,
+                previewed: false
+            },
+        );
+        assert_eq!(
+            location.folder_indicators("clips/previous", preview),
+            FolderIndicators {
+                browsed: false,
+                previewed: true
+            },
+        );
+        // Preview emphasis follows the exact containing folder, not ancestors
+        // or a keyboard cursor left on the previously browsed folder.
+        assert_eq!(
+            location.folder_indicators("clips", preview),
+            FolderIndicators {
+                browsed: false,
+                previewed: false
+            },
+        );
+        assert_eq!(
+            location.folder_indicators("clips/current", Some("clips/current")),
+            FolderIndicators {
+                browsed: true,
+                previewed: true
+            },
+        );
+        assert!(!location.folder_indicators("clips/previous", None).previewed);
+
+        location.folder.clear();
+        assert_eq!(
+            location.folder_indicators("", Some("clips/current")),
+            FolderIndicators {
+                browsed: true,
+                previewed: false
+            },
+        );
+        assert_eq!(
+            location.folder_indicators("", Some("")),
+            FolderIndicators {
+                browsed: true,
+                previewed: true
+            },
+        );
+    }
+
+    #[test]
+    fn stale_pages_and_reveals_cannot_restore_a_previous_folder() {
+        let location = LibraryLocation {
+            folder: "clips/current".into(),
+            generation: 8,
+        };
+        assert!(location.is_current(8));
+        assert!(!location.is_current(7));
+        assert!(!location.is_current(9));
+        assert!(location.accepts_reveal("clips/current", 8));
+        assert!(!location.accepts_reveal("clips/previous", 7));
+        assert!(!location.accepts_reveal("clips/previous", 8));
+        // Returning to the same folder must not revive an old query's reveal.
+        assert!(!location.accepts_reveal("clips/current", 7));
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct HistoryPage {
     pub rows: Vec<PostRow>,
@@ -469,6 +581,7 @@ pub enum Event {
     SelectedMediaChanged(Option<MediaRow>),
     SelectionCheckingChanged(i64, bool),
     TimelineLoadingChanged(i64, bool),
+    LibraryLocationChanged(LibraryLocation),
     LibraryPage(LibraryPage),
     LibraryRefreshed,
     FoldersUpdated(Vec<FolderNode>),
@@ -485,7 +598,7 @@ pub enum Event {
     RevealRequested {
         folder: String,
         media_index: i64,
-        folder_index: i64,
+        generation: u64,
     },
     NavigationRestored {
         folder: String,

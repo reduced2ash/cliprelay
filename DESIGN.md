@@ -209,6 +209,8 @@ The form language is squared and mechanical. Action controls, fields, tabs, medi
 
 ### Navigation
 
+Explorer distinguishes browsing from previewing: only the Library's browsed folder gets the full selected-row face, border, and depth. The folder containing the preview video uses Coral Text on its icon and name, without a second selected background. Both indicators can coexist on the same folder; keyboard focus remains a separate visible outline.
+
 Inspector tabs divide the available width evenly in a 42px row. Resting tabs use soft text; hover adds a graphite fill; the active tab adds Coral Text and a two-pixel coral rule. Keyboard focus adds a visible coral border without relying on the active rule alone.
 
 Focused Studio uses a real **Back to Prepare** action to return to the docked workspace. **Open Studio** appears only in docked Prepare; never repeat it as a no-op inside the already-focused workspace.

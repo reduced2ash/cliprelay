@@ -118,7 +118,7 @@ pub struct App {
     pub diagnostics: Diagnostics,
     pub search_text: String,
     pub show_folders: bool,
-    pub active_folder: String,
+    pub library_location: LibraryLocation,
     pub hovered_tiles: HashMap<i64, bool>,
     pub preview_video: Option<(i64, Video)>,
     pub preview_video_loading: Option<(i64, u64)>,
@@ -129,7 +129,7 @@ pub struct App {
     pub prepare_video_loading: bool,
     pub prepare_video_error: Option<String>,
     pub active_preview_id: i64,
-    pub reveal_request: Option<(String, i64, i64)>,
+    pub reveal_request: Option<(u64, i64)>,
     pub pending_draft: Option<PrepareDraft>,
     pub prepare: prepare::PrepareState,
     pub settings_page: settings_page::SettingsUiState,
@@ -443,7 +443,7 @@ impl App {
             diagnostics: Diagnostics::default(),
             search_text: String::new(),
             show_folders: true,
-            active_folder: String::new(),
+            library_location: LibraryLocation::default(),
             hovered_tiles: HashMap::new(),
             preview_video: None,
             preview_video_loading: None,
@@ -758,10 +758,17 @@ impl App {
                 // lives beyond the loaded page, ask the controller for its
                 // index and chase it across pages.
                 if let Some(row) = &row {
-                    if let Some(index) = self.library.rows.iter().position(|r| r.id == row.id) {
+                    let loaded_index = self
+                        .library_location
+                        .is_current(self.library.generation)
+                        .then(|| self.library.rows.iter().position(|r| r.id == row.id))
+                        .flatten();
+                    if let Some(index) = loaded_index {
                         self.reveal_target_row = Some(index);
                         self.apply_reveal_scroll();
-                    } else if row.folder == self.active_folder && self.search_text.is_empty() {
+                    } else if row.folder == self.library_location.folder
+                        && self.search_text.is_empty()
+                    {
                         self.command(Command::RevealMedia(row.id));
                     }
                 }
@@ -838,7 +845,27 @@ impl App {
                 self.timeline_loading = loading;
                 cx.notify();
             }
+            Event::LibraryLocationChanged(location) => {
+                if location.generation < self.library_location.generation
+                    || location == self.library_location
+                {
+                    return;
+                }
+                if location.folder != self.library_location.folder {
+                    self.explorer_selected = location.folder.clone();
+                }
+                if !self.library_location.is_current(location.generation) {
+                    self.reveal_request = None;
+                    self.reveal_target_row = None;
+                    self.focus_library_selection = false;
+                }
+                self.library_location = location;
+                cx.notify();
+            }
             Event::LibraryPage(page) => {
+                if !self.library_location.is_current(page.generation) {
+                    return;
+                }
                 if page.offset == 0
                     && page_zero_replaceable(
                         self.library.generation,
@@ -1038,25 +1065,27 @@ impl App {
             Event::RevealRequested {
                 folder,
                 media_index,
-                folder_index,
+                generation,
             } => {
+                if !self.library_location.accepts_reveal(&folder, generation) {
+                    return;
+                }
                 self.search_text.clear();
-                self.active_folder = folder.clone();
-                self.explorer_selected = folder.clone();
-                self.reveal_request = Some((folder, media_index, folder_index));
+                self.explorer_selected = folder;
+                self.reveal_request = Some((generation, media_index));
                 self.focus_library_selection = media_index >= 0;
                 self.page = Page::Library;
                 cx.notify();
             }
             Event::NavigationRestored { folder, search, .. } => {
                 self.search_text = search;
-                self.active_folder = folder;
+                self.explorer_selected = folder;
                 self.reset_library_scroll();
                 // Restored selection may live beyond the loaded page.
                 if self.search_text.is_empty() {
                     if let Some(row) = self.selected.as_ref() {
                         let in_rows = self.library.rows.iter().any(|r| r.id == row.id);
-                        if !in_rows && row.folder == self.active_folder {
+                        if !in_rows && row.folder == self.library_location.folder {
                             self.command(Command::RevealMedia(row.id));
                         }
                     }
@@ -3248,6 +3277,7 @@ impl App {
         }
         if self.focus_library_selection
             && self.page == Page::Library
+            && self.library_location.is_current(self.library.generation)
             && self
                 .selected
                 .as_ref()

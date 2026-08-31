@@ -1518,14 +1518,15 @@ impl crate::App {
                         .as_ref()
                         .map(|media| media.name.clone())
                         .unwrap_or_else(|| "No clip selected".to_string())
-                } else if self.active_folder.is_empty() {
+                } else if self.library_location.folder.is_empty() {
                     self.settings_value(LIBRARY_ROOT)
                         .rsplit('/')
                         .next()
                         .unwrap_or("No library selected")
                         .to_string()
                 } else {
-                    self.active_folder
+                    self.library_location
+                        .folder
                         .rsplit('/')
                         .next()
                         .unwrap_or("")

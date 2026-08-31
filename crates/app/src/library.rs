@@ -191,7 +191,11 @@ impl crate::App {
         } else {
             // One-shot reveal: scroll the selected tile into view, loading
             // further pages until the page holding the tile is available.
-            if let Some((_folder, media_index, _folder_index)) = self.reveal_request.take() {
+            if let Some((_, media_index)) = self
+                .reveal_request
+                .filter(|(generation, _)| *generation == self.library.generation)
+            {
+                self.reveal_request = None;
                 if media_index >= 0 {
                     self.reveal_target_row = Some(media_index as usize);
                     if media_index as usize >= row_count && has_more {
@@ -708,7 +712,7 @@ impl crate::App {
             let folder = rows[target].folder.clone();
             self.explorer_selected = folder.clone();
             self.command(Command::SetFolder(folder));
-        } else if delta > 0 && !self.active_folder.is_empty() {
+        } else if delta > 0 && !self.library_location.folder.is_empty() {
             // Below the last folder: back to the root ("All videos").
             self.explorer_selected = String::new();
             self.command(Command::SetFolder(String::new()));
@@ -822,7 +826,17 @@ impl crate::App {
             .top(px(-2.0))
             .overflow_scroll();
         // Root row.
-        let root_active = self.active_folder.is_empty();
+        let preview_folder = self
+            .selected
+            .as_ref()
+            .filter(|media| {
+                media.root_path.is_empty() || std::path::Path::new(&media.root_path) == library_root
+            })
+            .map(|media| media.folder.clone());
+        let root_indicators = self
+            .library_location
+            .folder_indicators("", preview_folder.as_deref());
+        let root_active = root_indicators.browsed;
         let root_expanded = self
             .folders_expanded
             .get("__explorer_root__")
@@ -862,17 +876,10 @@ impl crate::App {
             .gap(px(row_gap))
             .cursor_pointer()
             .tab_index(0)
-            .when(root_active, |row| {
+            .when(self.explorer_selected.is_empty(), |row| {
                 row.track_focus(&self.explorer_item_focus)
             })
-            .focus(|style| {
-                style
-                    .bg(theme.selection_face(TactileState::Hover, false))
-                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
-                    .border_2()
-                    .border_r_0()
-                    .border_color(theme.accent)
-            })
+            .focus(|style| style.border_2().border_r_0().border_color(theme.accent))
             .active(|style| {
                 style
                     .top(px(1.0))
@@ -924,8 +931,10 @@ impl crate::App {
                 icon(
                     "folder",
                     folder_icon_size,
-                    if root_active {
+                    if root_indicators.previewed {
                         theme.accent_text
+                    } else if root_active {
+                        theme.text
                     } else {
                         theme.muted
                     },
@@ -937,7 +946,11 @@ impl crate::App {
                 div()
                     .child("All videos")
                     .text_size(px(13.0))
-                    .text_color(theme.text)
+                    .text_color(if root_indicators.previewed {
+                        theme.accent_text
+                    } else {
+                        theme.text
+                    })
                     .font_weight(FontWeight::MEDIUM),
             )
             .child(div().flex_1())
@@ -1003,20 +1016,25 @@ impl crate::App {
             .w_full()
             .h(px(row_height)),
         );
-        let active_folder = self.active_folder.clone();
         let expanded_map = self.folders_expanded.clone();
         let visible = self.visible_folders();
         if root_expanded {
             for node in visible {
                 let folder = node.folder.clone();
-                let is_active = active_folder == folder;
+                let indicators = self
+                    .library_location
+                    .folder_indicators(&folder, preview_folder.as_deref());
+                let is_active = indicators.browsed;
+                let is_previewed = indicators.previewed;
                 let is_focused = self.explorer_selected == folder;
                 let has_children = node.has_children;
                 let expanded = expanded_map.get(&folder).copied().unwrap_or(node.depth < 1);
                 let count = node.count;
                 let name = node.name.clone();
                 let indent = (8.0 + node.depth as f32 * 14.0).min(8.0 + 6.0 * 14.0);
-                let selected = is_active || is_focused;
+                // Keyboard focus and preview location never create another
+                // persistent selected-row surface.
+                let selected = is_active;
                 let folder_path = library_root.join(&folder);
                 let mut row = div()
                     .id(SharedString::from(format!("folder-{folder}")))
@@ -1112,8 +1130,10 @@ impl crate::App {
                         icon(
                             "folder",
                             folder_icon_size,
-                            if is_active {
+                            if is_previewed {
                                 theme.accent_text
+                            } else if is_active {
+                                theme.text
                             } else {
                                 theme.muted
                             },
@@ -1128,7 +1148,9 @@ impl crate::App {
                             .overflow_hidden()
                             .child(name.clone())
                             .text_size(px(13.5))
-                            .text_color(if is_active {
+                            .text_color(if is_previewed {
+                                theme.accent_text
+                            } else if is_active {
                                 theme.text
                             } else {
                                 theme.text_soft

@@ -946,6 +946,12 @@ impl Controller {
     fn refresh_library_page(&mut self, page_size: usize) {
         let (search, folder, sort_mode) = self.active_library_filter();
         let generation = self.library_generation;
+        // Publish navigation before starting the query. Neither an existing
+        // preview nor a slower response from the previous folder owns it.
+        self.emit(Event::LibraryLocationChanged(LibraryLocation {
+            folder: folder.clone(),
+            generation,
+        }));
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
@@ -2388,6 +2394,11 @@ impl Controller {
             workspace.folder = row.folder.clone();
             workspace.search.clear();
         }
+        self.library_generation += 1;
+        self.library_offset = 0;
+        self.library_has_more = false;
+        self.refresh_library();
+        let generation = self.library_generation;
         let folder = row.folder.clone();
         let media_id = row.id;
         let db = Arc::clone(&self.db);
@@ -2403,15 +2414,10 @@ impl Controller {
             let _ = events.send(Event::RevealRequested {
                 folder,
                 media_index: index.unwrap_or(-1),
-                folder_index: -1,
+                generation,
             });
             log::info!("library reveal resolved media {media_id} to index {index:?}");
-            let _ = root;
         });
-        self.library_generation += 1;
-        self.library_offset = 0;
-        self.library_has_more = false;
-        self.refresh_library();
         self.emit(Event::NavigationRequested(Page::Library));
     }
 
@@ -2423,6 +2429,7 @@ impl Controller {
             let workspace = self.active();
             (workspace.folder.clone(), workspace.sort_mode.clone())
         };
+        let generation = self.library_generation;
         let db = Arc::clone(&self.db);
         let events = self.events.clone();
         std::thread::spawn(move || {
@@ -2430,7 +2437,7 @@ impl Controller {
             let _ = events.send(Event::RevealRequested {
                 folder,
                 media_index: index.unwrap_or(-1),
-                folder_index: -1,
+                generation,
             });
         });
     }
