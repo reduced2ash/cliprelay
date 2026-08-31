@@ -74,6 +74,9 @@ impl AssetSource for ClipRelayAssets {
             "icons/info.svg" => Some(icon_svg!(
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>"#
             )),
+            "icons/keyboard.svg" => Some(icon_svg!(
+                r#"<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7.5 14h9"/>"#
+            )),
             "icons/maximize.svg" => Some(icon_svg!(
                 r#"<path d="M8 3H3v5"/><path d="m3 3 6 6"/><path d="M16 3h5v5"/><path d="m21 3-6 6"/><path d="M8 21H3v-5"/><path d="m3 21 6-6"/><path d="M16 21h5v-5"/><path d="m21 21-6-6"/>"#
             )),
@@ -171,6 +174,7 @@ pub fn icon_path(name: &str) -> Option<&'static str> {
         "grid" | "library" | "▤" => "icons/grid.svg",
         "history" | "◷" => "icons/history.svg",
         "info" | "i" => "icons/info.svg",
+        "keyboard" => "icons/keyboard.svg",
         "maximize" | "⛶" | "⇔" => "icons/maximize.svg",
         "mark-in" => "icons/mark-in.svg",
         "mark-out" => "icons/mark-out.svg",

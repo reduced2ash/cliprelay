@@ -13,12 +13,14 @@ mod icons;
 mod library;
 mod prepare;
 mod settings_page;
+mod shortcuts;
 mod state;
 mod theme;
 mod video_element;
 mod widgets;
 
 use crate::controller::spawn_controller;
+use crate::shortcuts::{global_shortcut_for_key, GlobalShortcut};
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
@@ -180,6 +182,8 @@ pub struct App {
     random_source_focus: FocusHandle,
     workspace_source_focus: FocusHandle,
     history_source_focus: FocusHandle,
+    shortcut_guide_source_focus: FocusHandle,
+    shortcut_guide_focus: FocusHandle,
     focus_library_selection: bool,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
@@ -190,6 +194,7 @@ pub struct App {
     pub sort_menu_open: bool,
     pub pending_close_workspace: Option<usize>,
     pub activity_open: bool,
+    pub shortcut_guide_open: bool,
 }
 
 impl App {
@@ -310,6 +315,7 @@ impl App {
             _ => Page::Library,
         };
         let open_command_at_boot = std::env::var("CLIPRELAY_OPEN_COMMAND").is_ok();
+        let open_shortcut_guide_at_boot = std::env::var("CLIPRELAY_OPEN_SHORTCUT_GUIDE").is_ok();
         let open_random_at_boot = std::env::var("CLIPRELAY_OPEN_RANDOM").is_ok();
         if open_random_at_boot {
             controller.send(Command::LoadRandomFolderOptions).ok();
@@ -342,6 +348,7 @@ impl App {
             random_popup_open: open_random_at_boot,
             sort_menu_open: open_sort_at_boot,
             activity_open: open_activity_at_boot,
+            shortcut_guide_open: open_shortcut_guide_at_boot,
             workspace_menu_open: open_workspace_menu_at_boot,
             command_open: open_command_at_boot,
             focused_field: if open_command_at_boot {
@@ -356,6 +363,8 @@ impl App {
             random_source_focus: cx.focus_handle(),
             workspace_source_focus: cx.focus_handle(),
             history_source_focus: cx.focus_handle(),
+            shortcut_guide_source_focus: cx.focus_handle(),
+            shortcut_guide_focus: cx.focus_handle(),
             focus_library_selection: false,
             theme_mode: boot_theme_mode,
             ui_scale: 1.0,
@@ -1291,6 +1300,108 @@ impl App {
         });
     }
 
+    /// Whether the active workspace has an ordering that media navigation can
+    /// resolve. The controller is authoritative for the full ordering, so this
+    /// remains valid even when the current viewport has not loaded every row.
+    fn can_navigate_media(&self) -> bool {
+        !self.settings_value(LIBRARY_ROOT).is_empty()
+    }
+
+    fn can_toggle_playback(&self) -> bool {
+        self.selected.as_ref().is_some_and(|selected| {
+            selected.id == self.prepare.media_id && self.prepare.video.is_some()
+        })
+    }
+
+    pub fn can_open_selected_in_studio(&self) -> bool {
+        self.selected
+            .as_ref()
+            .is_some_and(|selected| selected.id > 0 && selected.id == self.prepare.media_id)
+    }
+
+    /// The single Studio entry point used by the command palette, docked
+    /// button, and keyboard shortcut. This prevents a stale selection from
+    /// opening an unrelated prepared video.
+    pub fn open_selected_in_studio(&mut self, cx: &mut Context<Self>) {
+        if !self.can_open_selected_in_studio() {
+            self.toast(ToastKind::Info, "Select a video before opening Studio.");
+            cx.notify();
+            return;
+        }
+        self.page = Page::Library;
+        self.save_draft();
+        self.prepare.studio_mode = true;
+        cx.notify();
+    }
+
+    fn transient_surface_owns_global_shortcuts(&self) -> bool {
+        self.random_popup_open
+            || self.command_open
+            || self.sort_menu_open
+            || self.workspace_menu_open
+            || self.activity_open
+            || self.shortcut_guide_open
+            || self.history_more_menu_post.is_some()
+            || !self.open_combos.is_empty()
+            || self.key_captured
+    }
+
+    fn invoke_global_shortcut(&mut self, shortcut: GlobalShortcut, cx: &mut Context<Self>) {
+        match shortcut {
+            GlobalShortcut::PreviousVideo | GlobalShortcut::NextVideo => {
+                if self.can_navigate_media() {
+                    self.page = Page::Library;
+                    self.explorer_focus = false;
+                    let direction = if shortcut == GlobalShortcut::PreviousVideo {
+                        -1
+                    } else {
+                        1
+                    };
+                    self.command(Command::NavigateSelection(direction));
+                }
+            }
+            GlobalShortcut::TogglePlayback => {
+                if self.can_toggle_playback() {
+                    self.prepare.toggle_playback();
+                    self.save_draft();
+                    cx.notify();
+                }
+            }
+            GlobalShortcut::PickRandomVideo => {
+                if self.can_navigate_media() && !self.random_picking {
+                    self.page = Page::Library;
+                    self.command(Command::PickRandom);
+                }
+            }
+            GlobalShortcut::OpenStudio => self.open_selected_in_studio(cx),
+        }
+    }
+
+    pub fn open_shortcut_guide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_root_popovers();
+        self.shortcut_guide_open = true;
+        let guide_focus = self.shortcut_guide_focus.clone();
+        cx.on_next_frame(window, move |_app, window, _cx| {
+            window.focus(&guide_focus);
+        });
+        cx.notify();
+    }
+
+    pub fn toggle_shortcut_guide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.shortcut_guide_open {
+            self.close_shortcut_guide(window);
+            cx.notify();
+        } else {
+            self.open_shortcut_guide(window, cx);
+        }
+    }
+
+    pub fn close_shortcut_guide(&mut self, window: &mut Window) {
+        self.shortcut_guide_open = false;
+        self.mark_menu_closed();
+        window.focus(&self.shortcut_guide_source_focus);
+    }
+
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
         if [
             THEME_MODE,
@@ -1504,6 +1615,7 @@ impl App {
         self.sort_menu_open = false;
         self.workspace_menu_open = false;
         self.activity_open = false;
+        self.shortcut_guide_open = false;
         self.history_more_menu_post = None;
         self.open_combos.clear();
         if self.command_open {
@@ -1910,6 +2022,39 @@ impl App {
             return false;
         }
 
+        // A focused editor (including a platform IME session) owns all of its
+        // normal editing keys. In particular, arrows, Space, R, and S must
+        // never escape into media routing while a user is composing text.
+        if self.focused_field.is_some() {
+            return false;
+        }
+
+        // These transient surfaces deliberately do not expose media keys.
+        // Keeping their key stream local prevents a command, sort, combo, or
+        // shortcut guide from activating content underneath it. Escape still
+        // reaches the ordered dismissal path below.
+        if (self.sort_menu_open
+            || self.workspace_menu_open
+            || self.activity_open
+            || self.shortcut_guide_open
+            || self.history_more_menu_post.is_some()
+            || !self.open_combos.is_empty()
+            || self.key_captured)
+            && key != "escape"
+        {
+            return false;
+        }
+
+        // Root media shortcuts are centralized in the catalog-backed resolver
+        // below. Menus, popovers, key capture, and the Explorer retain their
+        // own navigation model before the root gets a chance to act.
+        if !self.transient_surface_owns_global_shortcuts() && !self.explorer_focus {
+            if let Some(shortcut) = global_shortcut_for_key(key, cmd, shift, modifiers.alt) {
+                self.invoke_global_shortcut(shortcut, cx);
+                return true;
+            }
+        }
+
         match key {
             "1" if cmd => self.navigate_to(Page::Library, cx),
             "2" if cmd => self.navigate_to(Page::History, cx),
@@ -1983,9 +2128,7 @@ impl App {
                 && self.selected.is_some()
                 && self.prepare.duration > 0.0
                 && !self.checking
-                && !self.command_open
-                && !self.random_popup_open
-                && self.focused_field.is_none() =>
+                && !self.transient_surface_owns_global_shortcuts() =>
             {
                 if self.prepare.mark_in_at_playhead() {
                     self.save_draft();
@@ -1999,19 +2142,12 @@ impl App {
                 && self.selected.is_some()
                 && self.prepare.duration > 0.0
                 && !self.checking
-                && !self.command_open
-                && !self.random_popup_open
-                && self.focused_field.is_none() =>
+                && !self.transient_surface_owns_global_shortcuts() =>
             {
                 if self.prepare.mark_out_at_playhead() {
                     self.save_draft();
                 }
                 cx.notify();
-            }
-            "r" if !cmd && !modifiers.alt => {
-                // Global like the original: jump to Library and pick.
-                self.page = Page::Library;
-                self.command(Command::PickRandom);
             }
             "up" | "down" if self.random_popup_open && self.focused_field.is_none() => {
                 let rows = self.random_visible_options();
@@ -2049,13 +2185,6 @@ impl App {
             " " | "space" | "enter" if self.explorer_focus && self.page == Page::Library => {
                 self.explorer_key(key, cx);
             }
-            "left" | "right" if !self.random_popup_open => {
-                // Global like the original: jump to Library and navigate.
-                self.page = Page::Library;
-                self.explorer_focus = false;
-                let direction = if key == "left" { -1 } else { 1 };
-                self.command(Command::NavigateSelection(direction));
-            }
             "up" | "down"
                 if self.page == Page::Library
                     && !self.random_popup_open
@@ -2083,13 +2212,6 @@ impl App {
                 }
                 cx.notify();
             }
-            " " | "space" => {
-                if self.page == Page::Library && self.selected.is_some() {
-                    self.prepare.toggle_playback();
-                    self.save_draft();
-                    cx.notify();
-                }
-            }
             "escape" => {
                 if self.random_popup_open {
                     self.random_popup_open = false;
@@ -2097,6 +2219,8 @@ impl App {
                     window.focus(&self.random_source_focus);
                 } else if self.command_open {
                     self.dismiss_command_center_to_source();
+                } else if self.shortcut_guide_open {
+                    self.close_shortcut_guide(window);
                 } else if self.sort_menu_open {
                     self.sort_menu_open = false;
                     self.mark_menu_closed();

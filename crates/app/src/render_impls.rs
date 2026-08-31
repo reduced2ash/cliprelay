@@ -2,6 +2,7 @@
 //! Prepare dock/studio, random-source popup, history menu.
 
 use crate::settings_import::*;
+use crate::shortcuts::{shortcut_keys, SHORTCUTS};
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
@@ -325,8 +326,8 @@ impl crate::App {
                 category: "Prepare",
                 glyph: "⤢",
                 keywords: "prepare full screen editor video",
-                shortcut: "",
-                enabled: selected && !self.prepare.studio_mode,
+                shortcut: "S",
+                enabled: self.can_open_selected_in_studio() && !self.prepare.studio_mode,
             },
             CommandAction {
                 id: 26,
@@ -581,19 +582,15 @@ impl crate::App {
             }
             24 => self.command(Command::ReopenClosedWorkspace),
             25 => {
-                self.save_draft();
-                self.prepare.studio_mode = true;
-                cx.notify();
+                self.open_selected_in_studio(cx);
             }
             26 => {
                 self.prepare.inspector_tab = 0;
-                self.prepare.studio_mode = true;
-                cx.notify();
+                self.open_selected_in_studio(cx);
             }
             27 => {
                 self.prepare.inspector_tab = 1;
-                self.prepare.studio_mode = true;
-                cx.notify();
+                self.open_selected_in_studio(cx);
             }
             38 => {
                 if self.prepare.mark_in_at_playhead() {
@@ -3397,6 +3394,159 @@ impl crate::App {
             .child(actions)
     }
 
+    fn render_shortcut_guide(&mut self, cx: &mut Context<Self>) -> impl Element {
+        let theme = self.theme.clone();
+        let width = (self.window_size.0 - 32.0).clamp(276.0, 390.0);
+        let max_height = (self.window_size.1 - 48.0).clamp(260.0, 560.0);
+        // The guide has dense text, so Frosted Glass gets one denser neutral
+        // overlay layer than a lightweight menu while remaining material-like.
+        let guide_surface: Background = if self.theme_mode == ThemeMode::FrostedGlass {
+            Hsla::from(Rgba {
+                r: 5.0 / 255.0,
+                g: 6.0 / 255.0,
+                b: 9.0 / 255.0,
+                a: 1.0,
+            })
+            .opacity(0.84)
+            .into()
+        } else {
+            theme.overlay_surface()
+        };
+        let guide_row_face: Background = if self.theme_mode == ThemeMode::FrostedGlass {
+            Hsla::from(Rgba {
+                r: 21.0 / 255.0,
+                g: 24.0 / 255.0,
+                b: 32.0 / 255.0,
+                a: 1.0,
+            })
+            .opacity(0.72)
+            .into()
+        } else {
+            theme.control_face(TactileState::Rest)
+        };
+        let mut content = div()
+            .id("shortcut-guide-content")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
+            .px(px(12.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(6.0));
+        let mut current_group = "";
+        for (index, definition) in SHORTCUTS.iter().enumerate() {
+            if definition.group != current_group {
+                current_group = definition.group;
+                content = content.child(
+                    div()
+                        .id(SharedString::from(format!("shortcut-guide-group-{index}")))
+                        .pt(px(if index == 0 { 2.0 } else { 9.0 }))
+                        .pb(px(2.0))
+                        .child(definition.group)
+                        .text_size(px(10.5))
+                        .text_color(theme.muted)
+                        .font_weight(FontWeight::SEMIBOLD),
+                );
+            }
+            content = content.child(
+                div()
+                    .id(SharedString::from(format!("shortcut-guide-row-{index}")))
+                    .w_full()
+                    .min_h(px(32.0))
+                    .px(px(8.0))
+                    .rounded(px(RADIUS_SM))
+                    .bg(guide_row_face)
+                    .border_1()
+                    .border_color(theme.tactile_edge(TactileState::Rest, false))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(definition.label)
+                            .text_size(px(12.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_ellipsis(),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .px(px(6.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .bg(theme.raised)
+                            .border_1()
+                            .border_color(theme.border)
+                            .child(shortcut_keys(*definition))
+                            .text_size(px(10.5))
+                            .text_color(theme.text_soft)
+                            .font_weight(FontWeight::MEDIUM),
+                    ),
+            );
+        }
+
+        div()
+            .id("shortcut-guide")
+            .track_focus(&self.shortcut_guide_focus)
+            .tab_index(0)
+            .occlude()
+            .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|app, _event, window, cx| {
+                if app.shortcut_guide_open {
+                    app.close_shortcut_guide(window);
+                    cx.notify();
+                }
+            }))
+            .w(px(width))
+            .max_h(px(max_height))
+            .rounded(px(10.0))
+            .bg(guide_surface)
+            .border_1()
+            .border_color(theme.border_strong)
+            .when(theme.is_frosted(), |popup| {
+                popup.shadow(theme.material_shadow())
+            })
+            .when(!theme.is_frosted(), |popup| popup.shadow_lg())
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .h(px(52.0))
+                    .flex_none()
+                    .px(px(14.0))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .flex()
+                    .items_center()
+                    .gap(px(9.0))
+                    .child(icon("keyboard", 17.0, theme.accent))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child("Keyboard shortcuts")
+                            .text_size(px(14.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("Esc")
+                            .text_size(px(11.0))
+                            .text_color(theme.muted),
+                    ),
+            )
+            .child(content)
+    }
+
     pub fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let collapsed = self.sidebar_collapsed || self.window_size.0 < 1080.0;
@@ -3584,6 +3734,84 @@ impl crate::App {
                     ),
             );
         }
+        let guide_popup = self
+            .shortcut_guide_open
+            .then(|| self.render_shortcut_guide(cx).into_any());
+        let guide_trigger = div()
+            .id("sidebar-shortcuts")
+            .track_focus(&self.shortcut_guide_source_focus)
+            .w_full()
+            .h(px(40.0))
+            .px(if collapsed { px(0.0) } else { px(12.0) })
+            .rounded(px(RADIUS_SM))
+            .border_1()
+            .border_color(if self.shortcut_guide_open {
+                theme.tactile_edge(TactileState::Rest, false)
+            } else {
+                theme.transparent()
+            })
+            .bg(if self.shortcut_guide_open {
+                theme.control_face(TactileState::Rest)
+            } else {
+                theme.transparent().into()
+            })
+            .cursor_pointer()
+            .tab_index(0)
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(px(9.0))
+            .hover(|style| {
+                style
+                    .bg(theme.control_face(TactileState::Hover))
+                    .border_color(theme.tactile_edge(TactileState::Hover, false))
+                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
+            })
+            .active(|style| {
+                style
+                    .top(px(1.0))
+                    .bg(theme.control_face(TactileState::Pressed))
+                    .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                    .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+            })
+            .focus(|style| style.border_2().border_color(theme.accent))
+            .child(icon("keyboard", 17.0, theme.muted))
+            .when(!collapsed, |this| {
+                this.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child("Keyboard shortcuts")
+                        .text_size(px(12.0))
+                        .text_color(theme.muted)
+                        .text_ellipsis(),
+                )
+            })
+            .tooltip(move |_window, cx| crate::tooltip_view(cx, "Keyboard shortcuts".into()))
+            .on_click(cx.listener(|app, _event, window, cx| {
+                app.toggle_shortcut_guide(window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &crate::Activate, window, cx| {
+                app.toggle_shortcut_guide(window, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(|app, _: &crate::ActivateSpace, window, cx| {
+                app.toggle_shortcut_guide(window, cx);
+                cx.stop_propagation();
+            }));
+        sidebar = sidebar.child(
+            anchored_overlay(
+                guide_trigger,
+                guide_popup,
+                OverlayPlacement::AboveStart,
+                size(px(if collapsed { 40.0 } else { width }), px(40.0)),
+            )
+            .flex_none()
+            .when(collapsed, |owner| owner.mx(px(10.0)).w(px(40.0)))
+            .when(!collapsed, |owner| owner.w_full())
+            .h(px(40.0)),
+        );
         sidebar = sidebar.child(div().flex_1()).child(nav_item(
             self,
             "nav-settings",

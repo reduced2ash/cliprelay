@@ -172,20 +172,17 @@ fn prepare_dock_destination_row(
         })
         .on_click(cx.listener(|app, _event, _window, cx| {
             app.prepare.inspector_tab = 1;
-            app.prepare.studio_mode = true;
-            cx.notify();
+            app.open_selected_in_studio(cx);
         }))
         .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
             app.prepare.inspector_tab = 1;
-            app.prepare.studio_mode = true;
+            app.open_selected_in_studio(cx);
             cx.stop_propagation();
-            cx.notify();
         }))
         .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
             app.prepare.inspector_tab = 1;
-            app.prepare.studio_mode = true;
+            app.open_selected_in_studio(cx);
             cx.stop_propagation();
-            cx.notify();
         }))
 }
 
@@ -5222,8 +5219,7 @@ impl crate::App {
                         true,
                         cx,
                         |app, cx| {
-                            app.prepare.studio_mode = true;
-                            cx.notify();
+                            app.open_selected_in_studio(cx);
                         },
                     )
                     .h(px(36.0))
