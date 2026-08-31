@@ -1329,16 +1329,32 @@ impl crate::App {
         }
     }
 
+    /// Close the random-source popup and return keyboard focus to its trigger.
+    pub fn close_random_popup(&mut self, cx: &mut Context<Self>) {
+        self.random_popup_open = false;
+        self.random_popup_focus_pending = false;
+        self.random_source_focus_pending = true;
+        self.mark_menu_closed();
+        if self.focused_field.as_deref() == Some("random-filter") {
+            self.focused_field = None;
+            self.platform_input_focus = None;
+        }
+        cx.notify();
+    }
+
     /// Toggle the random-source popup (with the original's 180ms guard).
-    pub fn toggle_random_popup(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_random_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.random_popup_open {
-            self.random_popup_open = false;
-            self.mark_menu_closed();
+            self.close_random_popup(cx);
+            return;
         } else if self.menu_reopen_allowed() {
             self.dismiss_root_popovers();
             self.random_popup_open = true;
+            self.random_popup_focus_pending = true;
             self.random_loading = true;
+            self.random_tree_cursor = 0;
             self.command(Command::LoadRandomFolderOptions);
+            window.focus(&self.random_popup_focus);
         }
         cx.notify();
     }

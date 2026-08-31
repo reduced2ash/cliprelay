@@ -32,6 +32,12 @@ eight captured Library, History, Settings, command, Prepare, and Studio states
 retain alpha for whole-window compositor blur; Studio media apertures remain
 independently opaque.
 
+For a bounded Random Sources review, run
+`GUI_TEST_ONLY_RANDOM_SOURCES=1 make ui-test`. It captures the popup with a
+long source tree at normal and compact sizes, its empty state, and a real
+keyboard selection. Combine it with `GUI_TEST_THEME_MODE=graphite_glass` for
+the matching glass-material pass.
+
 The terminal result is intentionally short. Every run writes:
 
 ```text

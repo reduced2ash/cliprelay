@@ -3004,9 +3004,18 @@ impl crate::App {
                     theme.muted,
                 ));
             if has_root {
-                sources = sources.on_click(cx.listener(|app, _event, _window, cx| {
-                    app.toggle_random_popup(cx);
-                }));
+                sources = sources
+                    .on_click(cx.listener(|app, _event, window, cx| {
+                        app.toggle_random_popup(window, cx);
+                    }))
+                    .on_action(cx.listener(|app, _: &crate::Activate, window, cx| {
+                        app.toggle_random_popup(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(cx.listener(|app, _: &crate::ActivateSpace, window, cx| {
+                        app.toggle_random_popup(window, cx);
+                        cx.stop_propagation();
+                    }));
             }
             let random_popup = self
                 .random_popup_open
@@ -4376,135 +4385,319 @@ impl crate::App {
             .collect()
     }
 
+    pub fn clamp_random_tree_cursor(&mut self) {
+        let visible_count = self.random_visible_options().len();
+        self.random_tree_cursor = if visible_count == 0 {
+            0
+        } else {
+            self.random_tree_cursor.min(visible_count - 1)
+        };
+        self.random_tree_scroll
+            .scroll_to_item(self.random_tree_cursor);
+    }
+
+    pub fn activate_random_tree_cursor(&mut self, cx: &mut Context<Self>) {
+        if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
+            self.command(Command::SetRandomFolderEnabled(
+                option.folder.clone(),
+                option.selection_state == 0,
+            ));
+            cx.notify();
+        }
+    }
+
     pub fn render_random_popup(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let options = self.random_options.clone();
         let all_selected = self.random_all_selected;
         let selected_count = self.random_selected;
+        let has_explicit_selection = self.random_has_selection;
+        let compact = self.window_size.0 < 820.0 || self.window_size.1 < 620.0;
+        let popup_width = if compact { 400.0 } else { 456.0 };
+        let popup_height = (self.window_size.1 - 82.0).clamp(304.0, 560.0);
+        let direct_folder_count = options
+            .iter()
+            .filter(|option| option.direct_video_count > 0)
+            .count();
+        let total_video_count: i64 = options.iter().map(|option| option.direct_video_count).sum();
+        let folder_count_label = format!(
+            "{direct_folder_count} {}",
+            if direct_folder_count == 1 {
+                "folder"
+            } else {
+                "folders"
+            }
+        );
+        let video_count_label = format!(
+            "{total_video_count} {}",
+            if total_video_count == 1 {
+                "video"
+            } else {
+                "videos"
+            }
+        );
+        let selection_label = if all_selected {
+            "All folders".to_string()
+        } else if selected_count == 0 {
+            "None selected".to_string()
+        } else {
+            format!(
+                "{selected_count} {} selected",
+                if selected_count == 1 {
+                    "folder"
+                } else {
+                    "folders"
+                }
+            )
+        };
+        let selection_color = if selected_count == 0 && !all_selected {
+            theme.warning
+        } else {
+            theme.accent_text
+        };
+        let selection_glyph = if selected_count == 0 && !all_selected {
+            "warning"
+        } else {
+            "check"
+        };
         let mut popup = div()
             .id("random-popup")
+            .track_focus(&self.random_popup_focus)
+            .tab_index(0)
             .occlude()
             .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
             .on_mouse_down_out(cx.listener(|app, _event, _window, cx| {
                 if app.random_popup_open {
-                    app.random_popup_open = false;
-                    app.mark_menu_closed();
-                    cx.notify();
+                    app.close_random_popup(cx);
                 }
             }))
-            .w(px(456.0))
-            .max_h(px((self.window_size.1 - 64.0).clamp(320.0, 548.0)))
+            .w(px(popup_width))
+            .h(px(popup_height))
             .rounded(px(10.0))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
+            .focus(|style| style.border_2().border_color(current_theme().accent))
+            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                if app.focused_field.is_none() {
+                    app.activate_random_tree_cursor(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                if app.focused_field.is_none() {
+                    app.activate_random_tree_cursor(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .when(theme.is_frosted(), |popup| {
                 popup.shadow(theme.material_shadow())
             })
+            .when(!theme.is_frosted(), |popup| popup.shadow_lg())
             .flex()
             .flex_col()
             .overflow_hidden();
 
-        // Header.
+        // One quiet heading establishes purpose, live scope, and dismissal.
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(38.0))
-                .px(px(12.0))
+                .h(px(if compact { 56.0 } else { 62.0 }))
+                .px(px(14.0))
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.0))
-                .child(icon("▤", 15.0, theme.accent_text))
+                .gap(px(10.0))
                 .child(
                     div()
-                        .child(tracked("RANDOM SOURCES"))
-                        .text_size(px(12.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
+                        .flex_none()
+                        .w(px(30.0))
+                        .h(px(30.0))
+                        .rounded(px(RADIUS_MD))
+                        .bg(theme.accent_soft)
+                        .border_1()
+                        .border_color(theme.accent.opacity(0.36))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon("shuffle", 15.0, theme.accent_text)),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .child(if self.random_loading {
-                            "INDEXING".to_string()
-                        } else {
-                            format!("{} NODES", options.len())
-                        })
-                        .text_size(px(10.0))
-                        .text_color(if self.random_loading {
-                            theme.warning
-                        } else {
-                            theme.muted_soft
-                        }),
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .child("Random sources")
+                                .text_size(px(14.0))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::SEMIBOLD),
+                        )
+                        .child(
+                            div()
+                                .child(if self.random_loading {
+                                    "Updating indexed folders…".to_string()
+                                } else if options.is_empty() {
+                                    "No indexed source folders".to_string()
+                                } else {
+                                    format!("{folder_count_label}  ·  {video_count_label}")
+                                })
+                                .text_size(px(10.0))
+                                .text_color(if self.random_loading {
+                                    theme.warning
+                                } else {
+                                    theme.muted
+                                })
+                                .text_ellipsis(),
+                        ),
                 )
-                .child(workbench_button(
-                    "random-collapse",
-                    "",
-                    "▴",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Collapse source tree",
-                    cx,
-                    |app, cx| {
-                        app.random_expanded.clear();
-                        cx.notify();
-                    },
-                ))
-                .child(workbench_button(
-                    "random-expand",
-                    "",
-                    "▾",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Expand source tree",
-                    cx,
-                    |app, cx| {
-                        for option in &app.random_options {
-                            if option.has_children {
-                                app.random_expanded.insert(option.folder.clone());
-                            }
-                        }
-                        cx.notify();
-                    },
-                ))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(24.0))
+                        .px(px(8.0))
+                        .rounded(px(12.0))
+                        .bg(theme.raised)
+                        .border_1()
+                        .border_color(selection_color.opacity(0.34))
+                        .flex()
+                        .items_center()
+                        .gap(px(5.0))
+                        .child(icon(selection_glyph, 11.0, selection_color))
+                        .child(selection_label)
+                        .text_size(px(10.0))
+                        .text_color(selection_color)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
                 .child(workbench_button(
                     "random-close",
                     "",
                     "close",
-                    ButtonKind::Ghost,
+                    ButtonKind::Secondary,
                     true,
                     true,
-                    "Close random sources",
+                    "Close Random Sources",
                     cx,
-                    |app, cx| {
-                        app.random_popup_open = false;
-                        cx.notify();
-                    },
+                    |app, cx| app.close_random_popup(cx),
                 )),
         );
 
-        // Entire library row.
+        // All Folders is the primary scope choice, not another tree node.
+        let all_rest = if all_selected {
+            theme.selection_face(TactileState::Rest, false)
+        } else {
+            theme.control_face(TactileState::Rest)
+        };
+        let all_hover = if all_selected {
+            theme.selection_face(TactileState::Hover, false)
+        } else {
+            theme.control_face(TactileState::Hover)
+        };
         popup = popup.child(
             div()
                 .id("random-all")
-                .w_full()
-                .h(px(34.0))
+                .mx(px(8.0))
+                .mt(px(8.0))
+                .h(px(if compact { 50.0 } else { 56.0 }))
                 .px(px(10.0))
+                .rounded(px(RADIUS_MD))
+                .relative()
+                .top(px(0.0))
+                .bg(all_rest)
+                .border_1()
+                .border_color(if all_selected {
+                    theme.tactile_edge(TactileState::Rest, true)
+                } else {
+                    theme.tactile_edge(TactileState::Rest, false)
+                })
+                .shadow(theme.tactile_shadow(TactileState::Rest, true))
                 .cursor_pointer()
+                .tab_index(0)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.0))
+                .gap(px(10.0))
+                .hover(move |style| {
+                    style.bg(all_hover).border_color(
+                        current_theme().tactile_edge(TactileState::Hover, all_selected),
+                    )
+                })
+                .active(|style| {
+                    style
+                        .top(px(1.0))
+                        .bg(current_theme().selection_face(TactileState::Pressed, false))
+                        .border_color(
+                            current_theme().tactile_edge(TactileState::Pressed, all_selected),
+                        )
+                })
+                .focus(|style| style.border_2().border_color(current_theme().accent))
                 .child(
                     div()
-                        .w(px(15.0))
-                        .h(px(15.0))
-                        .rounded(px(3.0))
+                        .flex_none()
+                        .w(px(32.0))
+                        .h(px(32.0))
+                        .rounded(px(RADIUS_MD))
+                        .border_1()
+                        .border_color(if all_selected {
+                            theme.accent.opacity(0.52)
+                        } else {
+                            theme.border
+                        })
+                        .bg(if all_selected {
+                            theme.accent_soft
+                        } else {
+                            theme.raised
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(
+                            "folders",
+                            16.0,
+                            if all_selected {
+                                theme.accent_text
+                            } else {
+                                theme.muted
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .child("All Folders")
+                                .text_size(px(13.0))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::SEMIBOLD),
+                        )
+                        .child(
+                            div()
+                                .child(if total_video_count > 0 {
+                                    format!("Pick from every indexed folder · {video_count_label}")
+                                } else {
+                                    "Pick from the entire indexed library".to_string()
+                                })
+                                .text_size(px(10.0))
+                                .text_color(theme.muted)
+                                .text_ellipsis(),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .rounded(px(4.0))
                         .border_1()
                         .border_color(if all_selected {
                             theme.accent
@@ -4519,207 +4712,275 @@ impl crate::App {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(if all_selected {
-                            icon("✓", 11.0, theme.accent_content)
-                        } else {
-                            div()
+                        .when(all_selected, |indicator| {
+                            indicator.child(icon("check", 11.0, theme.accent_content))
                         }),
                 )
-                .child(icon("▤", 14.0, theme.muted))
-                .child(
-                    div()
-                        .flex_1()
-                        .child("Entire library")
-                        .text_size(px(12.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    div()
-                        .child(if all_selected {
-                            "SELECTED"
-                        } else {
-                            "SELECT ALL"
-                        })
-                        .text_size(px(10.0))
-                        .text_color(if all_selected {
-                            theme.accent_text
-                        } else {
-                            theme.muted_soft
-                        })
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
                 .on_click(cx.listener(|app, _event, _window, cx| {
+                    app.random_selected_only = false;
                     if app.random_all_selected {
                         app.command(Command::ClearRandomFolders);
                     } else {
                         app.command(Command::SelectAllRandomFolders);
                     }
                     cx.notify();
+                }))
+                .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                    app.random_selected_only = false;
+                    if app.random_all_selected {
+                        app.command(Command::ClearRandomFolders);
+                    } else {
+                        app.command(Command::SelectAllRandomFolders);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                    app.random_selected_only = false;
+                    if app.random_all_selected {
+                        app.command(Command::ClearRandomFolders);
+                    } else {
+                        app.command(Command::SelectAllRandomFolders);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
                 })),
         );
 
-        // Filter row.
+        // Search only appears once the source set is large enough to warrant it.
         let filter_text = self.random_filter.clone();
         let selected_only = self.random_selected_only;
+        let normalized_filter = filter_text.to_lowercase();
+        let show_search = options.len() >= 10 || !filter_text.is_empty();
         let matches_filter = |option: &RandomFolderOption| -> bool {
             if selected_only && option.selection_state == 0 {
                 return false;
             }
-            if filter_text.is_empty() {
+            if normalized_filter.is_empty() {
                 return true;
             }
-            option
-                .name
-                .to_lowercase()
-                .contains(&filter_text.to_lowercase())
-                || option
-                    .folder
-                    .to_lowercase()
-                    .contains(&filter_text.to_lowercase())
+            option.name.to_lowercase().contains(&normalized_filter)
+                || option.folder.to_lowercase().contains(&normalized_filter)
         };
         let visible_count = options.iter().filter(|o| matches_filter(o)).count();
+        if show_search {
+            let filter_state = self
+                .fields
+                .get("random-filter")
+                .cloned()
+                .unwrap_or_else(|| FieldState {
+                    text: filter_text.clone(),
+                    caret: filter_text.chars().count(),
+                    ..Default::default()
+                });
+            popup = popup.child(
+                div()
+                    .w_full()
+                    .h(px(52.0))
+                    .px(px(8.0))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(
+                        field_with_icon(
+                            "random-filter",
+                            "Search folders or paths",
+                            &filter_state,
+                            self.focused_field.as_deref() == Some("random-filter"),
+                            true,
+                            false,
+                            Some("search"),
+                            cx,
+                        )
+                        .h(px(34.0)),
+                    )
+                    .when(!filter_text.is_empty(), |row| {
+                        row.child(workbench_button(
+                            "random-clear-filter",
+                            "",
+                            "close",
+                            ButtonKind::Ghost,
+                            true,
+                            true,
+                            "Clear source search",
+                            cx,
+                            |app, cx| {
+                                app.random_filter.clear();
+                                if let Some(field) = app.fields.get_mut("random-filter") {
+                                    field.text.clear();
+                                    field.caret = 0;
+                                }
+                                app.clamp_random_tree_cursor();
+                                cx.notify();
+                            },
+                        ))
+                    }),
+            );
+        }
+
+        // The list toolbar keeps secondary tree controls quiet and predictable.
+        let has_branches = options.iter().any(|option| option.has_children);
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(36.0))
+                .h(px(38.0))
                 .px(px(8.0))
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.0))
+                .gap(px(6.0))
                 .child(
                     div()
-                        .id("random-filter")
                         .flex_1()
-                        .h(px(32.0))
-                        .px(px(10.0))
-                        .rounded(px(10.0))
-                        .bg(theme.raised)
-                        .border_1()
-                        .border_color(if self.focused_field.as_deref() == Some("random-filter") {
-                            theme.accent
-                        } else {
-                            theme.border
-                        })
                         .flex()
                         .items_center()
                         .gap(px(6.0))
-                        .child(icon("⌕", 14.0, theme.muted))
                         .child(
                             div()
-                                .child(if filter_text.is_empty() {
-                                    "Filter source tree".to_string()
-                                } else {
-                                    filter_text.clone()
-                                })
-                                .text_size(px(12.0))
-                                .text_color(if filter_text.is_empty() {
-                                    theme.muted
-                                } else {
-                                    theme.text
-                                }),
+                                .child("Folders")
+                                .text_size(px(11.0))
+                                .text_color(theme.text_soft)
+                                .font_weight(FontWeight::SEMIBOLD),
                         )
-                        .cursor_text()
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.focus_field("random-filter", cx);
-                            cx.notify();
-                        })),
+                        .child(
+                            div()
+                                .child(format!("{visible_count} shown"))
+                                .text_size(px(10.0))
+                                .text_color(theme.muted_soft),
+                        ),
                 )
-                .child(
-                    div()
-                        .id("random-selected-only")
-                        .h(px(28.0))
-                        .px(px(10.0))
-                        .rounded(px(10.0))
-                        .cursor_pointer()
-                        .bg(if selected_only {
-                            theme.active
-                        } else {
-                            theme.transparent()
-                        })
-                        .border_1()
-                        .border_color(if selected_only {
-                            theme.accent
-                        } else {
-                            theme.transparent()
-                        })
-                        .flex()
-                        .items_center()
-                        .child("Selected only")
-                        .text_size(px(11.0))
-                        .text_color(if selected_only {
-                            theme.text
-                        } else {
-                            theme.muted_soft
-                        })
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.random_selected_only = !app.random_selected_only;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .id("random-clear-filter")
-                        .h(px(28.0))
-                        .px(px(10.0))
-                        .rounded(px(10.0))
-                        .cursor_pointer()
-                        .flex()
-                        .items_center()
-                        .opacity(if self.random_filter.is_empty() {
-                            0.0
-                        } else {
-                            1.0
-                        })
-                        .child(icon("close", 11.0, theme.muted))
-                        .tooltip(move |_window, cx| {
-                            crate::tooltip_view(cx, "Clear folder search".into())
-                        })
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.random_filter.clear();
-                            if let Some(field) = app.fields.get_mut("random-filter") {
-                                field.text.clear();
-                                field.caret = 0;
-                            }
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .id("random-clear")
-                        .h(px(28.0))
-                        .px(px(10.0))
-                        .rounded(px(10.0))
-                        .cursor_pointer()
-                        .flex()
-                        .items_center()
-                        .opacity(if self.random_has_selection { 1.0 } else { 0.46 })
-                        .child("Clear")
-                        .text_size(px(11.0))
-                        .text_color(theme.muted)
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.command(Command::ClearRandomFolders);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .child(format!("{visible_count} VISIBLE"))
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
-                ),
+                .when(has_explicit_selection || selected_only, |toolbar| {
+                    let selected_only_bg: Background = if selected_only {
+                        theme.selection_face(TactileState::Rest, false)
+                    } else {
+                        theme.transparent().into()
+                    };
+                    toolbar.child(
+                        div()
+                            .id("random-selected-only")
+                            .h(px(26.0))
+                            .px(px(8.0))
+                            .rounded(px(RADIUS_SM))
+                            .bg(selected_only_bg)
+                            .border_1()
+                            .border_color(if selected_only {
+                                theme.accent
+                            } else {
+                                theme.transparent()
+                            })
+                            .cursor_pointer()
+                            .tab_index(0)
+                            .flex()
+                            .items_center()
+                            .gap(px(5.0))
+                            .hover(|style| style.bg(current_theme().hover))
+                            .focus(|style| style.border_2().border_color(current_theme().accent))
+                            .child(icon(
+                                if selected_only { "check" } else { "folder" },
+                                11.0,
+                                if selected_only {
+                                    theme.accent_text
+                                } else {
+                                    theme.muted
+                                },
+                            ))
+                            .child("Selected only")
+                            .text_size(px(10.0))
+                            .text_color(if selected_only {
+                                theme.text
+                            } else {
+                                theme.muted
+                            })
+                            .font_weight(FontWeight::MEDIUM)
+                            .on_click(cx.listener(|app, _event, _window, cx| {
+                                app.random_selected_only = !app.random_selected_only;
+                                app.clamp_random_tree_cursor();
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                                app.random_selected_only = !app.random_selected_only;
+                                app.clamp_random_tree_cursor();
+                                cx.stop_propagation();
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(
+                                |app, _: &crate::ActivateSpace, _window, cx| {
+                                    app.random_selected_only = !app.random_selected_only;
+                                    app.clamp_random_tree_cursor();
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                },
+                            )),
+                    )
+                })
+                .when(has_branches, |toolbar| {
+                    toolbar
+                        .child(workbench_button(
+                            "random-collapse",
+                            if compact { "" } else { "Collapse" },
+                            "chevron-up",
+                            ButtonKind::Ghost,
+                            true,
+                            compact,
+                            "Collapse all source branches",
+                            cx,
+                            |app, cx| {
+                                app.random_expanded.clear();
+                                app.clamp_random_tree_cursor();
+                                cx.notify();
+                            },
+                        ))
+                        .child(workbench_button(
+                            "random-expand",
+                            if compact { "" } else { "Expand" },
+                            "chevron-down",
+                            ButtonKind::Ghost,
+                            true,
+                            compact,
+                            "Expand all source branches",
+                            cx,
+                            |app, cx| {
+                                for option in &app.random_options {
+                                    if option.has_children {
+                                        app.random_expanded.insert(option.folder.clone());
+                                    }
+                                }
+                                app.clamp_random_tree_cursor();
+                                cx.notify();
+                            },
+                        ))
+                })
+                .when(options.is_empty(), |toolbar| {
+                    toolbar.child(
+                        div()
+                            .child(if self.random_loading {
+                                "Updating"
+                            } else {
+                                "Empty"
+                            })
+                            .text_size(px(10.0))
+                            .text_color(if self.random_loading {
+                                theme.warning
+                            } else {
+                                theme.muted_soft
+                            }),
+                    )
+                }),
         );
 
-        // Tree.
+        // Folder rows pair stable identity and tri-state selection with path/status detail.
         let mut tree = div()
             .id("random-tree")
             .flex_1()
+            .min_h(px(0.0))
             .overflow_scroll()
             .scrollbar_width(px(10.0))
+            .track_scroll(&self.random_tree_scroll)
+            .py(px(4.0))
             .flex()
             .flex_col();
         let expanded_set = self.random_expanded.clone();
@@ -4757,55 +5018,125 @@ impl crate::App {
             let depth = option.depth;
             let has_children = option.has_children;
             let expanded = expanded_set.contains(&folder);
-            let indent = (8.0 + depth as f32 * 12.0).min(8.0 + 8.0 * 12.0);
+            let direct_count = option.direct_video_count;
+            let detail = option.detail.clone();
+            let count_label = format!("{count} {}", if count == 1 { "video" } else { "videos" });
+            let direct_label = if direct_count == 0 && count > 0 {
+                format!("{detail}  ·  nested sources")
+            } else if direct_count != count && direct_count > 0 {
+                format!("{detail}  ·  {direct_count} directly here")
+            } else {
+                detail.clone()
+            };
+            let tooltip_text: SharedString = format!("{name}\n{detail}\n{count_label}").into();
+            let indent = (6.0 + depth as f32 * 14.0).min(6.0 + 8.0 * 14.0);
+            let row_background: Background = if cursor_hit {
+                theme.active.into()
+            } else if state > 0 {
+                theme.accent_soft.into()
+            } else {
+                theme.transparent().into()
+            };
             let mut row = div()
                 .id(SharedString::from(format!("random-{folder}")))
-                .h(px(32.0))
+                .mx(px(4.0))
+                .h(px(if compact { 42.0 } else { 48.0 }))
                 .pl(px(indent))
-                .pr(px(8.0))
-                .cursor_pointer()
-                .bg(if cursor_hit {
-                    theme.active
+                .pr(px(10.0))
+                .rounded(px(RADIUS_SM))
+                .border_1()
+                .border_color(if cursor_hit {
+                    theme.accent
+                } else if state > 0 {
+                    theme.accent.opacity(0.28)
                 } else {
                     theme.transparent()
                 })
+                .cursor_pointer()
+                .tab_index(0)
+                .bg(row_background)
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.0));
+                .gap(px(8.0))
+                .hover(|style| {
+                    style
+                        .bg(current_theme().hover)
+                        .border_color(current_theme().border_strong)
+                })
+                .active(|style| style.bg(current_theme().active))
+                .focus(|style| style.border_2().border_color(current_theme().accent))
+                .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip_text.clone()));
             // Disclosure chevron.
             if has_children {
-                let folder_for_toggle = folder.clone();
+                let folder_for_click = folder.clone();
+                let folder_for_activate = folder.clone();
+                let folder_for_space = folder.clone();
                 row = row.child(
                     div()
                         .id(SharedString::from(format!("random-chevron-{folder}")))
                         .occlude()
-                        .w(px(18.0))
-                        .h(px(18.0))
+                        .flex_none()
+                        .w(px(24.0))
+                        .h(px(24.0))
+                        .rounded(px(RADIUS_SM))
+                        .cursor_pointer()
+                        .tab_index(0)
                         .flex()
                         .items_center()
                         .justify_center()
+                        .hover(|style| style.bg(current_theme().hover))
+                        .focus(|style| style.border_2().border_color(current_theme().accent))
                         .child(icon(
-                            if expanded { "▾" } else { "▸" },
-                            11.0,
+                            if expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            12.0,
                             theme.muted_soft,
                         ))
                         .on_click(cx.listener(move |app, _event, _window, cx| {
-                            if !app.random_expanded.remove(&folder_for_toggle) {
-                                app.random_expanded.insert(folder_for_toggle.clone());
+                            if !app.random_expanded.remove(&folder_for_click) {
+                                app.random_expanded.insert(folder_for_click.clone());
                             }
+                            app.clamp_random_tree_cursor();
+                            cx.stop_propagation();
                             cx.notify();
-                        })),
+                        }))
+                        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                            if !app.random_expanded.remove(&folder_for_activate) {
+                                app.random_expanded.insert(folder_for_activate.clone());
+                            }
+                            app.clamp_random_tree_cursor();
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                        .on_action(cx.listener(
+                            move |app, _: &crate::ActivateSpace, _window, cx| {
+                                if !app.random_expanded.remove(&folder_for_space) {
+                                    app.random_expanded.insert(folder_for_space.clone());
+                                }
+                                app.clamp_random_tree_cursor();
+                                cx.stop_propagation();
+                                cx.notify();
+                            },
+                        )),
                 );
             } else {
-                row = row.child(div().w(px(18.0)).flex_none());
+                row = row.child(div().w(px(24.0)).flex_none());
             }
+            let folder_for_click = folder.clone();
+            let folder_for_activate = folder.clone();
+            let folder_for_space = folder.clone();
             row = row
                 .child(
                     div()
-                        .w(px(15.0))
-                        .h(px(15.0))
-                        .rounded(px(3.0))
+                        .id(SharedString::from(format!("random-check-{folder}")))
+                        .flex_none()
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .rounded(px(4.0))
                         .border_1()
                         .border_color(if state > 0 {
                             theme.accent
@@ -4813,26 +5144,32 @@ impl crate::App {
                             theme.border_strong
                         })
                         .bg(if state == 2 {
-                            theme.accent
+                            theme.accent_control_face(TactileState::Rest)
                         } else if state == 1 {
-                            theme.accent_soft
+                            theme.selection_face(TactileState::Rest, true)
                         } else {
-                            theme.raised
+                            theme.control_face(TactileState::Rest)
                         })
+                        .shadow(theme.tactile_shadow(TactileState::Rest, true))
                         .flex()
                         .items_center()
                         .justify_center()
                         .child(if state == 2 {
-                            icon("✓", 11.0, theme.accent_content).into_any()
+                            icon("check", 11.0, theme.accent_content).into_any()
                         } else if state == 1 {
-                            div().w(px(7.0)).h(px(1.5)).bg(theme.accent_text).into_any()
+                            div()
+                                .w(px(8.0))
+                                .h(px(2.0))
+                                .rounded(px(1.0))
+                                .bg(theme.accent_text)
+                                .into_any()
                         } else {
                             div().into_any()
                         }),
                 )
                 .child(icon(
-                    "▸",
-                    14.0,
+                    "folder",
+                    15.0,
                     if state > 0 {
                         theme.accent_text
                     } else {
@@ -4842,62 +5179,138 @@ impl crate::App {
                 .child(
                     div()
                         .flex_1()
-                        .child(name)
-                        .text_size(px(12.0))
-                        .text_color(if state > 0 {
-                            theme.text
-                        } else {
-                            theme.text_soft
-                        })
-                        .font_weight(if state > 0 {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::MEDIUM
-                        })
-                        .text_ellipsis(),
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            div()
+                                .child(name)
+                                .text_size(px(12.0))
+                                .text_color(if state > 0 {
+                                    theme.text
+                                } else {
+                                    theme.text_soft
+                                })
+                                .font_weight(if state > 0 {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::MEDIUM
+                                })
+                                .text_ellipsis(),
+                        )
+                        .when(!compact, |labels| {
+                            labels.child(
+                                div()
+                                    .child(direct_label)
+                                    .text_size(px(10.0))
+                                    .text_color(theme.muted_soft)
+                                    .text_ellipsis(),
+                            )
+                        }),
                 )
-                .child(
+                .child(tabular(
                     div()
-                        .child(format!("{count}"))
+                        .flex_none()
+                        .child(count_label)
                         .text_size(px(10.0))
                         .text_color(if state > 0 {
                             theme.accent_text
                         } else {
                             theme.muted_soft
                         }),
-                )
+                ))
                 .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.command(Command::SetRandomFolderEnabled(folder.clone(), state == 0));
+                    app.command(Command::SetRandomFolderEnabled(
+                        folder_for_click.clone(),
+                        state == 0,
+                    ));
                     cx.notify();
-                }));
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    app.command(Command::SetRandomFolderEnabled(
+                        folder_for_activate.clone(),
+                        state == 0,
+                    ));
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        app.command(Command::SetRandomFolderEnabled(
+                            folder_for_space.clone(),
+                            state == 0,
+                        ));
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                );
             tree = tree.child(row);
         }
         if rendered == 0 && options.is_empty() {
-            // No options at all: show the loading or empty-tree hint
-            // (mirrors the original's states).
             tree = tree.child(
                 div()
+                    .flex_1()
                     .w_full()
-                    .py(px(24.0))
+                    .px(px(28.0))
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(8.0))
+                    .justify_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .w(px(36.0))
+                            .h(px(36.0))
+                            .rounded(px(RADIUS_LG))
+                            .bg(theme.raised)
+                            .border_1()
+                            .border_color(theme.border)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon(
+                                if self.random_loading {
+                                    "refresh"
+                                } else {
+                                    "folders"
+                                },
+                                18.0,
+                                if self.random_loading {
+                                    theme.warning
+                                } else {
+                                    theme.muted
+                                },
+                            )),
+                    )
                     .child(
                         div()
                             .child(if self.random_loading {
-                                "Building source tree…"
-                            } else if self.scan.active {
-                                "Source folders appear as videos are indexed."
+                                "Building the source list…"
                             } else {
-                                "Rescan the library to build the source tree."
+                                "No source folders yet"
                             })
-                            .text_size(px(12.0))
-                            .text_color(theme.muted),
+                            .text_size(px(13.0))
+                            .text_color(theme.text_soft)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(280.0))
+                            .child(if self.random_loading {
+                                "Indexed folders will appear here as the library becomes ready."
+                            } else if self.scan.active {
+                                "Source folders will appear as the active library scan finds videos."
+                            } else {
+                                "Rescan the library to index folders for random selection."
+                            })
+                            .text_size(px(10.0))
+                            .text_color(theme.muted)
+                            .text_center(),
                     )
                     .child(if self.random_loading {
                         div()
-                            .w(px(120.0))
+                            .w(px(148.0))
                             .child(crate::widgets::progress_bar(0.0, true))
                             .into_any()
                     } else {
@@ -4907,30 +5320,56 @@ impl crate::App {
         } else if rendered == 0 && !options.is_empty() {
             tree = tree.child(
                 div()
+                    .flex_1()
                     .w_full()
-                    .py(px(24.0))
+                    .px(px(24.0))
                     .flex()
+                    .flex_col()
                     .items_center()
                     .justify_center()
+                    .gap(px(8.0))
+                    .child(icon("search", 20.0, theme.muted))
                     .child(
                         div()
-                            .child(if self.random_selected_only {
-                                "No selected source folders match."
+                            .child(if selected_only {
+                                "No selected folders match"
                             } else {
-                                "No source folders match."
+                                "No folders match"
                             })
-                            .text_size(px(12.0))
-                            .text_color(theme.muted),
+                            .text_size(px(13.0))
+                            .text_color(theme.text_soft)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("Clear the search or show every source folder.")
+                            .text_size(px(10.0))
+                            .text_color(theme.muted)
+                            .text_center(),
                     ),
             );
         }
         popup = popup.child(tree);
 
-        // Footer.
+        // Selection status stays visible while long trees scroll.
+        let footer_title = if all_selected {
+            "All folders are eligible".to_string()
+        } else if selected_count == 0 {
+            "Choose at least one folder".to_string()
+        } else {
+            format!(
+                "{selected_count} source {} selected",
+                if selected_count == 1 {
+                    "folder"
+                } else {
+                    "folders"
+                }
+            )
+        };
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(44.0))
+                .h(px(54.0))
                 .px(px(12.0))
                 .border_t_1()
                 .border_color(theme.border)
@@ -4941,16 +5380,12 @@ impl crate::App {
                 .child(
                     div()
                         .flex_1()
+                        .min_w(px(0.0))
                         .flex()
                         .flex_col()
-                        .child(if all_selected {
-                            "ENTIRE LIBRARY".to_string()
-                        } else if selected_count == 0 {
-                            "NO SOURCES SELECTED".to_string()
-                        } else {
-                            format!("{selected_count} SOURCE FOLDERS")
-                        })
-                        .text_size(px(10.0))
+                        .gap(px(2.0))
+                        .child(footer_title)
+                        .text_size(px(11.0))
                         .text_color(if selected_count == 0 && !all_selected {
                             theme.warning
                         } else {
@@ -4959,23 +5394,43 @@ impl crate::App {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(
                             div()
-                                .child("Parent checks include every nested folder")
-                                .text_size(px(9.0))
-                                .text_color(theme.muted_soft),
+                                .child(
+                                    "Saved automatically · parent choices include nested folders",
+                                )
+                                .text_size(px(10.0))
+                                .text_color(theme.muted_soft)
+                                .text_ellipsis(),
                         ),
                 )
-                .child(button(
-                    "random-done",
-                    "Done",
-                    ButtonKind::Secondary,
-                    None,
-                    true,
-                    cx,
-                    |app, cx| {
-                        app.random_popup_open = false;
-                        cx.notify();
-                    },
-                )),
+                .when(all_selected || has_explicit_selection, |footer| {
+                    footer.child(workbench_button(
+                        "random-clear",
+                        if compact { "" } else { "Clear" },
+                        "close",
+                        ButtonKind::Ghost,
+                        true,
+                        compact,
+                        "Clear random source selection",
+                        cx,
+                        |app, cx| {
+                            app.random_selected_only = false;
+                            app.command(Command::ClearRandomFolders);
+                            cx.notify();
+                        },
+                    ))
+                })
+                .child(
+                    button(
+                        "random-done",
+                        "Done",
+                        ButtonKind::Secondary,
+                        Some("check"),
+                        true,
+                        cx,
+                        |app, cx| app.close_random_popup(cx),
+                    )
+                    .h(px(32.0)),
+                ),
         );
         popup_fade(popup, "random-fade")
     }

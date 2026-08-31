@@ -117,7 +117,10 @@ capture_case() {
     local screenshot="/artifacts/screenshots/${case_name}.png"
     local app_log="/artifacts/logs/app-${case_name}.log"
     local window_id geometry width height target_width=1180 target_height=760
-    if [[ "${case_name}" == "studio-compact-checking" || "${case_name}" == "context-menu-compact" ]]; then
+    if [[ "${case_name}" == "studio-compact-checking" \
+        || "${case_name}" == "context-menu-compact" \
+        || "${case_name}" == "random-sources-compact" \
+        || "${case_name}" == "random-sources-empty" ]]; then
         target_width=700
         target_height=520
     elif [[ "${case_name}" == "workflow-tall" ]]; then
@@ -131,7 +134,11 @@ capture_case() {
         target_height=945
     fi
 
-    mkdir -p "${case_data}" /tmp/library
+    local library_root=/tmp/library
+    if [[ "${case_name}" == "random-sources-empty" ]]; then
+        library_root=/tmp/empty-library
+    fi
+    mkdir -p "${case_data}" "${library_root}"
     rm -f "${screenshot}"
     env \
         CLIPRELAY_DATA_DIR="${case_data}" \
@@ -141,7 +148,7 @@ capture_case() {
         "$@" \
         /usr/local/bin/cliprelay \
         --data-dir "${case_data}" \
-        --library /tmp/library \
+        --library "${library_root}" \
         --window-width "${target_width}" \
         --window-height "${target_height}" \
         >"${app_log}" 2>&1 &
@@ -171,7 +178,11 @@ capture_case() {
         record_failure "${case_name}: window geometry ${width}x${height} is below the app minimum."
         return 1
     fi
-    if [[ "${case_name}" == "studio-compact-checking" || "${case_name}" == "context-menu-compact" || "${case_name}" == "studio-shell" ]] \
+    if [[ "${case_name}" == "studio-compact-checking" \
+        || "${case_name}" == "context-menu-compact" \
+        || "${case_name}" == "random-sources-compact" \
+        || "${case_name}" == "random-sources-empty" \
+        || "${case_name}" == "studio-shell" ]] \
         && (( width != target_width || height != target_height )); then
         stop_app
         record_failure "${case_name}: expected exact ${target_width}x${target_height} geometry, got ${width}x${height}."
@@ -233,6 +244,15 @@ capture_case() {
         xwd -silent -id "${window_id}" | convert xwd:- "${screenshot}"
     fi
 
+    if [[ "${case_name}" == "random-sources-keyboard" ]]; then
+        # The popup owns the key stream. Move its cursor through real root key
+        # dispatch, activate that source with Enter, then capture the visible
+        # keyboard-focus and selected states.
+        xdotool windowactivate --sync "${window_id}"
+        xdotool key --window "${window_id}" Down Down Return
+        sleep 0.5
+    fi
+
     if ! wait_for_capture "${screenshot}"; then
         if kill -0 "${app_pid}" >/dev/null 2>&1; then
             record_failure "${case_name}: GPUI did not produce a renderer capture within 20 seconds."
@@ -270,6 +290,15 @@ run_suite() {
     for index in $(seq -w 1 280); do
         cp /tmp/library/nested/clip-000.mp4 "/tmp/library/nested/clip-${index}.mp4"
     done
+    if [[ "${GUI_TEST_ONLY_RANDOM_SOURCES:-0}" == "1" ]]; then
+        rm -rf /tmp/empty-library
+        mkdir -p /tmp/empty-library
+        for index in $(seq -w 1 18); do
+            source_dir="/tmp/library/source-${index}/project-with-a-deliberately-long-name-${index}"
+            mkdir -p "${source_dir}"
+            ln /tmp/library/nested/clip-000.mp4 "${source_dir}/source-${index}.mp4"
+        done
+    fi
     {
         echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "display=${DISPLAY}"
@@ -310,6 +339,39 @@ run_suite() {
             record_failure "library/context-menu: opening the item menu produced no meaningful visual change."
             return 1
         }
+        return 0
+    fi
+    if [[ "${GUI_TEST_ONLY_RANDOM_SOURCES:-0}" == "1" ]]; then
+        capture_case random-sources \
+            CLIPRELAY_OPEN_RANDOM=1 \
+            CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        capture_case random-sources-compact \
+            CLIPRELAY_OPEN_RANDOM=1 \
+            CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        capture_case random-sources-empty \
+            CLIPRELAY_OPEN_RANDOM=1 \
+            CLIPRELAY_CAPTURE_AFTER=45 || return 1
+        capture_case random-sources-keyboard \
+            CLIPRELAY_OPEN_RANDOM=1 \
+            CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        assert_distinct_states random-sources random-sources-empty || {
+            record_failure "random-sources: long-list and empty states produced no meaningful visual change."
+            return 1
+        }
+        if [[ "${CLIPRELAY_THEME_MODE:-}" == "frosted_glass" \
+            || "${CLIPRELAY_THEME_MODE:-}" == "graphite_glass" ]]; then
+            local random_case random_opaque
+            for random_case in random-sources random-sources-compact random-sources-empty random-sources-keyboard; do
+                random_opaque="$(identify -format '%[opaque]' "/artifacts/screenshots/${random_case}.png")"
+                printf '%s-%s-opaque\t%s\t%s\n' \
+                    "${CLIPRELAY_THEME_MODE}" "${random_case}" "${random_opaque}" "false" \
+                    >> /artifacts/metrics.tsv
+                if [[ "${random_opaque}" != "false" ]]; then
+                    record_failure "glass theme: ${random_case} must retain the whole-window blurred backdrop."
+                    return 1
+                fi
+            done
+        fi
         return 0
     fi
 
@@ -415,6 +477,8 @@ if run_suite; then
         echo "PASS isolated 1672x941 Prepare Studio visual check. Artifacts: /artifacts" > /artifacts/summary.txt
     elif [[ "${GUI_TEST_ONLY_CONTEXT_MENU:-0}" == "1" ]]; then
         echo "PASS isolated Library context-menu visual check. Artifacts: /artifacts" > /artifacts/summary.txt
+    elif [[ "${GUI_TEST_ONLY_RANDOM_SOURCES:-0}" == "1" ]]; then
+        echo "PASS isolated Random Sources visual check (normal, compact, empty, long-list, and keyboard states). Artifacts: /artifacts" > /artifacts/summary.txt
     else
         echo "PASS isolated ClipRelay GUI smoke test (11 semantic states, including the keyboard guide, compact context menu, a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
     fi

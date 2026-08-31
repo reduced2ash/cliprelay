@@ -1452,8 +1452,6 @@ impl Controller {
             return;
         }
         self.random_folders_loading = true;
-        let db = Arc::clone(&self.db);
-        let events = self.events.clone();
         let workspace = self.active();
         let selected_direct: HashSet<String> = workspace
             .random_folders
@@ -1462,18 +1460,24 @@ impl Controller {
             .map(|s| s.to_string())
             .collect();
         let random_mode = workspace.random_mode.clone();
-        std::thread::spawn(move || {
-            let rows = db.list_random_folders().unwrap_or_default();
-            let (options, summary, selected_count, all_selected, has_selection) =
-                build_random_options(&rows, &selected_direct, &random_mode);
-            let _ = events.send(Event::RandomFoldersChanged(
-                options,
-                summary,
-                selected_count,
-                all_selected,
-                has_selection,
-            ));
-        });
+        // The controller already runs off the GPUI application thread. Keep
+        // this small indexed query serialized here so repeated selection or
+        // scan refreshes cannot race stale snapshots back into the popup.
+        let rows = self.db.list_random_folders().unwrap_or_default();
+        let (options, summary, selected_count, all_selected, has_selection) =
+            build_random_options(&rows, &selected_direct, &random_mode);
+        self.random_folders_cache = options.clone();
+        self.random_folders_selected = selected_count;
+        self.all_random_folders_selected = all_selected;
+        self.has_random_folder_selection = has_selection;
+        self.random_folders_loading = false;
+        self.emit(Event::RandomFoldersChanged(
+            options,
+            summary,
+            selected_count,
+            all_selected,
+            has_selection,
+        ));
     }
 
     fn set_random_folder_enabled(&mut self, folder: &str, enabled: bool) {
@@ -3836,8 +3840,9 @@ fn reveal_index(db: &Database, media_id: i64, folder: &str, sort_mode: &str) -> 
 mod controller_tests {
     use super::{
         build_random_options, resolve_target, reveal_index, scan_generation_matches,
-        scan_job_matches, ScanJob,
+        scan_job_matches, spawn_controller, ScanJob,
     };
+    use crate::state::{Command, Event};
     use cliprelay_core::db::{Database, ManifestEntry, RandomFolder};
     use std::collections::HashSet;
     use std::sync::atomic::AtomicU64;
@@ -3952,6 +3957,29 @@ mod controller_tests {
         assert_eq!(summary, "All folders");
         assert!(all_selected && has);
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn random_folder_options_can_be_reloaded_after_the_first_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("random-reload.sqlite3");
+        drop(Database::open(&database_path).unwrap());
+        let (events, incoming) = flume::unbounded();
+        let controller = spawn_controller(Some(database_path), events);
+
+        for _ in 0..2 {
+            controller.send(Command::LoadRandomFolderOptions).unwrap();
+            loop {
+                let event = incoming
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("controller should emit each requested random-folder snapshot");
+                if matches!(event, Event::RandomFoldersChanged(..)) {
+                    break;
+                }
+            }
+        }
+
+        let _ = controller.send(Command::Shutdown);
     }
 
     #[test]

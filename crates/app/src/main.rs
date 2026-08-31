@@ -164,6 +164,7 @@ pub struct App {
     pub settings_scroll: gpui::ScrollHandle,
     pub prepare_edit_scroll: gpui::ScrollHandle,
     pub prepare_publish_scroll: gpui::ScrollHandle,
+    pub random_tree_scroll: gpui::ScrollHandle,
     pub thumbnail_states: HashMap<i64, String>,
     pub thumbnail_requested: std::collections::HashSet<i64>,
     pub preview_hover_generation: u64,
@@ -180,6 +181,9 @@ pub struct App {
     sort_source_focus: FocusHandle,
     activity_source_focus: FocusHandle,
     random_source_focus: FocusHandle,
+    random_source_focus_pending: bool,
+    random_popup_focus: FocusHandle,
+    random_popup_focus_pending: bool,
     workspace_source_focus: FocusHandle,
     history_source_focus: FocusHandle,
     shortcut_guide_source_focus: FocusHandle,
@@ -371,6 +375,9 @@ impl App {
             sort_source_focus: cx.focus_handle(),
             activity_source_focus: cx.focus_handle(),
             random_source_focus: cx.focus_handle(),
+            random_source_focus_pending: false,
+            random_popup_focus: cx.focus_handle(),
+            random_popup_focus_pending: open_random_at_boot,
             workspace_source_focus: cx.focus_handle(),
             history_source_focus: cx.focus_handle(),
             shortcut_guide_source_focus: cx.focus_handle(),
@@ -475,6 +482,7 @@ impl App {
             settings_scroll: gpui::ScrollHandle::new(),
             prepare_edit_scroll: gpui::ScrollHandle::new(),
             prepare_publish_scroll: gpui::ScrollHandle::new(),
+            random_tree_scroll: gpui::ScrollHandle::new(),
             thumbnail_states: HashMap::new(),
             thumbnail_requested: std::collections::HashSet::new(),
             preview_hover_generation: 0,
@@ -883,6 +891,10 @@ impl App {
                 }
                 self.folders_expanded = next;
                 self.folders = nodes;
+                if self.random_popup_open {
+                    self.random_loading = true;
+                    self.command(Command::LoadRandomFolderOptions);
+                }
                 cx.notify();
             }
             Event::HistoryPage(page) => {
@@ -990,6 +1002,7 @@ impl App {
                         self.random_expanded.insert(option.folder.clone());
                     }
                 }
+                self.clamp_random_tree_cursor();
                 cx.notify();
             }
             Event::Toast(kind, message) => {
@@ -2232,6 +2245,16 @@ impl App {
         };
         let shift = modifiers.shift;
 
+        // Escape always dismisses the Random Sources surface, including while
+        // its search field owns text input, and restores focus to the trigger.
+        if self.random_popup_open
+            && self.focused_field.as_deref() == Some("random-filter")
+            && key == "escape"
+        {
+            self.close_random_popup(cx);
+            return true;
+        }
+
         // Text field editing takes priority.
         if let Some(field_id) = self.focused_field.clone() {
             let handled =
@@ -2422,22 +2445,23 @@ impl App {
                     self.random_tree_cursor = (self.random_tree_cursor as isize + delta)
                         .rem_euclid(rows.len() as isize)
                         as usize;
+                    self.random_tree_scroll
+                        .scroll_to_item(self.random_tree_cursor);
                 }
                 cx.notify();
             }
-            " " | "space" if self.random_popup_open && self.focused_field.is_none() => {
-                if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
-                    let folder = option.folder.clone();
-                    let state = option.selection_state;
-                    self.command(Command::SetRandomFolderEnabled(folder, state == 0));
-                }
-                cx.notify();
+            " " | "space" | "enter" if self.random_popup_open && self.focused_field.is_none() => {
+                self.activate_random_tree_cursor(cx);
             }
             "left" | "right" if self.random_popup_open && self.focused_field.is_none() => {
                 if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
                     let folder = option.folder.clone();
-                    if option.has_children && !self.random_expanded.remove(&folder) {
-                        self.random_expanded.insert(folder);
+                    if option.has_children {
+                        if key == "left" {
+                            self.random_expanded.remove(&folder);
+                        } else {
+                            self.random_expanded.insert(folder);
+                        }
                     }
                 }
                 cx.notify();
@@ -2480,9 +2504,8 @@ impl App {
             }
             "escape" => {
                 if self.random_popup_open {
-                    self.random_popup_open = false;
-                    self.mark_menu_closed();
-                    window.focus(&self.random_source_focus);
+                    self.close_random_popup(cx);
+                    return true;
                 } else if self.command_open {
                     self.dismiss_command_center_to_source();
                 } else if self.shortcut_guide_open {
@@ -2656,6 +2679,7 @@ impl App {
         }
         if field_id == "random-filter" {
             self.random_filter = text;
+            self.clamp_random_tree_cursor();
             cx.notify();
             return;
         }
@@ -2923,6 +2947,20 @@ impl App {
         });
 
         root = root.child(body);
+        if self.random_popup_open && self.random_popup_focus_pending {
+            self.random_popup_focus_pending = false;
+            let focus = self.random_popup_focus.clone();
+            cx.on_next_frame(window, move |_app, window, _cx| {
+                window.focus(&focus);
+            });
+        }
+        if !self.random_popup_open && self.random_source_focus_pending {
+            self.random_source_focus_pending = false;
+            let focus = self.random_source_focus.clone();
+            cx.on_next_frame(window, move |_app, window, _cx| {
+                window.focus(&focus);
+            });
+        }
         if self.focused_field.is_some() && window.focused(cx).is_none() {
             let focus = self.focus_handle.clone();
             cx.on_next_frame(window, move |app, window, _cx| {
