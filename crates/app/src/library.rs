@@ -1105,6 +1105,28 @@ impl crate::App {
             }
         }
         let scanning = self.scan.active;
+        let explorer_workspace_popup = (self.workspace_menu_open
+            && self.workspace_menu_source == crate::WorkspaceMenuSource::ExplorerActions)
+            .then(|| self.render_workspace_menu(cx).into_any());
+        let explorer_workspace_button = workbench_button(
+            "explorer-workspace-actions",
+            "",
+            "ellipsis",
+            ButtonKind::Ghost,
+            true,
+            true,
+            "Workspace actions",
+            cx,
+            |app, cx| {
+                app.workspace_menu_target = app.active_workspace_index;
+                app.toggle_workspace_popup(crate::WorkspaceMenuSource::ExplorerActions);
+                cx.notify();
+            },
+        )
+        .when(
+            self.workspace_menu_source == crate::WorkspaceMenuSource::ExplorerActions,
+            |button| button.track_focus(&self.workspace_source_focus),
+        );
         let explorer_actions = div()
             .w_full()
             .h(px(52.0))
@@ -1126,26 +1148,17 @@ impl crate::App {
                 cx,
                 |app, cx| app.choose_new_workspace_folder(cx),
             ))
-            .child(workbench_button(
-                "explorer-workspace-actions",
-                "",
-                "ellipsis",
-                ButtonKind::Ghost,
-                true,
-                true,
-                "Workspace actions",
-                cx,
-                |app, cx| {
-                    app.workspace_menu_target = app.active_workspace_index;
-                    if app.workspace_menu_open {
-                        app.workspace_menu_open = false;
-                        app.mark_menu_closed();
-                    } else if app.menu_reopen_allowed() {
-                        app.workspace_menu_open = true;
-                    }
-                    cx.notify();
-                },
-            ))
+            .child(
+                anchored_overlay(
+                    explorer_workspace_button,
+                    explorer_workspace_popup,
+                    OverlayPlacement::AboveStart,
+                    size(px(WORKBENCH_CONTROL_HEIGHT), px(WORKBENCH_CONTROL_HEIGHT)),
+                )
+                .flex_none()
+                .w(px(WORKBENCH_CONTROL_HEIGHT))
+                .h(px(WORKBENCH_CONTROL_HEIGHT)),
+            )
             .child(div().flex_1())
             .child(workbench_button(
                 "explorer-rescan",
@@ -1225,6 +1238,7 @@ impl crate::App {
             self.random_popup_open = false;
             self.mark_menu_closed();
         } else if self.menu_reopen_allowed() {
+            self.dismiss_root_popovers();
             self.random_popup_open = true;
             self.random_loading = true;
             self.command(Command::LoadRandomFolderOptions);

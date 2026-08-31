@@ -68,6 +68,13 @@ pub struct Toast {
     pub shown_at: std::time::Instant,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceMenuSource {
+    ExplorerActions,
+    Tab(usize),
+    TabActions,
+}
+
 pub struct App {
     pub controller: flume::Sender<Command>,
     pub event_tx: flume::Sender<Event>,
@@ -125,7 +132,6 @@ pub struct App {
     history_search_generation: u64,
     history_search_task: Option<Task<()>>,
     pub history_more_menu_post: Option<i64>,
-    pub history_more_menu_y: f32,
     history_more_menu_closed_at: std::time::Instant,
     menu_closed_at: std::time::Instant,
     pub command_results: Vec<SearchResultItem>,
@@ -169,11 +175,17 @@ pub struct App {
     platform_input_focus: Option<FocusHandle>,
     focus_handle: FocusHandle,
     library_item_focus: FocusHandle,
+    sort_source_focus: FocusHandle,
+    activity_source_focus: FocusHandle,
+    random_source_focus: FocusHandle,
+    workspace_source_focus: FocusHandle,
+    history_source_focus: FocusHandle,
     focus_library_selection: bool,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
     pub workspace_menu_open: bool,
     pub workspace_menu_target: usize,
+    pub workspace_menu_source: WorkspaceMenuSource,
     pub renaming_workspace: Option<usize>,
     pub sort_menu_open: bool,
     pub pending_close_workspace: Option<usize>,
@@ -339,6 +351,11 @@ impl App {
             },
             focus_handle: cx.focus_handle(),
             library_item_focus: cx.focus_handle(),
+            sort_source_focus: cx.focus_handle(),
+            activity_source_focus: cx.focus_handle(),
+            random_source_focus: cx.focus_handle(),
+            workspace_source_focus: cx.focus_handle(),
+            history_source_focus: cx.focus_handle(),
             focus_library_selection: false,
             theme_mode: boot_theme_mode,
             ui_scale: 1.0,
@@ -402,7 +419,6 @@ impl App {
             history_search_generation: 0,
             history_search_task: None,
             history_more_menu_post: None,
-            history_more_menu_y: 0.0,
             history_more_menu_closed_at: std::time::Instant::now(),
             menu_closed_at: std::time::Instant::now(),
             command_results: Vec::new(),
@@ -452,6 +468,7 @@ impl App {
             open_combos: std::collections::HashSet::new(),
             key_captured: false,
             workspace_menu_target: 0,
+            workspace_menu_source: WorkspaceMenuSource::TabActions,
             renaming_workspace: None,
 
             pending_close_workspace: None,
@@ -1345,6 +1362,7 @@ impl App {
     }
 
     pub fn open_command_center(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_root_popovers();
         self.focused_field = Some("command-center".to_string());
         // Re-register the platform text-input handler after opening from a
         // button, which intentionally blurs its own focus before invoking us.
@@ -1376,6 +1394,20 @@ impl App {
         self.command_open = false;
         self.focused_field = None;
         self.platform_input_focus = None;
+        self.finish_command_session();
+    }
+
+    /// Escape dismisses suggestions but returns keyboard ownership to the
+    /// search field. A following edit reopens results; a second Escape leaves
+    /// the field, matching native search-menu behavior.
+    pub fn dismiss_command_center_to_source(&mut self) {
+        self.command_open = false;
+        self.focused_field = Some("command-center".to_string());
+        self.platform_input_focus = None;
+        self.finish_command_session();
+    }
+
+    fn finish_command_session(&mut self) {
         if self.command_scope == "commands" {
             self.command_scope = "all".into();
             let state = self.fields.entry("command-center".to_string()).or_default();
@@ -1463,6 +1495,51 @@ impl App {
 
     pub fn mark_menu_closed(&mut self) {
         self.menu_closed_at = std::time::Instant::now();
+    }
+
+    /// Root-level transient surfaces are mutually exclusive. Their renderers
+    /// are trigger-owned, but state still closes as one overlay stack.
+    pub fn dismiss_root_popovers(&mut self) {
+        self.random_popup_open = false;
+        self.sort_menu_open = false;
+        self.workspace_menu_open = false;
+        self.activity_open = false;
+        self.history_more_menu_post = None;
+        self.open_combos.clear();
+        if self.command_open {
+            self.close_command_center();
+        }
+    }
+
+    pub fn toggle_sort_popup(&mut self) {
+        if self.sort_menu_open {
+            self.sort_menu_open = false;
+            self.mark_menu_closed();
+        } else if self.menu_reopen_allowed() {
+            self.dismiss_root_popovers();
+            self.sort_menu_open = true;
+        }
+    }
+
+    pub fn toggle_activity_popup(&mut self) {
+        if self.activity_open {
+            self.activity_open = false;
+            self.mark_menu_closed();
+        } else if self.menu_reopen_allowed() {
+            self.dismiss_root_popovers();
+            self.activity_open = true;
+        }
+    }
+
+    pub fn toggle_workspace_popup(&mut self, source: WorkspaceMenuSource) {
+        if self.workspace_menu_open && self.workspace_menu_source == source {
+            self.workspace_menu_open = false;
+            self.mark_menu_closed();
+        } else if self.menu_reopen_allowed() {
+            self.dismiss_root_popovers();
+            self.workspace_menu_source = source;
+            self.workspace_menu_open = true;
+        }
     }
 
     pub fn toggle_combo(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -2017,17 +2094,21 @@ impl App {
                 if self.random_popup_open {
                     self.random_popup_open = false;
                     self.mark_menu_closed();
+                    window.focus(&self.random_source_focus);
                 } else if self.command_open {
-                    self.close_command_center();
+                    self.dismiss_command_center_to_source();
                 } else if self.sort_menu_open {
                     self.sort_menu_open = false;
                     self.mark_menu_closed();
+                    window.focus(&self.sort_source_focus);
                 } else if self.workspace_menu_open {
                     self.workspace_menu_open = false;
                     self.mark_menu_closed();
+                    window.focus(&self.workspace_source_focus);
                 } else if self.activity_open {
                     self.activity_open = false;
                     self.mark_menu_closed();
+                    window.focus(&self.activity_source_focus);
                 } else if !self.open_combos.is_empty() {
                     self.open_combos.clear();
                 } else if self.focused_field.as_deref() == Some("workspace-rename") {
@@ -2042,6 +2123,7 @@ impl App {
                     window.toggle_fullscreen();
                 } else if self.history_more_menu_post.take().is_some() {
                     self.history_more_menu_closed_at = std::time::Instant::now();
+                    window.focus(&self.history_source_focus);
                 }
                 cx.notify();
             }
@@ -2087,7 +2169,7 @@ impl App {
                     return true;
                 }
                 "escape" => {
-                    self.close_command_center();
+                    self.dismiss_command_center_to_source();
                     cx.notify();
                     return true;
                 }
@@ -2542,36 +2624,6 @@ impl App {
                 );
             }
             root = root.child(toast_column);
-        }
-
-        // History "More actions" menu overlay.
-        if self.page == Page::History && self.history_more_menu_post.is_some() {
-            root = root.child(self.render_history_menu(cx));
-        }
-
-        // Random-source popup.
-        if self.random_popup_open {
-            root = root.child(self.render_random_popup(cx));
-        }
-
-        // Command-center popup.
-        if self.command_open {
-            root = root.child(self.render_command_center(cx));
-        }
-
-        // Workspace context menu.
-        if self.workspace_menu_open {
-            root = root.child(self.render_workspace_menu(cx));
-        }
-
-        // Sort control popup.
-        if self.sort_menu_open {
-            root = root.child(self.render_sort_menu(cx));
-        }
-
-        // Background activity popup.
-        if self.activity_open {
-            root = root.child(self.render_activity_popup(cx));
         }
 
         root

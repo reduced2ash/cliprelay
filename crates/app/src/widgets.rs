@@ -8,6 +8,74 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
+/// Where a transient surface attaches to its owning control. The owner and
+/// popup remain in one local layout tree; [`anchored_overlay`] defers only the
+/// popup's paint so scroll containers and clipped chrome cannot cut it off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverlayPlacement {
+    BelowStart,
+    BelowEnd,
+    AboveStart,
+    AboveEnd,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OverlayAnchorSpec {
+    corner: Corner,
+    offset: Point<Pixels>,
+}
+
+fn overlay_anchor_spec(
+    placement: OverlayPlacement,
+    trigger_size: Size<Pixels>,
+) -> OverlayAnchorSpec {
+    let gap = px(4.0);
+    match placement {
+        OverlayPlacement::BelowStart => OverlayAnchorSpec {
+            corner: Corner::TopLeft,
+            offset: point(px(0.0), gap),
+        },
+        OverlayPlacement::BelowEnd => OverlayAnchorSpec {
+            corner: Corner::TopRight,
+            offset: point(trigger_size.width, gap),
+        },
+        OverlayPlacement::AboveStart => OverlayAnchorSpec {
+            corner: Corner::BottomLeft,
+            offset: point(px(0.0), -trigger_size.height - gap),
+        },
+        OverlayPlacement::AboveEnd => OverlayAnchorSpec {
+            corner: Corner::BottomRight,
+            offset: point(trigger_size.width, -trigger_size.height - gap),
+        },
+    }
+}
+
+/// Keep a popup in the coordinate space of its source while drawing it above
+/// the rest of the application. Popup renderers own their occluding hitbox and
+/// wheel capture so GPUI measures the actual surface rather than a wrapper.
+pub fn anchored_overlay(
+    trigger: impl IntoElement,
+    popup: Option<impl IntoElement>,
+    placement: OverlayPlacement,
+    trigger_size: Size<Pixels>,
+) -> Div {
+    let mut owner = div().relative().child(trigger);
+    if let Some(popup) = popup {
+        let anchor = overlay_anchor_spec(placement, trigger_size);
+        owner = owner.child(
+            deferred(
+                anchored()
+                    .offset(anchor.offset)
+                    .anchor(anchor.corner)
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(popup),
+            )
+            .with_priority(10),
+        );
+    }
+    owner
+}
+
 /// A tiny text-field state kept on the App view.
 #[derive(Clone, Debug, Default)]
 pub struct FieldState {
@@ -310,25 +378,6 @@ pub fn button(
                     cx.stop_propagation();
                 }),
             )
-    })
-}
-
-/// `button` variant whose callback also receives the click position, for
-/// popups that anchor to the clicked control.
-#[allow(clippy::too_many_arguments)]
-pub fn button_at(
-    id: impl Into<SharedString>,
-    label: &str,
-    kind: ButtonKind,
-    icon: Option<&'static str>,
-    enabled: bool,
-    cx: &mut Context<crate::App>,
-    on_click: impl Fn(&mut crate::App, Point<Pixels>, &mut Context<crate::App>) + 'static,
-) -> Stateful<Div> {
-    button_base(id, label, kind, icon, enabled).when(enabled, |this| {
-        this.on_click(cx.listener(move |app, event: &ClickEvent, _window, cx| {
-            on_click(app, event.position(), cx)
-        }))
     })
 }
 
@@ -1061,7 +1110,8 @@ pub fn current_theme() -> crate::theme::Theme {
 
 #[cfg(test)]
 mod tests {
-    use super::FieldState;
+    use super::{overlay_anchor_spec, FieldState, OverlayPlacement};
+    use gpui::{point, px, size, Corner};
 
     fn assert_renders(state: &FieldState) {
         // rendered() must never slice mid-character.
@@ -1136,5 +1186,17 @@ mod tests {
         assert_eq!(FieldState::utf16_to_char(text, 1), 1);
         assert_eq!(FieldState::utf16_to_char(text, 2), 1);
         assert_eq!(FieldState::utf16_to_char(text, 3), 2);
+    }
+
+    #[test]
+    fn overlay_anchors_are_derived_from_the_live_trigger_box() {
+        let trigger = size(px(132.0), px(32.0));
+        let below = overlay_anchor_spec(OverlayPlacement::BelowEnd, trigger);
+        assert_eq!(below.corner, Corner::TopRight);
+        assert_eq!(below.offset, point(px(132.0), px(4.0)));
+
+        let above = overlay_anchor_spec(OverlayPlacement::AboveStart, trigger);
+        assert_eq!(above.corner, Corner::BottomLeft);
+        assert_eq!(above.offset, point(px(0.0), px(-36.0)));
     }
 }

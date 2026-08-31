@@ -1,8 +1,10 @@
 //! History page: relayed posts with delivery status, retries, and cleanup.
 
 use crate::state::*;
+use crate::theme::CONTROL_HEIGHT;
 use crate::widgets::*;
 use cliprelay_core::db::PostRow;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::path::PathBuf;
 
@@ -199,7 +201,7 @@ impl crate::App {
     }
 
     fn render_history_row(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
         theme: &crate::theme::Theme,
         post: &PostRow,
@@ -419,28 +421,41 @@ impl crate::App {
                 },
             ));
         }
-        actions = actions.child(button_at(
+        let more_button = button(
             format!("history-more-{post_id}"),
             "More actions",
             ButtonKind::Ghost,
             Some("⋯"),
             true,
             cx,
-            move |app, position, cx| {
-                // Toggle with the original's 180ms reopen guard; the menu
-                // anchors to the clicked row (mirrors the original's
-                // button-anchored Menu popup).
+            move |app, cx| {
                 if app.history_more_menu_post == Some(post_id) {
                     app.history_more_menu_post = None;
                     app.history_more_menu_closed_at = std::time::Instant::now();
                 } else if app.history_more_menu_closed_at.elapsed().as_millis() >= 180 {
+                    app.dismiss_root_popovers();
                     app.history_more_menu_post = Some(post_id);
-                    let y: f32 = position.y.into();
-                    app.history_more_menu_y = y;
                 }
                 cx.notify();
             },
-        ));
+        )
+        .w(px(132.0))
+        .when(self.history_more_menu_post == Some(post_id), |button| {
+            button.track_focus(&self.history_source_focus)
+        });
+        let more_menu = (self.history_more_menu_post == Some(post_id))
+            .then(|| self.render_history_menu(cx).into_any());
+        actions = actions.child(
+            anchored_overlay(
+                more_button,
+                more_menu,
+                OverlayPlacement::AboveEnd,
+                size(px(132.0), px(CONTROL_HEIGHT)),
+            )
+            .flex_none()
+            .w(px(132.0))
+            .h(px(CONTROL_HEIGHT)),
+        );
         let _ = (can_trash, has_export);
         let row_inner = div()
             .w_full()
