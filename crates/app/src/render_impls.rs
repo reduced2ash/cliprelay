@@ -643,6 +643,9 @@ impl crate::App {
         let entries = self.command_entries();
         let selected = self.command_selected;
         let scope = self.command_scope.clone();
+        let popup_width = (self.window_size.0 - 24.0).clamp(360.0, 860.0);
+        let popup_left = ((self.window_size.0 - popup_width) / 2.0).max(12.0);
+        let results_height = (self.window_size.1 - 140.0).clamp(180.0, 420.0);
         let mut popup = div()
             .id("command-center-popup")
             .on_mouse_down_out(cx.listener(|app, _event, _window, cx| {
@@ -653,11 +656,8 @@ impl crate::App {
             }))
             .absolute()
             .top(px(46.0))
-            .left(px(96.0))
-            // Match the search field's width (right group ≈ 360px).
-            .w(px(
-                (self.window_size.0 - 96.0 - 16.0 - 360.0).clamp(420.0, 860.0)
-            ))
+            .left(px(popup_left))
+            .w(px(popup_width))
             .rounded(px(10.0))
             .bg(theme.overlay_surface())
             .border_1()
@@ -676,6 +676,7 @@ impl crate::App {
         let mut chips = div()
             .w_full()
             .h(px(44.0))
+            .flex_none()
             .px(px(8.0))
             .border_b_1()
             .border_color(theme.border)
@@ -797,12 +798,14 @@ impl crate::App {
         let mut list = div()
             .id("command-results")
             .w_full()
-            .max_h(px(420.0))
+            .max_h(px(results_height))
             .overflow_scroll()
             .scrollbar_width(px(10.0))
             .flex()
             .flex_col()
-            .py(px(7.0));
+            .gap(px(1.0))
+            .px(px(8.0))
+            .py(px(8.0));
 
         let selectable_count = entries
             .iter()
@@ -819,8 +822,9 @@ impl crate::App {
                     list = list.child(
                         div()
                             .w_full()
-                            .h(px(26.0))
-                            .px(px(16.0))
+                            .h(px(24.0))
+                            .flex_none()
+                            .px(px(8.0))
                             .flex()
                             .items_center()
                             .child(title.to_string())
@@ -837,13 +841,44 @@ impl crate::App {
                     let detail = action.detail;
                     let glyph = action.glyph;
                     let shortcut = action.shortcut;
+                    let rest_face = if is_selected {
+                        theme.selection_face(TactileState::Rest, false)
+                    } else {
+                        theme.transparent().into()
+                    };
+                    let rest_edge = if is_selected {
+                        theme.tactile_edge(TactileState::Rest, false)
+                    } else {
+                        theme.transparent()
+                    };
+                    let rest_shadow = if is_selected {
+                        theme.tactile_shadow(TactileState::Rest, true)
+                    } else {
+                        Vec::new()
+                    };
+                    let hover_face = if is_selected {
+                        theme.selection_face(TactileState::Hover, false)
+                    } else {
+                        theme.control_face(TactileState::Hover)
+                    };
+                    let hover_edge = theme.tactile_edge(TactileState::Hover, false);
+                    let hover_shadow = theme.tactile_shadow(TactileState::Hover, true);
+                    let pressed_face = theme.selection_face(TactileState::Pressed, false);
+                    let pressed_edge = theme.tactile_edge(TactileState::Pressed, false);
+                    let pressed_shadow = theme.tactile_shadow(TactileState::Pressed, true);
                     let mut row = div()
                         .id(SharedString::from(format!("action-{action_id}")))
                         .w_full()
-                        .mx(px(8.0))
-                        .h(px(52.0))
-                        .px(px(10.0))
+                        .h(px(54.0))
+                        .flex_none()
+                        .px(px(11.0))
                         .rounded(px(6.0))
+                        .relative()
+                        .top(px(0.0))
+                        .border_1()
+                        .border_color(rest_edge)
+                        .bg(rest_face)
+                        .shadow(rest_shadow)
                         .cursor(if enabled {
                             CursorStyle::PointingHand
                         } else {
@@ -853,24 +888,30 @@ impl crate::App {
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
-                        .hover(move |style| {
-                            if !enabled {
-                                style
-                            } else {
-                                style.bg(if is_selected {
-                                    theme.active
+                        .hover({
+                            let hover_shadow = hover_shadow.clone();
+                            move |style| {
+                                if !enabled {
+                                    style
                                 } else {
-                                    theme.hover
-                                })
+                                    style
+                                        .bg(hover_face)
+                                        .border_color(hover_edge)
+                                        .shadow(hover_shadow.clone())
+                                }
                             }
                         })
-                        .when(enabled, |this| this.active(|style| style.bg(theme.active)))
-                        .bg(if is_selected {
-                            theme.active
-                        } else {
-                            theme.transparent()
+                        .when(enabled, |this| {
+                            let pressed_shadow = pressed_shadow.clone();
+                            this.active(move |style| {
+                                style
+                                    .top(px(1.0))
+                                    .bg(pressed_face)
+                                    .border_color(pressed_edge)
+                                    .shadow(pressed_shadow.clone())
+                            })
                         })
-                        .opacity(if enabled { 1.0 } else { 0.56 })
+                        .opacity(if enabled { 1.0 } else { 0.46 })
                         .child(
                             div()
                                 .w(px(22.0))
@@ -911,8 +952,8 @@ impl crate::App {
                                 .child(
                                     div()
                                         .child(detail.to_string())
-                                        .text_size(px(11.0))
-                                        .text_color(theme.muted)
+                                        .text_size(px(11.5))
+                                        .text_color(theme.text_soft)
                                         .text_ellipsis(),
                                 ),
                         )
@@ -951,30 +992,67 @@ impl crate::App {
                     let title = item.title.clone();
                     let detail = item.detail.clone();
                     let count = item.count;
+                    let rest_face = if is_selected {
+                        theme.selection_face(TactileState::Rest, false)
+                    } else {
+                        theme.transparent().into()
+                    };
+                    let rest_edge = if is_selected {
+                        theme.tactile_edge(TactileState::Rest, false)
+                    } else {
+                        theme.transparent()
+                    };
+                    let rest_shadow = if is_selected {
+                        theme.tactile_shadow(TactileState::Rest, true)
+                    } else {
+                        Vec::new()
+                    };
+                    let hover_face = if is_selected {
+                        theme.selection_face(TactileState::Hover, false)
+                    } else {
+                        theme.control_face(TactileState::Hover)
+                    };
+                    let hover_edge = theme.tactile_edge(TactileState::Hover, false);
+                    let hover_shadow = theme.tactile_shadow(TactileState::Hover, true);
+                    let pressed_face = theme.selection_face(TactileState::Pressed, false);
+                    let pressed_edge = theme.tactile_edge(TactileState::Pressed, false);
+                    let pressed_shadow = theme.tactile_shadow(TactileState::Pressed, true);
                     let mut row = div()
                         .id(SharedString::from(format!("command-{index}")))
                         .w_full()
-                        .mx(px(8.0))
-                        .h(px(52.0))
-                        .px(px(10.0))
+                        .h(px(54.0))
+                        .flex_none()
+                        .px(px(11.0))
                         .rounded(px(6.0))
+                        .relative()
+                        .top(px(0.0))
+                        .border_1()
+                        .border_color(rest_edge)
+                        .bg(rest_face)
+                        .shadow(rest_shadow)
                         .cursor_pointer()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
-                        .hover(move |style| {
-                            style.bg(if is_selected {
-                                theme.active
-                            } else {
-                                theme.hover
-                            })
+                        .hover({
+                            let hover_shadow = hover_shadow.clone();
+                            move |style| {
+                                style
+                                    .bg(hover_face)
+                                    .border_color(hover_edge)
+                                    .shadow(hover_shadow.clone())
+                            }
                         })
-                        .active(|style| style.bg(theme.active))
-                        .bg(if is_selected {
-                            theme.active
-                        } else {
-                            theme.transparent()
+                        .active({
+                            let pressed_shadow = pressed_shadow.clone();
+                            move |style| {
+                                style
+                                    .top(px(1.0))
+                                    .bg(pressed_face)
+                                    .border_color(pressed_edge)
+                                    .shadow(pressed_shadow.clone())
+                            }
                         })
                         .child(
                             div()
@@ -1016,8 +1094,8 @@ impl crate::App {
                                 .child(
                                     div()
                                         .child(detail)
-                                        .text_size(px(11.0))
-                                        .text_color(theme.muted)
+                                        .text_size(px(11.5))
+                                        .text_color(theme.text_soft)
                                         .text_ellipsis(),
                                 ),
                         )
@@ -1054,6 +1132,7 @@ impl crate::App {
                 div()
                     .w_full()
                     .h(px(82.0))
+                    .flex_none()
                     .flex()
                     .flex_row()
                     .items_center()
@@ -1102,6 +1181,8 @@ impl crate::App {
                 div()
                     .w_full()
                     .py(px(26.0))
+                    .px(px(20.0))
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .items_center()
@@ -1111,13 +1192,15 @@ impl crate::App {
                             .child(title)
                             .text_size(px(13.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_center(),
                     )
                     .child(
                         div()
                             .child(detail)
-                            .text_size(px(11.0))
-                            .text_color(theme.muted),
+                            .text_size(px(11.5))
+                            .text_color(theme.text_soft)
+                            .text_center(),
                     ),
             );
         }
@@ -1133,8 +1216,9 @@ impl crate::App {
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(34.0))
-                .px(px(14.0))
+                .h(px(36.0))
+                .flex_none()
+                .px(px(16.0))
                 .border_t_1()
                 .border_color(theme.border)
                 .flex()
@@ -2196,14 +2280,21 @@ impl crate::App {
             // original's tabContextMenu popup.
             .bottom(px(46.0))
             .right(px(12.0))
-            .w(px(232.0))
+            .w(px(260.0))
             .rounded(px(10.0))
-            .bg(theme.surface_soft)
+            .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
+            .when(theme.is_frosted(), |menu| {
+                menu.shadow(theme.material_shadow())
+            })
+            .when(!theme.is_frosted(), |menu| menu.shadow_lg())
+            .px(px(6.0))
             .py(px(6.0))
             .flex()
-            .flex_col();
+            .flex_col()
+            .gap(px(1.0))
+            .overflow_hidden();
 
         let add_item = |_app: &mut crate::App,
                         id: &'static str,
@@ -2215,7 +2306,13 @@ impl crate::App {
             let mut item = div()
                 .id(id)
                 .h(px(40.0))
-                .px(px(12.0))
+                .flex_none()
+                .px(px(9.0))
+                .rounded(px(6.0))
+                .relative()
+                .top(px(0.0))
+                .border_1()
+                .border_color(theme.transparent())
                 .flex()
                 .flex_row()
                 .items_center()
@@ -2223,18 +2320,63 @@ impl crate::App {
                 .child(icon(glyph, 16.0, theme.muted))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .child(label)
                         .text_size(px(13.0))
-                        .text_color(theme.text),
+                        .text_color(theme.text)
+                        .text_ellipsis(),
                 );
             item = item.when(!enabled, |this| this.opacity(0.46).cursor_default());
+            item = item.when(enabled, |this| {
+                let hover_face = theme.control_face(TactileState::Hover);
+                let hover_edge = theme.tactile_edge(TactileState::Hover, false);
+                let hover_shadow = theme.tactile_shadow(TactileState::Hover, false);
+                let pressed_face = theme.control_face(TactileState::Pressed);
+                let pressed_edge = theme.tactile_edge(TactileState::Pressed, false);
+                let pressed_shadow = theme.tactile_shadow(TactileState::Pressed, false);
+                let focus_face = theme.control_face(TactileState::Hover);
+                let focus_edge = theme.accent;
+                this.cursor_pointer()
+                    .tab_index(0)
+                    .hover(move |style| {
+                        style
+                            .bg(hover_face)
+                            .border_color(hover_edge)
+                            .shadow(hover_shadow.clone())
+                    })
+                    .active(move |style| {
+                        style
+                            .top(px(1.0))
+                            .bg(pressed_face)
+                            .border_color(pressed_edge)
+                            .shadow(pressed_shadow.clone())
+                    })
+                    .focus(move |style| style.bg(focus_face).border_2().border_color(focus_edge))
+            });
             if let Some(command) = command {
+                let click_command = command.clone();
+                let enter_command = command.clone();
                 item = item.when(enabled, |this| {
                     this.on_click(cx.listener(move |app, _event, _window, cx| {
                         app.workspace_menu_open = false;
-                        app.command(command.clone());
+                        app.command(click_command.clone());
                         cx.notify();
                     }))
+                    .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                        app.workspace_menu_open = false;
+                        app.command(enter_command.clone());
+                        cx.notify();
+                        cx.stop_propagation();
+                    }))
+                    .on_action(cx.listener(
+                        move |app, _: &crate::ActivateSpace, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.command(command.clone());
+                            cx.notify();
+                            cx.stop_propagation();
+                        },
+                    ))
                 });
             }
             item
@@ -2249,22 +2391,26 @@ impl crate::App {
             let can_close_right = index < workspace_count - 1;
             menu = menu
                 .child(
-                    add_item(self, "ws-rename", "Rename workspace", "✎", true, None, cx).on_click(
-                        cx.listener(move |app, _event, _window, cx| {
+                    add_item(self, "ws-rename", "Rename workspace", "✎", true, None, cx)
+                        .on_click(cx.listener(move |app, _event, _window, cx| {
                             app.workspace_menu_open = false;
-                            app.renaming_workspace = Some(index);
-                            let title = app
-                                .workspaces
-                                .get(index)
-                                .map(|w| w.title.clone())
-                                .unwrap_or_default();
-                            let state = app.field_state_mut("workspace-rename");
-                            state.text = title;
-                            state.caret = state.text.chars().count();
-                            app.focused_field = Some("workspace-rename".to_string());
+                            app.begin_workspace_rename(index);
                             cx.notify();
-                        }),
-                    ),
+                        }))
+                        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.begin_workspace_rename(index);
+                            cx.notify();
+                            cx.stop_propagation();
+                        }))
+                        .on_action(cx.listener(
+                            move |app, _: &crate::ActivateSpace, _window, cx| {
+                                app.workspace_menu_open = false;
+                                app.begin_workspace_rename(index);
+                                cx.notify();
+                                cx.stop_propagation();
+                            },
+                        )),
                 )
                 .child(add_item(
                     self,
@@ -2332,12 +2478,21 @@ impl crate::App {
                 ))
                 .child(divider())
                 .child(
-                    add_item(self, "ws-new", "New workspace…", "+", true, None, cx).on_click(
-                        cx.listener(|app, _event, _window, cx| {
+                    add_item(self, "ws-new", "New workspace…", "+", true, None, cx)
+                        .on_click(cx.listener(|app, _event, _window, cx| {
                             app.workspace_menu_open = false;
                             app.choose_new_workspace_folder(cx);
-                        }),
-                    ),
+                        }))
+                        .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.choose_new_workspace_folder(cx);
+                            cx.stop_propagation();
+                        }))
+                        .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.choose_new_workspace_folder(cx);
+                            cx.stop_propagation();
+                        })),
                 )
                 .child(add_item(
                     self,
@@ -2350,6 +2505,20 @@ impl crate::App {
                 ));
         }
         popup_fade(menu, "workspace-menu-fade")
+    }
+
+    fn begin_workspace_rename(&mut self, index: usize) {
+        self.renaming_workspace = Some(index);
+        self.platform_input_focus = None;
+        let title = self
+            .workspaces
+            .get(index)
+            .map(|workspace| workspace.title.clone())
+            .unwrap_or_default();
+        let state = self.field_state_mut("workspace-rename");
+        state.text = title;
+        state.caret = state.text.chars().count();
+        self.focused_field = Some("workspace-rename".to_string());
     }
 
     /// Whether the controller reported closed workspaces (best-effort from

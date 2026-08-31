@@ -1125,6 +1125,10 @@ impl crate::App {
                 .w_full()
                 .h(px(transport_height))
                 .px(px(6.0))
+                // The docked stage contributes 6px above this row. Bias the
+                // row's 12px of spare height upward so both optical gaps land
+                // at 9px while keeping every transport hit target unchanged.
+                .when(!is_studio, |transport| transport.pt(px(3.0)).pb(px(9.0)))
                 .border_b_1()
                 .border_color(theme.border)
                 .flex()

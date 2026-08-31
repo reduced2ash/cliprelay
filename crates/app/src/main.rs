@@ -1345,6 +1345,10 @@ impl App {
     }
 
     pub fn open_command_center(&mut self, cx: &mut Context<Self>) {
+        self.focused_field = Some("command-center".to_string());
+        // Re-register the platform text-input handler after opening from a
+        // button, which intentionally blurs its own focus before invoking us.
+        self.platform_input_focus = None;
         self.command_open = true;
         self.command_query = self.field_text("command-center");
         let needle = self.command_needle();
@@ -1371,6 +1375,7 @@ impl App {
     pub fn close_command_center(&mut self) {
         self.command_open = false;
         self.focused_field = None;
+        self.platform_input_focus = None;
         if self.command_scope == "commands" {
             self.command_scope = "all".into();
             let state = self.fields.entry("command-center".to_string()).or_default();
@@ -1783,7 +1788,12 @@ impl App {
 
     // ---- key dispatch ---------------------------------------------------
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let keystroke = &event.keystroke;
         let key = keystroke.key.as_str();
         let modifiers = keystroke.modifiers;
@@ -1802,8 +1812,25 @@ impl App {
             let handled =
                 self.handle_field_key(&field_id, key, keystroke.key_char.as_deref(), cmd, cx);
             if handled {
-                return;
+                return true;
             }
+        }
+
+        // Once GPUI's platform input handler is active, printable keystrokes
+        // must keep bubbling so IME/text insertion can commit them. They must
+        // not fall through to app shortcuts such as the global `R` command.
+        if self.focused_field.is_some()
+            && self.platform_input_focus.is_some()
+            && keystroke
+                .key_char
+                .as_deref()
+                .is_some_and(|character| !character.is_empty())
+            && !cmd
+            && !modifiers.control
+            && !modifiers.alt
+            && !modifiers.platform
+        {
+            return false;
         }
 
         match key {
@@ -1991,8 +2018,7 @@ impl App {
                     self.random_popup_open = false;
                     self.mark_menu_closed();
                 } else if self.command_open {
-                    self.command_open = false;
-                    self.focused_field = None;
+                    self.close_command_center();
                 } else if self.sort_menu_open {
                     self.sort_menu_open = false;
                     self.mark_menu_closed();
@@ -2019,8 +2045,9 @@ impl App {
                 }
                 cx.notify();
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     fn handle_field_key(
@@ -2363,7 +2390,9 @@ impl App {
                 }
             }))
             .on_key_down(cx.listener(|app, event, window, cx| {
-                app.on_key_down(event, window, cx);
+                if app.on_key_down(event, window, cx) {
+                    cx.stop_propagation();
+                }
             }));
 
         let explorer_owns_rail_seam = self.page == Page::Library
@@ -2422,6 +2451,14 @@ impl App {
         });
 
         root = root.child(body);
+        if self.focused_field.is_some() && window.focused(cx).is_none() {
+            let focus = self.focus_handle.clone();
+            cx.on_next_frame(window, move |app, window, _cx| {
+                if app.focused_field.is_some() {
+                    window.focus(&focus);
+                }
+            });
+        }
         if self.focus_library_selection
             && self.page == Page::Library
             && self

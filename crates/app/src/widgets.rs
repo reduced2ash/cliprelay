@@ -697,8 +697,10 @@ pub fn field_with_icon_hint(
         "•".repeat(state.text.chars().count())
     } else if state.text.is_empty() {
         placeholder.to_string()
-    } else {
+    } else if focused {
         state.rendered()
+    } else {
+        state.text.clone()
     };
     element = element.child(
         div()
@@ -737,8 +739,9 @@ pub fn field_with_icon_hint(
                     if app.focused_field.as_deref() != Some(id) {
                         app.focus_field(id, cx);
                     }
-                    app.on_key_down(event, window, cx);
-                    cx.stop_propagation();
+                    if app.on_key_down(event, window, cx) {
+                        cx.stop_propagation();
+                    }
                 }))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                     app.focus_field(id, cx);
@@ -804,8 +807,10 @@ pub fn text_area(
     }
     let display = if state.text.is_empty() {
         placeholder.to_string()
-    } else {
+    } else if focused {
         state.rendered()
+    } else {
+        state.text.clone()
     };
     element = element.child(
         div()
@@ -836,8 +841,9 @@ pub fn text_area(
             if app.focused_field.as_deref() != Some(id) {
                 app.focus_field(id, cx);
             }
-            app.on_key_down(event, window, cx);
-            cx.stop_propagation();
+            if app.on_key_down(event, window, cx) {
+                cx.stop_propagation();
+            }
         }))
         .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
             app.focus_field(id, cx);
