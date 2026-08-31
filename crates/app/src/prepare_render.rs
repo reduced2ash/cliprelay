@@ -290,7 +290,7 @@ fn studio_destination_row(
                 .border_1()
         })
         .when(!compact, |row| {
-            row.min_h(px(99.0)).py(px(12.0)).border_b_1()
+            row.min_h(px(76.0)).px(px(10.0)).py(px(8.0)).border_b_1()
         })
         .border_color(theme.border)
         .cursor_pointer()
@@ -304,12 +304,11 @@ fn studio_destination_row(
                 .border_color(current_theme().accent)
         })
         .flex()
-        .when(compact, |row| row.items_center())
-        .when(!compact, |row| row.items_start())
-        .gap(px(if compact { 10.0 } else { 12.0 }))
+        .items_center()
+        .gap(px(10.0))
         .child(icon(
             glyph,
-            if compact { 18.0 } else { 26.0 },
+            if compact { 18.0 } else { 20.0 },
             theme.text_soft,
         ))
         .child(
@@ -318,11 +317,11 @@ fn studio_destination_row(
                 .min_w(px(0.0))
                 .flex()
                 .flex_col()
-                .gap(px(if compact { 2.0 } else { 10.0 }))
+                .gap(px(if compact { 2.0 } else { 3.0 }))
                 .child(
                     div()
                         .w_full()
-                        .h(px(if compact { 24.0 } else { 34.0 }))
+                        .h(px(if compact { 24.0 } else { 26.0 }))
                         .flex()
                         .items_center()
                         .gap(px(8.0))
@@ -330,14 +329,14 @@ fn studio_destination_row(
                             div()
                                 .flex_1()
                                 .child(title)
-                                .text_size(px(if compact { 13.0 } else { 15.0 }))
+                                .text_size(px(if compact { 13.0 } else { 14.0 }))
                                 .text_color(theme.text)
                                 .font_weight(FontWeight::MEDIUM),
                         )
                         .child(
                             div()
-                                .h(px(if compact { 22.0 } else { 34.0 }))
-                                .px(px(if compact { 8.0 } else { 11.0 }))
+                                .h(px(if compact { 22.0 } else { 26.0 }))
+                                .px(px(if compact { 8.0 } else { 9.0 }))
                                 .rounded(px(2.0))
                                 .bg(badge_color.opacity(0.10))
                                 .border_1()
@@ -345,20 +344,20 @@ fn studio_destination_row(
                                 .flex()
                                 .items_center()
                                 .child(badge)
-                                .text_size(px(if compact { 10.5 } else { 12.0 }))
+                                .text_size(px(if compact { 10.5 } else { 11.0 }))
                                 .text_color(badge_color)
                                 .font_weight(FontWeight::MEDIUM),
                         )
                         .child(icon(
                             "chevron-right",
-                            if compact { 14.0 } else { 18.0 },
+                            if compact { 14.0 } else { 16.0 },
                             theme.muted,
                         )),
                 )
                 .child(
                     div()
                         .child(detail)
-                        .text_size(px(if compact { 11.0 } else { 13.0 }))
+                        .text_size(px(if compact { 11.0 } else { 11.5 }))
                         .text_color(theme.muted)
                         .when(compact, |detail| detail.text_ellipsis()),
                 ),
@@ -3690,75 +3689,60 @@ impl crate::App {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(if is_studio { 12.0 } else { 9.0 }))
-            .when(is_studio, |column| column.child(
-                div()
-                    .child(tracked("GENERATED COPY"))
-                    .text_size(px(11.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::SEMIBOLD),
-            ))
+            .gap(px(if is_studio { 10.0 } else { 9.0 }))
             .child(
                 div()
                     .child("Choose what happens to the prepared derivative after delivery.")
-                    .text_size(px(if is_studio { 12.0 } else { 11.5 }))
+                    .text_size(px(11.5))
                     .text_color(theme.muted),
             )
-            .child(cleanup_combo(self, cx, theme, !is_studio))
+            .child(cleanup_combo(self, cx, theme, true))
             .child(
                 div()
                     .child(cleanup_detail)
-                    .text_size(px(if is_studio { 12.0 } else { 11.0 }))
+                    .text_size(px(11.0))
                     .text_color(theme.text_soft),
             )
             .child(divider())
             .child(
                 div()
                     .w_full()
-                    .min_h(px(if is_studio { 64.0 } else { 54.0 }))
-                    .px(px(if is_studio { 12.0 } else { 10.0 }))
-                    .py(px(if is_studio { 10.0 } else { 8.0 }))
-                    .bg(if is_studio {
-                        theme.raised
-                    } else {
-                        theme.surface_soft
-                    })
+                    .min_h(px(if is_studio { 56.0 } else { 54.0 }))
+                    .px(px(10.0))
+                    .py(px(8.0))
+                    .bg(theme.surface_soft)
                     .border_1()
-                    .border_color(if is_studio {
-                        theme.border
-                    } else {
-                        theme.border.opacity(0.72)
-                    })
+                    .border_color(theme.border.opacity(0.72))
                     .flex()
                     .items_center()
-                    .gap(px(if is_studio { 10.0 } else { 8.0 }))
+                    .gap(px(8.0))
                     .child(icon(
                         "check",
-                        if is_studio { 17.0 } else { 14.0 },
+                        if is_studio { 15.0 } else { 14.0 },
                         theme.success,
                     ))
                     .child(
                         div()
                             .flex_1()
+                            .when(is_studio, |content| content.min_w(px(0.0)))
                             .flex()
                             .flex_col()
                             .gap(px(3.0))
                             .child(
                                 div()
                                     .child("Source protected")
-                                    .text_size(px(if is_studio { 13.0 } else { 12.0 }))
+                                    .text_size(px(if is_studio { 12.5 } else { 12.0 }))
                                     .text_color(theme.text)
-                                    .font_weight(if is_studio {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::MEDIUM
-                                    }),
+                                    .font_weight(FontWeight::MEDIUM),
                             )
                             .child(
                                 div()
                                     .child("Cleanup applies only to generated copies. Your original video is never modified or removed.")
                                     .text_size(px(if is_studio { 11.0 } else { 10.5 }))
-                                    .text_color(theme.muted),
+                                    .text_color(theme.muted)
+                                    .when(is_studio, |detail| {
+                                        detail.whitespace_normal().line_clamp(2)
+                                    }),
                             ),
                     ),
             )
@@ -3783,20 +3767,11 @@ impl crate::App {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(if is_studio { 12.0 } else { 9.0 }))
-            .when(is_studio, |column| {
-                column.child(
-                    div()
-                        .child(tracked("DELIVERY SETUP"))
-                        .text_size(px(11.0))
-                        .text_color(theme.text_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-            })
+            .gap(px(if is_studio { 10.0 } else { 9.0 }))
             .child(
                 div()
                     .child("Manage destination credentials and handoff defaults in Settings.")
-                    .text_size(px(if is_studio { 12.0 } else { 11.5 }))
+                    .text_size(px(11.5))
                     .text_color(theme.muted),
             )
             .child(divider())
@@ -3998,9 +3973,9 @@ impl crate::App {
                 cx.notify();
             },
         )
-        .h(px(if is_studio { 44.0 } else { 28.0 }))
-        .px(px(if is_studio { 12.0 } else { 8.0 }))
-        .text_size(px(if is_studio { 14.0 } else { 11.5 }))
+        .h(px(if is_studio { 32.0 } else { 28.0 }))
+        .px(px(if is_studio { 9.0 } else { 8.0 }))
+        .text_size(px(if is_studio { 12.0 } else { 11.5 }))
         .flex_1()
         .bg(if same_caption {
             if is_studio {
@@ -4049,9 +4024,9 @@ impl crate::App {
                 cx.notify();
             },
         )
-        .h(px(if is_studio { 44.0 } else { 28.0 }))
-        .px(px(if is_studio { 12.0 } else { 8.0 }))
-        .text_size(px(if is_studio { 14.0 } else { 11.5 }))
+        .h(px(if is_studio { 32.0 } else { 28.0 }))
+        .px(px(if is_studio { 9.0 } else { 8.0 }))
+        .text_size(px(if is_studio { 12.0 } else { 11.5 }))
         .flex_1()
         .bg(if same_caption {
             if is_studio {
@@ -4089,47 +4064,31 @@ impl crate::App {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(if is_studio { 12.0 } else { 9.0 }))
+            .gap(px(if is_studio { 10.0 } else { 9.0 }))
             .child(
                 div()
                     .child(tracked("OUTPUT"))
-                    .text_size(px(if is_studio { 13.0 } else { 11.0 }))
-                    .text_color(if is_studio {
-                        theme.text_soft
-                    } else {
-                        theme.muted
-                    })
+                    .text_size(px(11.0))
+                    .text_color(theme.muted)
                     .font_weight(FontWeight::SEMIBOLD),
             )
-            .when(is_studio, |column| {
-                column.child(
-                    div()
-                        .child("Choose a destination-aware generated copy.")
-                        .text_size(px(13.0))
-                        .text_color(theme.muted),
-                )
-            })
             .child(
                 div()
                     .w_full()
-                    .mt(px(if is_studio { 2.0 } else { 0.0 }))
+                    .mt(px(0.0))
                     .flex()
                     .items_center()
-                    .gap(px(if is_studio { 12.0 } else { 8.0 }))
+                    .gap(px(8.0))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .child(compression_combo(self, cx, theme, compact)),
+                            .child(compression_combo(self, cx, theme, true)),
                     )
                     .child(
                         div()
-                            .h(px(if is_studio {
-                                PREPARE_CONTROL_HEIGHT
-                            } else {
-                                38.0
-                            }))
-                            .px(px(if is_studio { 10.0 } else { 8.0 }))
+                            .h(px(38.0))
+                            .px(px(8.0))
                             .rounded(px(2.0))
                             .bg(theme.raised)
                             .border_1()
@@ -4137,7 +4096,7 @@ impl crate::App {
                             .flex()
                             .items_center()
                             .child(estimated)
-                            .text_size(px(if is_studio { 12.5 } else { 11.5 }))
+                            .text_size(px(11.5))
                             .text_color(theme.text_soft),
                     ),
             );
@@ -4166,33 +4125,17 @@ impl crate::App {
                             cx,
                         )
                         .w(px(112.0))
-                        .h(px(if is_studio {
-                            PREPARE_CONTROL_HEIGHT
-                        } else {
-                            38.0
-                        })),
+                        .h(px(38.0)),
                     ),
             );
         }
         column = column
-            .when(is_studio, |column| {
-                column.child(
-                    div()
-                        .child("The estimate follows the current cut.")
-                        .text_size(px(13.0))
-                        .text_color(theme.muted),
-                )
-            })
             .child(divider())
             .child(
                 div()
                     .child(tracked("DESTINATIONS"))
-                    .text_size(px(if is_studio { 13.0 } else { 11.0 }))
-                    .text_color(if is_studio {
-                        theme.text_soft
-                    } else {
-                        theme.muted
-                    })
+                    .text_size(px(11.0))
+                    .text_color(theme.muted)
                     .font_weight(FontWeight::SEMIBOLD),
             )
             .child(studio_destination_row(
@@ -4236,7 +4179,7 @@ impl crate::App {
             .child(
                 div()
                     .w_full()
-                    .h(px(if is_studio { 44.0 } else { 32.0 }))
+                    .h(px(32.0))
                     .flex()
                     .items_center()
                     .gap(px(if is_studio { 6.0 } else { 8.0 }))
@@ -4244,17 +4187,13 @@ impl crate::App {
                         div()
                             .flex_1()
                             .child(tracked("CAPTIONS"))
-                            .text_size(px(if is_studio { 13.0 } else { 10.5 }))
-                            .text_color(if is_studio {
-                                theme.text_soft
-                            } else {
-                                theme.muted
-                            })
+                            .text_size(px(if is_studio { 11.0 } else { 10.5 }))
+                            .text_color(theme.muted)
                             .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
                         div()
-                            .w(px(if is_studio { 236.0 } else { 184.0 }))
+                            .w(px(if is_studio { 196.0 } else { 184.0 }))
                             .h_full()
                             .when(compact, |group| {
                                 group
@@ -4266,7 +4205,7 @@ impl crate::App {
                                     .border_color(theme.border.opacity(0.72))
                             })
                             .flex()
-                            .gap(px(if is_studio { 6.0 } else { 2.0 }))
+                            .gap(px(if is_studio { 4.0 } else { 2.0 }))
                             .child(shared_toggle)
                             .child(separate_toggle),
                     ),
@@ -4279,7 +4218,7 @@ impl crate::App {
             column = column.child(
                 div()
                     .w_full()
-                    .h(px(if is_studio { 44.0 } else { 40.0 }))
+                    .h(px(40.0))
                     .relative()
                     .child(caption_area(
                         self,
@@ -4287,16 +4226,16 @@ impl crate::App {
                         "caption-shared",
                         "Add a caption for Telegram and X (optional)",
                         &caption,
-                        if is_studio { 44.0 } else { 40.0 },
+                        40.0,
                         76.0,
                         false,
-                        compact,
+                        true,
                     ))
                     .child(
                         div()
                             .absolute()
                             .right(px(12.0))
-                            .top(px(if is_studio { 15.0 } else { 13.0 }))
+                            .top(px(13.0))
                             .child(format!("{} / 280", group_digits(caption_len)))
                             .text_size(px(11.0))
                             .text_color(if caption_len > caption_limit || caption_len > 280 {
@@ -4322,7 +4261,7 @@ impl crate::App {
                 .child(
                     div()
                         .w_full()
-                        .h(px(if is_studio { 44.0 } else { 40.0 }))
+                        .h(px(40.0))
                         .relative()
                         .child(caption_area(
                             self,
@@ -4330,16 +4269,16 @@ impl crate::App {
                             "caption-tg",
                             "Telegram caption (optional)",
                             &telegram_caption,
-                            if is_studio { 44.0 } else { 40.0 },
+                            40.0,
                             84.0,
                             false,
-                            compact,
+                            true,
                         ))
                         .child(
                             div()
                                 .absolute()
                                 .right(px(12.0))
-                                .top(px(if is_studio { 15.0 } else { 13.0 }))
+                                .top(px(13.0))
                                 .child(format!(
                                     "{} / {}",
                                     group_digits(telegram_len),
@@ -4363,7 +4302,7 @@ impl crate::App {
                 .child(
                     div()
                         .w_full()
-                        .h(px(if is_studio { 44.0 } else { 40.0 }))
+                        .h(px(40.0))
                         .relative()
                         .child(caption_area(
                             self,
@@ -4371,16 +4310,16 @@ impl crate::App {
                             "caption-x",
                             "X caption (optional)",
                             &x_caption,
-                            if is_studio { 44.0 } else { 40.0 },
+                            40.0,
                             76.0,
                             false,
-                            compact,
+                            true,
                         ))
                         .child(
                             div()
                                 .absolute()
                                 .right(px(12.0))
-                                .top(px(if is_studio { 15.0 } else { 13.0 }))
+                                .top(px(13.0))
                                 .child(format!("{} / 280", group_digits(x_len)))
                                 .text_size(px(11.0))
                                 .text_color(if x_len > 280 {
@@ -4394,26 +4333,22 @@ impl crate::App {
 
         column.child(
             div()
-                .mt(px(if is_studio { 4.0 } else { 2.0 }))
-                .min_h(px(if is_studio { 62.0 } else { 44.0 }))
-                .pt(px(if is_studio { 14.0 } else { 8.0 }))
+                .mt(px(2.0))
+                .min_h(px(44.0))
+                .when(is_studio, |row| row.py(px(8.0)))
+                .when(compact, |row| row.pt(px(8.0)))
                 .border_t_1()
                 .border_color(theme.border)
                 .flex()
-                .when(is_studio, |row| row.items_start())
-                .when(compact, |row| row.items_center())
-                .gap(px(if is_studio { 10.0 } else { 8.0 }))
-                .child(icon(
-                    "delivery-info",
-                    if is_studio { 30.0 } else { 16.0 },
-                    theme.muted,
-                ))
+                .items_center()
+                .gap(px(8.0))
+                .child(icon("delivery-info", 16.0, theme.muted))
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.0))
                         .child("The trimmed clip will be prepared and delivered to the destinations above.")
-                        .text_size(px(if is_studio { 13.0 } else { 11.0 }))
+                        .text_size(px(if is_studio { 11.5 } else { 11.0 }))
                         .text_color(theme.muted)
                         .whitespace_normal()
                         .line_clamp(2),

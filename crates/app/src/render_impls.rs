@@ -3148,55 +3148,14 @@ impl crate::App {
             .w_full()
             .h(px(52.0))
             .flex_none()
-            .px(px(9.0))
+            .px(px(studio_inset))
             .bg(theme.ink)
-            .border_b_1()
-            .border_color(theme.border)
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.0))
             .child(
-                button(
-                    "studio-exit",
-                    "",
-                    ButtonKind::Danger,
-                    Some("close"),
-                    true,
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = false;
-                        cx.notify();
-                    },
-                )
-                .w(px(32.0))
-                .h(px(34.0))
-                .px(px(0.0))
-                .rounded(px(2.0))
-                .bg(theme.transparent())
-                .border_1()
-                .border_color(theme.accent),
-            )
-            .child(
-                workbench_button(
-                    "studio-back",
-                    "",
-                    "chevron-left",
-                    ButtonKind::Ghost,
-                    true,
-                    true,
-                    "Back to Library  ·  Escape",
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = false;
-                        cx.notify();
-                    },
-                )
-                .mr(px(18.0)),
-            )
-            .child(
                 div()
-                    .ml(px(4.0))
                     .child("Prepare")
                     .text_size(px(14.0))
                     .text_color(theme.text_soft)
@@ -3242,34 +3201,42 @@ impl crate::App {
                             .text_color(theme.text_soft),
                     ),
             )
-            .child(
-                button(
-                    "studio-mode-active",
-                    if compact_studio {
+            .when(compact_studio, |header| {
+                header.child(
+                    button(
+                        "studio-pane-toggle",
                         if compact_inspector_open {
                             "Video"
                         } else {
                             "Inspector"
-                        }
-                    } else {
-                        "Back to Prepare"
-                    },
-                    ButtonKind::Secondary,
-                    Some(if compact_studio {
-                        "panel"
-                    } else {
-                        "arrow-left"
-                    }),
-                    true,
-                    cx,
-                    move |app, cx| {
-                        if compact_studio {
+                        },
+                        ButtonKind::Secondary,
+                        Some("panel"),
+                        true,
+                        cx,
+                        move |app, cx| {
                             app.prepare.compact_inspector_open =
                                 !app.prepare.compact_inspector_open;
-                        } else {
-                            app.prepare.studio_mode = false;
-                            app.prepare.compact_inspector_open = false;
-                        }
+                            cx.notify();
+                        },
+                    )
+                    .h(px(34.0))
+                    .px(px(12.0))
+                    .rounded(px(2.0))
+                    .bg(theme.surface_soft),
+                )
+            })
+            .child(
+                button(
+                    "studio-mode-active",
+                    "Back to Prepare",
+                    ButtonKind::Secondary,
+                    Some("arrow-left"),
+                    true,
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = false;
+                        app.prepare.compact_inspector_open = false;
                         cx.notify();
                     },
                 )
@@ -3277,23 +3244,7 @@ impl crate::App {
                 .px(px(12.0))
                 .rounded(px(2.0))
                 .bg(theme.surface_soft),
-            )
-            .child(div().mx(px(8.0)).w(px(1.0)).h(px(26.0)).bg(theme.border))
-            .child(workbench_button(
-                "studio-close",
-                "",
-                "close",
-                ButtonKind::Ghost,
-                true,
-                true,
-                "Close selected video",
-                cx,
-                |app, cx| {
-                    app.prepare.studio_mode = false;
-                    app.command(Command::ClearSelection);
-                    cx.notify();
-                },
-            ));
+            );
 
         let mut stage_col = div()
             .id("studio-stage")
@@ -3346,6 +3297,7 @@ impl crate::App {
             .min_h(px(0.0))
             .min_w(px(0.0))
             .px(px(studio_inset))
+            .pt(px(4.0))
             .pb(px(studio_inset))
             .bg(theme.ink)
             .flex()
