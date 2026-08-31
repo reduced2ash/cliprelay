@@ -856,6 +856,8 @@ impl crate::App {
         let (play_enabled, seek_enabled) =
             crate::prepare::playback_control_availability(self.prepare.video.is_some(), duration);
         let is_studio = self.prepare.studio_mode;
+        let stacked_precision = is_studio && panel_width < 780.0;
+        let precision_height = if stacked_precision { 118.0 } else { 70.0 };
         let stage_gutter = if is_studio { 16.0 } else { PREPARE_GUTTER };
         let studio_media_right_inset = if is_studio { 13.0 } else { 0.0 };
         let track_width = (panel_width - stage_gutter * 2.0 - studio_media_right_inset).max(100.0);
@@ -927,8 +929,13 @@ impl crate::App {
         // Video frame.
         // Portrait and landscape clips receive the same proofing area and
         // letterbox inside it; the source ratio must not collapse the canvas.
-        let frame_height =
+        let mut frame_height =
             prepare_frame_height(is_studio, self.checking, self.window_size.1, track_width);
+        if is_studio {
+            // Reserve the inset panel's outside spacing and optional second
+            // row in the media budget instead of squeezing its controls.
+            frame_height = (frame_height - (precision_height - 70.0) - 28.0).max(118.0);
+        }
         // Frame rect in window coordinates (used by crop/mask drag math).
         // The workspace tabs live at the window bottom, so the frame sits
         // below the app and context toolbars, the optional studio/status
@@ -1408,191 +1415,190 @@ impl crate::App {
         // information as quiet readouts anchored to the trim lane.
         let mut studio_precision: Option<AnyElement> = None;
         if is_studio {
-            let in_text = if self.focused_field.as_deref() == Some("prepare-in") {
-                self.field_text("prepare-in")
-            } else {
-                self.prepare.format_time_precise(trim_start)
-            };
-            let out_text = if self.focused_field.as_deref() == Some("prepare-out") {
-                self.field_text("prepare-out")
-            } else {
-                self.prepare.format_time_precise(trim_end)
-            };
-            let duration_text = self.prepare.format_time_precise(trim_end - trim_start);
-            let precision = div()
-                .id("studio-precision")
-                .w_full()
-                .min_w(px(0.0))
-                .h(px(70.0))
+            let mut range_fields = div()
+                .id("studio-precision-fields")
+                .w(px(336.0))
                 .flex_none()
-                .bg(theme.surface)
-                .border_t_1()
-                .border_b_1()
-                .border_color(theme.border)
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .child(
+                .gap(px(12.0))
+                .when(stacked_precision, |row| row.w_full());
+            for (id, button_id, label, value, is_out) in [
+                ("prepare-in", "mark-in-playhead", "In", trim_start, false),
+                ("prepare-out", "mark-out-playhead", "Out", trim_end, true),
+            ] {
+                let focused = self.focused_field.as_deref() == Some(id);
+                let text = if focused {
+                    self.field_text(id)
+                } else {
+                    self.prepare.format_time_precise(value)
+                };
+                range_fields = range_fields.child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .flex()
                         .items_center()
+                        .gap(px(8.0))
                         .child(
                             button(
-                                "mark-in-playhead",
-                                "In",
+                                button_id,
+                                label,
                                 ButtonKind::Secondary,
                                 None,
                                 !disabled && duration > 0.0,
                                 cx,
-                                |app, cx| {
-                                    if app.prepare.mark_in_at_playhead() {
+                                move |app, cx| {
+                                    let changed = if is_out {
+                                        app.prepare.mark_out_at_playhead()
+                                    } else {
+                                        app.prepare.mark_in_at_playhead()
+                                    };
+                                    if changed {
                                         app.save_draft();
                                     }
                                     cx.notify();
                                 },
                             )
-                            .w(px(40.0))
-                            .h(px(42.0))
-                            .text_size(px(13.0))
-                            .rounded(px(2.0)),
-                        )
-                        .child(
-                            field(
-                                "prepare-in",
-                                "00:00.00",
-                                &self.fields.get("prepare-in").cloned().unwrap_or_else(|| {
-                                    crate::widgets::FieldState {
-                                        text: in_text.clone(),
-                                        caret: in_text.chars().count(),
-                                        committed: false,
-                                        marked_range: None,
-                                    }
-                                }),
-                                self.focused_field.as_deref() == Some("prepare-in"),
-                                !disabled,
-                                false,
-                                cx,
-                            )
-                            .w(px(104.0))
-                            .h(px(42.0)),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .child(
-                            button(
-                                "mark-out-playhead",
-                                "Out",
-                                ButtonKind::Secondary,
-                                None,
-                                !disabled && duration > 0.0,
-                                cx,
-                                |app, cx| {
-                                    if app.prepare.mark_out_at_playhead() {
-                                        app.save_draft();
-                                    }
-                                    cx.notify();
-                                },
-                            )
+                            .flex_none()
                             .w(px(44.0))
                             .h(px(42.0))
+                            .px(px(8.0))
                             .text_size(px(13.0))
-                            .rounded(px(2.0)),
+                            .rounded(px(2.0))
+                            .tooltip(move |_window, cx| {
+                                crate::tooltip_view(cx, format!("Set {label} to playhead").into())
+                            }),
                         )
-                        .child(
+                        .child(tabular(
                             field(
-                                "prepare-out",
+                                id,
                                 "00:00.00",
-                                &self.fields.get("prepare-out").cloned().unwrap_or_else(|| {
+                                &self.fields.get(id).cloned().unwrap_or_else(|| {
                                     crate::widgets::FieldState {
-                                        text: out_text.clone(),
-                                        caret: out_text.chars().count(),
+                                        text: text.clone(),
+                                        caret: text.chars().count(),
                                         committed: false,
                                         marked_range: None,
                                     }
                                 }),
-                                self.focused_field.as_deref() == Some("prepare-out"),
+                                focused,
                                 !disabled,
                                 false,
                                 cx,
                             )
-                            .w(px(104.0))
+                            .flex_1()
+                            .min_w(px(104.0))
                             .h(px(42.0)),
-                        ),
-                )
+                        )),
+                );
+            }
+            let summary_actions = div()
+                .id("studio-precision-actions")
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .when(stacked_precision, |row| row.w_full().flex_none())
                 .child(
                     div()
+                        .flex_none()
+                        .min_w(px(80.0))
                         .h(px(42.0))
                         .flex()
-                        .items_center()
-                        .bg(theme.raised)
-                        .border_1()
-                        .border_color(theme.border)
-                        .rounded(px(2.0))
+                        .flex_col()
+                        .justify_center()
+                        .gap(px(2.0))
                         .child(
                             div()
-                                .h_full()
-                                .px(px(10.0))
-                                .border_r_1()
-                                .border_color(theme.border)
-                                .flex()
-                                .items_center()
                                 .child("Duration")
                                 .text_size(px(12.0))
                                 .text_color(theme.muted),
                         )
                         .child(tabular(
                             div()
-                                .w(px(98.0))
-                                .text_center()
-                                .child(duration_text)
+                                .child(self.prepare.format_time_precise(trim_end - trim_start))
                                 .text_size(px(13.0))
-                                .text_color(theme.text),
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::MEDIUM),
                         )),
                 )
                 .child(div().flex_1())
-                .when(cut_active, |row| {
-                    row.child(workbench_button(
-                        "reset-cut",
-                        "",
-                        "refresh",
-                        ButtonKind::Ghost,
-                        true,
-                        true,
-                        "Reset cut to full video",
-                        cx,
-                        |app, cx| {
-                            app.prepare.reset_cut();
-                            app.save_draft();
-                            cx.notify();
-                        },
-                    ))
-                })
                 .child(
-                    button(
-                        "set-active-playhead",
-                        "Set to playhead",
-                        ButtonKind::Secondary,
-                        Some("play"),
-                        !disabled && duration > 0.0,
-                        cx,
-                        |app, cx| {
-                            let changed = if app.focused_field.as_deref() == Some("prepare-out") {
-                                app.prepare.mark_out_at_playhead()
-                            } else {
-                                app.prepare.mark_in_at_playhead()
-                            };
-                            if changed {
-                                app.save_draft();
-                            }
-                            cx.notify();
-                        },
-                    )
-                    .h(px(42.0))
-                    .px(px(16.0)),
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .when(cut_active, |row| {
+                            row.child(
+                                workbench_button(
+                                    "reset-cut",
+                                    "",
+                                    "refresh",
+                                    ButtonKind::Ghost,
+                                    true,
+                                    true,
+                                    "Reset cut to full video",
+                                    cx,
+                                    |app, cx| {
+                                        app.prepare.reset_cut();
+                                        app.save_draft();
+                                        cx.notify();
+                                    },
+                                )
+                                .w(px(36.0))
+                                .h(px(42.0)),
+                            )
+                        })
+                        .child(
+                            button(
+                                "set-active-playhead",
+                                "Set to playhead",
+                                ButtonKind::Secondary,
+                                Some("play"),
+                                !disabled && duration > 0.0,
+                                cx,
+                                |app, cx| {
+                                    let changed =
+                                        if app.focused_field.as_deref() == Some("prepare-out") {
+                                            app.prepare.mark_out_at_playhead()
+                                        } else {
+                                            app.prepare.mark_in_at_playhead()
+                                        };
+                                    if changed {
+                                        app.save_draft();
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                            .h(px(42.0))
+                            .px(px(12.0)),
+                        ),
                 );
+            let precision = div()
+                .id("studio-precision")
+                .w_full()
+                .min_w(px(0.0))
+                .h(px(precision_height))
+                .flex_none()
+                .mt(px(12.0))
+                .mb(px(16.0))
+                .px(px(16.0))
+                .py(px(12.0))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .rounded(px(RADIUS_SM))
+                .flex()
+                .items_center()
+                .gap(px(16.0))
+                .when(stacked_precision, |panel| {
+                    panel.flex_col().items_start().gap(px(8.0))
+                })
+                .child(range_fields)
+                .child(summary_actions);
             studio_precision = Some(precision.into_any());
         } else {
             let mut range_readout = div()

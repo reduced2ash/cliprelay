@@ -213,13 +213,15 @@ Explorer distinguishes browsing from previewing: only the Library's browsed fold
 
 Inspector tabs divide the available width evenly in a 42px row. Resting tabs use soft text; hover adds a graphite fill; the active tab adds Coral Text and a two-pixel coral rule. Keyboard focus adds a visible coral border without relying on the active rule alone.
 
-Focused Studio uses a real **Back to Prepare** action to return to the docked workspace. **Open Studio** appears only in docked Prepare; never repeat it as a no-op inside the already-focused workspace.
+Focused Studio places **Back to Prepare** at the left of its top bar, ahead of the source name, to return to the docked workspace. **Open Studio** appears only in docked Prepare; never repeat it as a no-op inside the already-focused workspace.
 
 Status pills use a semantic soft fill, low-opacity semantic border, icon plus explicit text, and the fully rounded pill shape. Ordinary panes remain square and use one-pixel seams rather than card styling.
 
 ### Timeline Range
 
 The timeline is a dark media strip with dimmed out-of-range regions, coral IN/OUT gates and selection border, and a two-pixel Playhead Blue line with a compact marker. Range labels and exact fields use tabular figures. Hover and drag feedback strengthen the active gate without changing the meaning of the playhead color.
+
+Studio's exact-range controls sit in one inset, fully bordered panel with clear space above and below and padded content on every side. In/Out buttons and fields form aligned pairs; duration and actions move to a second row in narrower panes. Keep the panel near-square and use the existing surface tone, with tactile depth reserved for its controls.
 
 ### Framing Console
 

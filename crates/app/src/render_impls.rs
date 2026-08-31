@@ -4142,11 +4142,24 @@ impl crate::App {
             .items_center()
             .gap(px(8.0))
             .child(
-                div()
-                    .child("Prepare")
-                    .text_size(px(14.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::MEDIUM),
+                button(
+                    "studio-mode-active",
+                    "Back to Prepare",
+                    ButtonKind::Secondary,
+                    Some("arrow-left"),
+                    true,
+                    cx,
+                    |app, cx| {
+                        app.prepare.studio_mode = false;
+                        app.prepare.compact_inspector_open = false;
+                        cx.notify();
+                    },
+                )
+                .flex_none()
+                .h(px(34.0))
+                .px(px(12.0))
+                .rounded(px(2.0))
+                .bg(theme.surface_soft),
             )
             .child(
                 div()
@@ -4157,7 +4170,7 @@ impl crate::App {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(80.0))
+                    .min_w(px(0.0))
                     .child(selected_name)
                     .text_size(px(14.0))
                     .text_color(theme.muted)
@@ -4212,26 +4225,7 @@ impl crate::App {
                     .rounded(px(2.0))
                     .bg(theme.surface_soft),
                 )
-            })
-            .child(
-                button(
-                    "studio-mode-active",
-                    "Back to Prepare",
-                    ButtonKind::Secondary,
-                    Some("arrow-left"),
-                    true,
-                    cx,
-                    |app, cx| {
-                        app.prepare.studio_mode = false;
-                        app.prepare.compact_inspector_open = false;
-                        cx.notify();
-                    },
-                )
-                .h(px(34.0))
-                .px(px(12.0))
-                .rounded(px(2.0))
-                .bg(theme.surface_soft),
-            );
+            });
 
         let mut stage_col = div()
             .id("studio-stage")
