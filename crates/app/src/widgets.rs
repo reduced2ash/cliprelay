@@ -767,7 +767,7 @@ pub fn field_with_icon_hint(
                 .flex_none()
                 .px(px(6.0))
                 .py(px(2.0))
-                .rounded(px(4.0))
+                .rounded(px(RADIUS_SM))
                 .bg(theme.surface)
                 .border_1()
                 .border_color(theme.border)
@@ -793,7 +793,9 @@ pub fn field_with_icon_hint(
                     }
                 }))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                    app.focus_field(id, cx);
+                    if app.focused_field.as_deref() != Some(id) {
+                        app.focus_field(id, cx);
+                    }
                     if app.handle_field_key(id, "enter", None, false, cx) {
                         cx.stop_propagation();
                     } else {
@@ -802,7 +804,9 @@ pub fn field_with_icon_hint(
                 }))
                 .on_action(
                     cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                        app.focus_field(id, cx);
+                        if app.focused_field.as_deref() != Some(id) {
+                            app.focus_field(id, cx);
+                        }
                         if app.handle_field_key(id, "space", Some(" "), false, cx) {
                             cx.stop_propagation();
                         } else {

@@ -511,7 +511,7 @@ pub enum Event {
     RecordNavigationOrigin,
     SelectionVerifyFailed(i64),
     ScanBatchReady(String, u64),
-    SearchResults(String, Vec<SearchResultItem>),
+    SearchResults(String, String, Vec<SearchResultItem>),
 }
 
 #[derive(Debug, Clone, Default)]

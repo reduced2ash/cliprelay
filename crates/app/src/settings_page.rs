@@ -1013,7 +1013,7 @@ fn combo(
     let mut menu = div()
         .id(id)
         .w(px(width))
-        .rounded(px(10.0))
+        .rounded(px(MENU_RADIUS))
         .bg(theme.surface_soft)
         .border_1()
         .border_color(theme.border_strong)

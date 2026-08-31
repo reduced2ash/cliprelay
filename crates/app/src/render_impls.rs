@@ -505,32 +505,32 @@ impl crate::App {
     /// needle), and the haystack is label + detail + category + keywords.
     pub fn command_entries(&self) -> Vec<CommandEntry> {
         let query = self.command_needle().to_lowercase();
-        let actions = self.command_actions();
+        let scope = self.effective_command_scope();
         let mut entries: Vec<CommandEntry> = Vec::new();
-        if query.is_empty() {
-            let mut current_category = "";
-            for action in actions {
-                if action.category != current_category {
-                    current_category = action.category;
-                    entries.push(CommandEntry::Section(current_category));
+        // All starts with suggested commands. Explicit Videos/Folders scopes
+        // also show their library overview before a query is entered.
+        if scope != "commands" && (!query.is_empty() || scope != "all") {
+            entries.extend(
+                self.command_results
+                    .iter()
+                    .filter(|item| match scope.as_str() {
+                        "videos" => item.kind == "media",
+                        "folders" => item.kind == "folder",
+                        _ => true,
+                    })
+                    .cloned()
+                    .map(CommandEntry::Result),
+            );
+        }
+        if scope == "all" || scope == "commands" {
+            let matched = self.command_actions().into_iter().filter(|a| {
+                if query.is_empty() {
+                    return true;
                 }
-                entries.push(CommandEntry::Action(action));
-            }
-        } else {
-            if self.effective_command_scope() != "commands" {
-                for item in self.command_results.clone() {
-                    entries.push(CommandEntry::Result(item));
-                }
-            }
-            let matched: Vec<CommandAction> = actions
-                .into_iter()
-                .filter(|a| {
-                    let haystack =
-                        format!("{} {} {} {}", a.label, a.detail, a.category, a.keywords)
-                            .to_lowercase();
-                    haystack.contains(&query)
-                })
-                .collect();
+                let haystack = format!("{} {} {} {}", a.label, a.detail, a.category, a.keywords)
+                    .to_lowercase();
+                haystack.contains(&query)
+            });
             // Group matched commands by category like the original's
             // sectioned ListView (categories stay in registry order).
             let mut current_category = "";
@@ -639,11 +639,27 @@ impl crate::App {
         let theme = self.theme.clone();
         let entries = self.command_entries();
         let selected = self.command_selected;
-        let scope = self.command_scope.clone();
+        let scope = self.effective_command_scope();
         let popup_width = (self.window_size.0 - 340.0).clamp(360.0, 680.0);
         let results_height = (self.window_size.1 - 140.0).clamp(180.0, 320.0);
         let mut popup = div()
             .id("command-center-popup")
+            .track_focus(&self.command_popup_focus)
+            .key_context("cliprelay")
+            .on_action(cx.listener(|app, _: &crate::FocusPrevious, window, cx| {
+                window.focus_prev();
+                if !app.command_popup_focus.contains_focused(window, cx) {
+                    window.focus(&app.command_source_focus);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &crate::FocusNext, window, cx| {
+                window.focus_next();
+                if !app.command_popup_focus.contains_focused(window, cx) {
+                    // Leave after the query in the ordinary header tab order.
+                    window.focus(&app.command_source_focus);
+                    window.focus_next();
+                }
+            }))
             .occlude()
             .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
             .on_mouse_down_out(cx.listener(|app, _event, _window, cx| {
@@ -654,7 +670,7 @@ impl crate::App {
             }))
             .w(px(popup_width))
             .h(px(results_height + 80.0))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -686,8 +702,7 @@ impl crate::App {
             ("folders", "Folders"),
             ("commands", "Commands"),
         ] {
-            let effective_scope = self.effective_command_scope();
-            let active = effective_scope == value;
+            let active = scope == value;
             let value = value.to_string();
             let click_value = value.clone();
             let enter_value = value.clone();
@@ -722,7 +737,7 @@ impl crate::App {
                     .id(SharedString::from(format!("scope-{value}")))
                     .h(px(34.0))
                     .px(px(12.0))
-                    .rounded(px(6.0))
+                    .rounded(px(MENU_RADIUS))
                     .relative()
                     .top(px(0.0))
                     .border_1()
@@ -767,22 +782,15 @@ impl crate::App {
                             .border_color(chip_focus_edge)
                     })
                     .on_click(cx.listener(move |app, _event, window, cx| {
-                        window.blur();
-                        app.command_scope = click_value.clone();
-                        app.schedule_command_search(cx);
-                        cx.notify();
+                        app.select_command_scope(&click_value, window, cx);
                     }))
-                    .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                        app.command_scope = enter_value.clone();
-                        app.schedule_command_search(cx);
-                        cx.notify();
+                    .on_action(cx.listener(move |app, _: &crate::Activate, window, cx| {
+                        app.select_command_scope(&enter_value, window, cx);
                         cx.stop_propagation();
                     }))
                     .on_action(
-                        cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                            app.command_scope = value.clone();
-                            app.schedule_command_search(cx);
-                            cx.notify();
+                        cx.listener(move |app, _: &crate::ActivateSpace, window, cx| {
+                            app.select_command_scope(&value, window, cx);
                             cx.stop_propagation();
                         }),
                     ),
@@ -869,7 +877,7 @@ impl crate::App {
                         .h(px(54.0))
                         .flex_none()
                         .px(px(11.0))
-                        .rounded(px(6.0))
+                        .rounded(px(MENU_RADIUS))
                         .relative()
                         .top(px(0.0))
                         .border_1()
@@ -962,7 +970,7 @@ impl crate::App {
                                 .flex_none()
                                 .h(px(22.0))
                                 .px(px(7.0))
-                                .rounded(px(4.0))
+                                .rounded(px(MENU_RADIUS))
                                 .bg(theme.raised)
                                 .border_1()
                                 .border_color(theme.border)
@@ -1020,7 +1028,7 @@ impl crate::App {
                         .h(px(54.0))
                         .flex_none()
                         .px(px(11.0))
-                        .rounded(px(6.0))
+                        .rounded(px(MENU_RADIUS))
                         .relative()
                         .top(px(0.0))
                         .border_1()
@@ -1227,7 +1235,9 @@ impl crate::App {
                         .child("Searching…".to_string())
                         .text_size(px(11.0))
                         .text_color(theme.warning)
-                } else if !self.command_query.trim().is_empty() {
+                } else if !self.command_needle().is_empty()
+                    || matches!(scope.as_str(), "videos" | "folders")
+                {
                     div()
                         .child(format!(
                             "{} result{}",
@@ -1903,7 +1913,7 @@ impl crate::App {
             }))
             .w(px(268.0))
             .max_h(px((self.window_size.1 - 120.0).max(260.0)))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -1987,7 +1997,7 @@ impl crate::App {
                     .h(px(32.0))
                     .mx(px(6.0))
                     .px(px(8.0))
-                    .rounded(px(6.0))
+                    .rounded(px(MENU_RADIUS))
                     .relative()
                     .top(px(0.0))
                     .border_1()
@@ -2100,7 +2110,7 @@ impl crate::App {
                 }
             }))
             .w(px(326.0))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -2341,7 +2351,7 @@ impl crate::App {
                 }
             }))
             .w(px(260.0))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -2368,7 +2378,7 @@ impl crate::App {
                 .h(px(40.0))
                 .flex_none()
                 .px(px(9.0))
-                .rounded(px(6.0))
+                .rounded(px(MENU_RADIUS))
                 .relative()
                 .top(px(0.0))
                 .border_1()
@@ -2775,10 +2785,19 @@ impl crate::App {
             if show_hint { Some(search_hint) } else { None },
             cx,
         )
+        .track_focus(&self.command_source_focus)
+        .on_action(cx.listener(|app, _: &crate::FocusNext, window, cx| {
+            if app.command_open {
+                window.focus(&app.command_popup_focus);
+                window.focus_next();
+            } else {
+                cx.propagate();
+            }
+        }))
         .w_full()
         .h_full()
         .px(px(10.0))
-        .rounded(px(5.0))
+        .rounded(px(MENU_RADIUS))
         .bg(theme.raised);
         header = header.child(
             anchored_overlay(
@@ -3488,7 +3507,7 @@ impl crate::App {
                             .flex_none()
                             .px(px(6.0))
                             .py(px(3.0))
-                            .rounded(px(4.0))
+                            .rounded(px(MENU_RADIUS))
                             .bg(theme.raised)
                             .border_1()
                             .border_color(theme.border)
@@ -3514,7 +3533,7 @@ impl crate::App {
             }))
             .w(px(width))
             .max_h(px(max_height))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(guide_surface)
             .border_1()
             .border_color(theme.border_strong)
@@ -3589,7 +3608,7 @@ impl crate::App {
             }))
             .w(px(254.0))
             .max_h(px((self.window_size.1 - 28.0).clamp(220.0, 430.0)))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -4556,7 +4575,7 @@ impl crate::App {
                     .flex_none()
                     .w(px(18.0))
                     .h(px(18.0))
-                    .rounded(px(4.0))
+                    .rounded(px(MENU_RADIUS))
                     .border_1()
                     .border_color(if state > 0 {
                         theme.accent
@@ -4735,7 +4754,7 @@ impl crate::App {
             }))
             .w(px(popup_width))
             .h(px(popup_height))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
@@ -4776,7 +4795,7 @@ impl crate::App {
                         .flex_none()
                         .w(px(30.0))
                         .h(px(30.0))
-                        .rounded(px(RADIUS_MD))
+                        .rounded(px(MENU_RADIUS))
                         .bg(theme.accent_soft)
                         .border_1()
                         .border_color(theme.accent.opacity(0.36))
@@ -4822,7 +4841,7 @@ impl crate::App {
                         .flex_none()
                         .h(px(24.0))
                         .px(px(8.0))
-                        .rounded(px(12.0))
+                        .rounded(px(MENU_RADIUS))
                         .bg(theme.raised)
                         .border_1()
                         .border_color(selection_color.opacity(0.34))
@@ -4866,7 +4885,7 @@ impl crate::App {
                 .mt(px(8.0))
                 .h(px(if compact { 50.0 } else { 56.0 }))
                 .px(px(10.0))
-                .rounded(px(RADIUS_MD))
+                .rounded(px(MENU_RADIUS))
                 .relative()
                 .top(px(0.0))
                 .bg(all_rest)
@@ -4902,7 +4921,7 @@ impl crate::App {
                         .flex_none()
                         .w(px(32.0))
                         .h(px(32.0))
-                        .rounded(px(RADIUS_MD))
+                        .rounded(px(MENU_RADIUS))
                         .border_1()
                         .border_color(if all_selected {
                             theme.accent.opacity(0.52)
@@ -4958,7 +4977,7 @@ impl crate::App {
                         .flex_none()
                         .w(px(18.0))
                         .h(px(18.0))
-                        .rounded(px(4.0))
+                        .rounded(px(MENU_RADIUS))
                         .border_1()
                         .border_color(if all_selected {
                             theme.accent
@@ -5273,7 +5292,7 @@ impl crate::App {
                         div()
                             .w(px(36.0))
                             .h(px(36.0))
-                            .rounded(px(RADIUS_LG))
+                            .rounded(px(MENU_RADIUS))
                             .bg(theme.raised)
                             .border_1()
                             .border_color(theme.border)
@@ -5467,7 +5486,7 @@ impl crate::App {
                 }
             }))
             .w(px(224.0))
-            .rounded(px(10.0))
+            .rounded(px(MENU_RADIUS))
             .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)

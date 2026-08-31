@@ -632,6 +632,9 @@ pub const SPACING_XXL: f32 = 32.0;
 pub const RADIUS_SM: f32 = 2.0;
 pub const RADIUS_MD: f32 = 5.0;
 pub const RADIUS_LG: f32 = 7.0;
+// Menu shells and their rows, highlights, and badges share the workbench's
+// near-square geometry rather than introducing a separate rounded surface.
+pub const MENU_RADIUS: f32 = RADIUS_SM;
 
 pub const CONTROL_HEIGHT: f32 = 36.0;
 pub const COMPACT_CONTROL_HEIGHT: f32 = 32.0;

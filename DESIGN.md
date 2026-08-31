@@ -55,7 +55,7 @@ rounded:
   sm: "2px"
   md: "5px"
   lg: "7px"
-  menu: "10px"
+  menu: "2px"
   pill: "13px"
 spacing:
   xs: "4px"
@@ -185,7 +185,7 @@ When blur is unavailable, a neutral dark fallback and the semantic alpha ladder 
 
 ## Shapes
 
-The form language is squared and mechanical. Action controls, fields, tabs, media apertures, and timeline tracks use the two-pixel small corner; five- and seven-pixel radii are reserved for small supporting geometry. Ten-pixel rounding belongs to transient menus, while fully rounded shapes are reserved for status pills, dots, playhead markers, and the track-and-knob hardware of explicit switches.
+The form language is squared and mechanical. Action controls, fields, tabs, media apertures, and timeline tracks use the two-pixel small corner; five- and seven-pixel radii are reserved for small supporting geometry. Transient menus use the same two-pixel corner throughout their shells, buttons, row highlights, and badges. Outside menus, fully rounded shapes are reserved for status pills, dots, playhead markers, and the track-and-knob hardware of explicit switches.
 
 **The Earned Radius Rule.** A rounded silhouette must communicate a distinct control type or state, never decorate an ordinary container.
 

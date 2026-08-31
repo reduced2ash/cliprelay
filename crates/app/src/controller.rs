@@ -2937,7 +2937,7 @@ impl Controller {
                             count: result.count,
                         })
                         .collect();
-                    let _ = events.send(Event::SearchResults(query, items));
+                    let _ = events.send(Event::SearchResults(query, scope, items));
                 });
             }
             Command::Diagnostics => {

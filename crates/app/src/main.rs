@@ -184,6 +184,8 @@ pub struct App {
     library_item_focus: FocusHandle,
     sort_source_focus: FocusHandle,
     activity_source_focus: FocusHandle,
+    command_source_focus: FocusHandle,
+    command_popup_focus: FocusHandle,
     random_source_focus: FocusHandle,
     random_source_focus_pending: bool,
     random_popup_focus: FocusHandle,
@@ -383,6 +385,8 @@ impl App {
             library_item_focus: cx.focus_handle(),
             sort_source_focus: cx.focus_handle(),
             activity_source_focus: cx.focus_handle(),
+            command_source_focus: cx.focus_handle().tab_stop(true),
+            command_popup_focus: cx.focus_handle().tab_stop(false),
             random_source_focus: cx.focus_handle(),
             random_source_focus_pending: false,
             random_popup_focus: cx.focus_handle(),
@@ -1140,8 +1144,8 @@ impl App {
                     self.command(Command::EnsurePreview(media_id));
                 }
             }
-            Event::SearchResults(query, items) => {
-                if query == self.command_needle() {
+            Event::SearchResults(query, scope, items) => {
+                if query == self.command_needle() && scope == self.effective_command_scope() {
                     self.command_results = items;
                     self.command_searching = false;
                     self.command_selected = self
@@ -2023,6 +2027,41 @@ impl App {
         cx.notify();
     }
 
+    /// Scope controls belong to the search session, not its dismissal path.
+    /// Return to the query after either pointer or keyboard activation.
+    pub fn select_command_scope(
+        &mut self,
+        scope: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.command_prefix() {
+            let query = self.command_needle();
+            self.command_query = query.clone();
+            let field = self.field_state_mut("command-center");
+            field.text = query;
+            field.caret = field.text.chars().count();
+            field.marked_range = None;
+        }
+        self.command_scope = scope.to_string();
+        self.command_open = true;
+        self.command_results.clear();
+        self.command_selected = self
+            .command_entries()
+            .iter()
+            .position(|entry| {
+                matches!(entry, crate::render_impls::CommandEntry::Action(action) if action.enabled)
+            })
+            .unwrap_or(0);
+        self.focused_field = Some("command-center".to_string());
+        self.platform_input_focus = None;
+        self.root_focus_pending = false;
+        self.schedule_command_search(cx);
+        self.command_searching = scope != "commands";
+        window.focus(&self.command_source_focus);
+        cx.notify();
+    }
+
     /// Close the command center; a commands-scope session resets to the
     /// library scope and restores the media query (mirrors the original's
     /// onClosed behavior).
@@ -2581,6 +2620,15 @@ impl App {
             return false;
         }
 
+        if self.command_open && self.handle_command_menu_key(key, cx) {
+            if matches!(key, "up" | "down") {
+                self.focused_field = Some("command-center".to_string());
+                self.platform_input_focus = None;
+                window.focus(&self.command_source_focus);
+            }
+            return true;
+        }
+
         if self.context_menu.is_some() {
             return self.handle_context_menu_key(key, window, cx);
         }
@@ -2702,6 +2750,39 @@ impl App {
         true
     }
 
+    fn handle_command_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        match key {
+            "down" | "up" => {
+                let entries = self.command_entries();
+                if !entries.is_empty() {
+                    let direction: isize = if key == "down" { 1 } else { -1 };
+                    let mut next = self.command_selected as isize;
+                    let mut guard = 0;
+                    while guard < entries.len() as isize * 2 {
+                        next = (next + direction).rem_euclid(entries.len() as isize);
+                        match entries.get(next as usize) {
+                            Some(crate::render_impls::CommandEntry::Action(a)) if a.enabled => {
+                                break;
+                            }
+                            Some(crate::render_impls::CommandEntry::Result(_)) => break,
+                            _ => {}
+                        }
+                        guard += 1;
+                    }
+                    self.command_selected = next.max(0) as usize;
+                    cx.notify();
+                }
+            }
+            "enter" => self.activate_command_selection(cx),
+            "escape" => {
+                self.dismiss_command_center_to_source();
+                cx.notify();
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn handle_field_key(
         &mut self,
         field_id: &str,
@@ -2717,41 +2798,11 @@ impl App {
         {
             return false;
         }
-        if field_id == "command-center" && self.command_open {
-            match key {
-                "down" | "up" => {
-                    let entries = self.command_entries();
-                    if !entries.is_empty() {
-                        let direction: isize = if key == "down" { 1 } else { -1 };
-                        let mut next = self.command_selected as isize;
-                        let mut guard = 0;
-                        while guard < entries.len() as isize * 2 {
-                            next = (next + direction).rem_euclid(entries.len() as isize);
-                            match entries.get(next as usize) {
-                                Some(crate::render_impls::CommandEntry::Action(a)) if a.enabled => {
-                                    break;
-                                }
-                                Some(crate::render_impls::CommandEntry::Result(_)) => break,
-                                _ => {}
-                            }
-                            guard += 1;
-                        }
-                        self.command_selected = next.max(0) as usize;
-                        cx.notify();
-                    }
-                    return true;
-                }
-                "enter" => {
-                    self.activate_command_selection(cx);
-                    return true;
-                }
-                "escape" => {
-                    self.dismiss_command_center_to_source();
-                    cx.notify();
-                    return true;
-                }
-                _ => {}
-            }
+        if field_id == "command-center"
+            && self.command_open
+            && self.handle_command_menu_key(key, cx)
+        {
+            return true;
         }
         let platform_input_ready = self.platform_input_focus.is_some();
         let field = self.field_state_mut(field_id);
@@ -2955,22 +3006,38 @@ impl App {
     // ---- render ---------------------------------------------------------
 
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl Element {
-        // Semantic text ownership must follow real focus loss (Tab, pointer
-        // activation or a removed Studio field), not linger until a later
-        // Escape. Never move focus here: the newly focused control owns it.
+        // Text editing follows actual focus. The query and its deferred popup
+        // form one search session: moving to a scope control ends text ownership,
+        // not the session. In particular, mouse-down must not unmount that
+        // control before its click can be delivered.
+        let command_source_focused = self.command_source_focus.is_focused(window);
+        let command_popup_focused = self.command_popup_focus.contains_focused(window, cx);
         if self
             .platform_input_focus
             .as_ref()
             .is_some_and(|focus| !focus.is_focused(window))
         {
             self.platform_input_focus = None;
-            if let Some(field) = self.focused_field.take() {
-                if field == "command-center" {
-                    self.command_open = false;
-                    self.finish_command_session();
+            if self.focused_field.as_deref() != Some("command-center") || !command_source_focused {
+                if let Some(field) = self.focused_field.take() {
+                    if field == "command-center" {
+                        if !command_popup_focused {
+                            self.command_open = false;
+                            self.finish_command_session();
+                        }
+                    } else {
+                        self.on_field_commit(&field, cx);
+                    }
                 }
-                self.on_field_commit(&field, cx);
             }
+        }
+        if self.command_open && command_source_focused {
+            self.focused_field = Some("command-center".to_string());
+        } else if self.command_open && self.focused_field.is_none() && !command_popup_focused {
+            // Tab leaving the compound surface dismisses it without stealing
+            // focus from the destination control.
+            self.command_open = false;
+            self.finish_command_session();
         }
         let size = window.bounds().size;
         self.window_size = (size.width.into(), size.height.into());
@@ -3162,7 +3229,16 @@ impl App {
                 window.focus(&focus);
             });
         }
-        if self.focused_field.is_some() && window.focused(cx).is_none() {
+        if self.focused_field.as_deref() == Some("command-center")
+            && !self.command_source_focus.is_focused(window)
+        {
+            let focus = self.command_source_focus.clone();
+            cx.on_next_frame(window, move |app, window, _cx| {
+                if app.focused_field.as_deref() == Some("command-center") {
+                    window.focus(&focus);
+                }
+            });
+        } else if self.focused_field.is_some() && window.focused(cx).is_none() {
             let focus = self.focus_handle.clone();
             cx.on_next_frame(window, move |app, window, _cx| {
                 if app.focused_field.is_some() {
