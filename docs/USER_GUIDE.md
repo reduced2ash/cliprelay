@@ -65,11 +65,21 @@ live playback and editing state while providing a larger editor.
 
 ## Keyboard shortcuts
 
+Application shortcuts work from Library, Prepare, Studio, and other ordinary
+surfaces without focusing a special panel. Text entry and IME composition keep
+their editing keys; menus and focused controls keep their local arrows and
+activation keys. Explorer folder rows use arrows to navigate the tree, while
+`R` and `S` remain available. After dismissal or leaving a field, application
+shortcuts resume. Search/command shortcuts in Studio return to the main search
+surface.
+
 | Shortcut | Action |
 | --- | --- |
 | `Space` | Play or pause the selected video |
 | `←` / `→` | Select the previous or next video |
 | `R` | Pick a random video |
+| `S` | Open the current valid selection in Studio |
+| `I` / `O` | Set the cut In or Out point at the playhead |
 | `Cmd+K` / `Ctrl+K` | Focus the command center |
 | `Cmd+F` / `Ctrl+F` | Focus video and folder search |
 | `Cmd+Shift+P` / `Ctrl+Shift+P` | Open command mode |
@@ -80,11 +90,11 @@ live playback and editing state while providing a larger editor.
 | `Cmd+W` / `Ctrl+W` | Close the active workspace |
 | `Cmd+Shift+T` / `Ctrl+Shift+T` | Reopen the last closed workspace |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle workspace tabs |
-| `Cmd+[` / `Alt+←` | Go back in the active workspace |
-| `Cmd+]` / `Alt+→` | Go forward in the active workspace |
+| `Cmd+[` / `Ctrl+[` / `Alt+←` | Go back in the active workspace |
+| `Cmd+]` / `Ctrl+]` / `Alt+→` | Go forward in the active workspace |
 | `Cmd+M` / `Ctrl+M` | Minimize the window |
 | `Control+Cmd+F` / `F11` | Enter or exit full screen |
-| `Escape` | Exit full screen |
+| `Escape` | Dismiss the active menu or text field, then Studio or full screen |
 
 The themed title bar behaves like the platform window frame. Drag its empty
 area to move the window, drag any edge or corner to resize, and double-click

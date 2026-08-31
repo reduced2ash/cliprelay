@@ -20,7 +20,9 @@ mod video_element;
 mod widgets;
 
 use crate::controller::spawn_controller;
-use crate::shortcuts::{global_shortcut_for_key, GlobalShortcut};
+use crate::shortcuts::{
+    global_shortcut_for_key, GlobalShortcut, ShortcutContext, ShortcutModifiers,
+};
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
@@ -177,6 +179,7 @@ pub struct App {
     platform_input_bounds: Option<Bounds<Pixels>>,
     platform_input_focus: Option<FocusHandle>,
     focus_handle: FocusHandle,
+    root_focus_pending: bool,
     library_item_focus: FocusHandle,
     sort_source_focus: FocusHandle,
     activity_source_focus: FocusHandle,
@@ -190,6 +193,7 @@ pub struct App {
     shortcut_guide_focus: FocusHandle,
     explorer_item_focus: FocusHandle,
     context_menu_focus: FocusHandle,
+    _global_shortcut_subscription: Subscription,
     focus_library_selection: bool,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
@@ -355,6 +359,9 @@ impl App {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
+        let global_shortcut_subscription = cx.observe_keystrokes(|app, event, window, cx| {
+            app.on_unhandled_keystroke(event, window, cx)
+        });
         let app = Self {
             event_tx: event_tx.clone(),
             controller,
@@ -371,6 +378,7 @@ impl App {
                 None
             },
             focus_handle: cx.focus_handle(),
+            root_focus_pending: false,
             library_item_focus: cx.focus_handle(),
             sort_source_focus: cx.focus_handle(),
             activity_source_focus: cx.focus_handle(),
@@ -384,6 +392,7 @@ impl App {
             shortcut_guide_focus: cx.focus_handle(),
             explorer_item_focus: cx.focus_handle(),
             context_menu_focus: cx.focus_handle(),
+            _global_shortcut_subscription: global_shortcut_subscription,
             focus_library_selection: false,
             theme_mode: boot_theme_mode,
             ui_scale: 1.0,
@@ -630,6 +639,7 @@ impl App {
                     });
                 }
                 smol::Timer::after(Duration::from_millis(400)).await;
+                log::info!("ui-test workflow ready for interaction");
             })
             .detach();
         }
@@ -1387,8 +1397,76 @@ impl App {
             || self.key_captured
     }
 
-    fn invoke_global_shortcut(&mut self, shortcut: GlobalShortcut, cx: &mut Context<Self>) {
-        match shortcut {
+    /// Dismiss the innermost active key owner, including a deferred overlay
+    /// whose focused node is outside the rendered root's dispatch path.
+    fn handle_application_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let handled = if self.context_menu.is_some() {
+            self.close_context_menu(window);
+            true
+        } else if self.random_popup_open {
+            self.close_random_popup(cx);
+            true
+        } else if self.command_open {
+            self.dismiss_command_center_to_source();
+            true
+        } else if self.shortcut_guide_open {
+            self.close_shortcut_guide(window);
+            true
+        } else if self.sort_menu_open {
+            self.sort_menu_open = false;
+            self.mark_menu_closed();
+            window.focus(&self.sort_source_focus);
+            true
+        } else if self.workspace_menu_open {
+            self.workspace_menu_open = false;
+            self.mark_menu_closed();
+            window.focus(&self.workspace_source_focus);
+            true
+        } else if self.activity_open {
+            self.activity_open = false;
+            self.mark_menu_closed();
+            window.focus(&self.activity_source_focus);
+            true
+        } else if !self.open_combos.is_empty() {
+            self.open_combos.clear();
+            true
+        } else if self.focused_field.as_deref() == Some("workspace-rename") {
+            self.focused_field = None;
+            self.platform_input_focus = None;
+            self.renaming_workspace = None;
+            self.root_focus_pending = true;
+            true
+        } else if self.focused_field.is_some() {
+            self.focused_field = None;
+            self.platform_input_focus = None;
+            self.root_focus_pending = true;
+            true
+        } else if self.history_more_menu_post.take().is_some() {
+            self.history_more_menu_closed_at = std::time::Instant::now();
+            window.focus(&self.history_source_focus);
+            true
+        } else if self.prepare.studio_mode {
+            self.prepare.studio_mode = false;
+            true
+        } else if window.is_fullscreen() {
+            window.toggle_fullscreen();
+            true
+        } else {
+            false
+        };
+        if handled {
+            cx.notify();
+        }
+        handled
+    }
+
+    fn invoke_global_shortcut(
+        &mut self,
+        shortcut: GlobalShortcut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let invoked = match shortcut {
             GlobalShortcut::PreviousVideo | GlobalShortcut::NextVideo => {
                 if self.can_navigate_media() {
                     self.page = Page::Library;
@@ -1399,6 +1477,9 @@ impl App {
                         1
                     };
                     self.command(Command::NavigateSelection(direction));
+                    true
+                } else {
+                    false
                 }
             }
             GlobalShortcut::TogglePlayback => {
@@ -1406,16 +1487,210 @@ impl App {
                     self.prepare.toggle_playback();
                     self.save_draft();
                     cx.notify();
+                    true
+                } else {
+                    false
                 }
             }
             GlobalShortcut::PickRandomVideo => {
                 if self.can_navigate_media() && !self.random_picking {
                     self.page = Page::Library;
                     self.command(Command::PickRandom);
+                    true
+                } else {
+                    false
                 }
             }
-            GlobalShortcut::OpenStudio => self.open_selected_in_studio(cx),
+            GlobalShortcut::OpenStudio => {
+                let can_open = self.can_open_selected_in_studio();
+                self.open_selected_in_studio(cx);
+                can_open
+            }
+            GlobalShortcut::MarkIn | GlobalShortcut::MarkOut => {
+                if self.page == Page::Library
+                    && self.selected.is_some()
+                    && self.prepare.duration > 0.0
+                    && !self.checking
+                {
+                    let changed = if shortcut == GlobalShortcut::MarkIn {
+                        self.prepare.mark_in_at_playhead()
+                    } else {
+                        self.prepare.mark_out_at_playhead()
+                    };
+                    if changed {
+                        self.save_draft();
+                    }
+                    cx.notify();
+                    changed
+                } else {
+                    false
+                }
+            }
+            GlobalShortcut::FocusSearch => {
+                self.prepare.studio_mode = false;
+                self.focus_field("command-center", cx);
+                cx.notify();
+                true
+            }
+            GlobalShortcut::OpenCommandPalette => {
+                self.prepare.studio_mode = false;
+                self.command_scope = "commands".into();
+                if let Some(field) = self.fields.get_mut("command-center") {
+                    field.text.clear();
+                    field.caret = 0;
+                }
+                self.focus_field("command-center", cx);
+                cx.notify();
+                true
+            }
+            GlobalShortcut::ToggleFullscreen => {
+                window.toggle_fullscreen();
+                cx.notify();
+                true
+            }
+            GlobalShortcut::MinimizeWindow => {
+                window.minimize_window();
+                true
+            }
+            GlobalShortcut::Quit => {
+                cx.quit();
+                true
+            }
+            GlobalShortcut::OpenLibrary => {
+                self.navigate_to(Page::Library, cx);
+                true
+            }
+            GlobalShortcut::OpenHistory => {
+                self.navigate_to(Page::History, cx);
+                true
+            }
+            GlobalShortcut::OpenSettings => {
+                self.navigate_to(Page::Settings, cx);
+                true
+            }
+            GlobalShortcut::NewWorkspace => {
+                self.choose_new_workspace_folder(cx);
+                true
+            }
+            GlobalShortcut::CloseWorkspace => {
+                if let Some(workspace) = self.workspaces.get(self.active_workspace_index) {
+                    self.command(Command::CloseWorkspace(workspace.id.clone()));
+                    true
+                } else {
+                    false
+                }
+            }
+            GlobalShortcut::ReopenClosedWorkspace => {
+                self.command(Command::ReopenClosedWorkspace);
+                true
+            }
+            GlobalShortcut::CycleWorkspaceForward | GlobalShortcut::CycleWorkspaceBackward => {
+                let count = self.workspaces.len();
+                if count > 0 {
+                    self.save_draft();
+                    let direction = if shortcut == GlobalShortcut::CycleWorkspaceBackward {
+                        -1
+                    } else {
+                        1
+                    };
+                    let next = (self.active_workspace_index as isize + direction)
+                        .rem_euclid(count as isize) as usize;
+                    self.activate_workspace_at(next, cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            GlobalShortcut::NavigateBack => {
+                self.command(Command::NavigateBack);
+                true
+            }
+            GlobalShortcut::NavigateForward => {
+                self.command(Command::NavigateForward);
+                true
+            }
+        };
+        if invoked {
+            log::info!("application shortcut dispatched: {shortcut:?}");
+        } else {
+            log::info!("application shortcut unavailable: {shortcut:?}");
         }
+        invoked
+    }
+
+    /// Application fallback after GPUI has offered the key to focused actions
+    /// and bubbling key listeners. An action-bearing event was already claimed
+    /// by a focused control, so handling it again would double-activate.
+    fn on_unhandled_keystroke(
+        &mut self,
+        event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !window
+            .root::<Self>()
+            .flatten()
+            .is_some_and(|root| root == cx.entity())
+        {
+            return;
+        }
+        if event.action.is_some() {
+            return;
+        }
+        // Focused controls have already had first refusal. Local application
+        // owners (text, menus and Explorer) are resolved here even when a
+        // deferred overlay or a pointer blur leaves no root dispatch path.
+        if self.on_key_down(
+            &KeyDownEvent {
+                keystroke: event.keystroke.clone(),
+                is_held: false,
+            },
+            window,
+            cx,
+        ) {
+            cx.stop_propagation();
+            return;
+        }
+        let modifiers = event.keystroke.modifiers;
+        let shortcut_modifier = if cfg!(target_os = "macos") {
+            modifiers.platform
+        } else {
+            modifiers.control
+        };
+        let context = ShortcutContext {
+            // `focused_field` is the semantic editing/IME owner. The cached
+            // platform focus handle may outlive an element by one frame after
+            // commit or dismissal and must not suppress later app shortcuts.
+            text_entry_active: self.focused_field.is_some(),
+            composing: self.focused_field.as_ref().is_some_and(|id| {
+                self.fields
+                    .get(id)
+                    .is_some_and(|field| field.marked_range.is_some())
+            }),
+            transient_surface_active: self.transient_surface_owns_global_shortcuts(),
+            explorer_active: self.explorer_owns_keyboard(window, cx),
+        };
+        let Some(shortcut) = global_shortcut_for_key(
+            event.keystroke.key.as_str(),
+            ShortcutModifiers {
+                shortcut: shortcut_modifier,
+                control: modifiers.control,
+                shift: modifiers.shift,
+                alt: modifiers.alt,
+                platform: modifiers.platform,
+            },
+            context,
+        ) else {
+            return;
+        };
+        self.invoke_global_shortcut(shortcut, window, cx);
+        cx.stop_propagation();
+    }
+
+    fn explorer_owns_keyboard(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.page == Page::Library
+            && !self.prepare.studio_mode
+            && self.explorer_item_focus.contains_focused(window, cx)
     }
 
     pub fn open_shortcut_guide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1753,6 +2028,7 @@ impl App {
         self.command_open = false;
         self.focused_field = None;
         self.platform_input_focus = None;
+        self.root_focus_pending = true;
         self.finish_command_session();
     }
 
@@ -1822,6 +2098,7 @@ impl App {
     pub fn focus_field(&mut self, id: &str, cx: &mut Context<Self>) {
         self.focused_field = Some(id.to_string());
         self.platform_input_focus = None;
+        self.root_focus_pending = false;
         // Seed the field from the committed value so editing starts from it
         // (mirrors the original's Binding restore on focus).
         let seed: Option<String> = match id {
@@ -2224,7 +2501,7 @@ impl App {
         }
     }
 
-    // ---- key dispatch ---------------------------------------------------
+    // ---- local key ownership (before the application fallback) ----------
 
     fn on_key_down(
         &mut self,
@@ -2244,14 +2521,28 @@ impl App {
             modifiers.control
         };
         let shift = modifiers.shift;
+        let explorer_owns_keyboard = self.explorer_owns_keyboard(window, cx);
 
-        // Escape always dismisses the Random Sources surface, including while
-        // its search field owns text input, and restores focus to the trigger.
-        if self.random_popup_open
-            && self.focused_field.as_deref() == Some("random-filter")
-            && key == "escape"
-        {
-            self.close_random_popup(cx);
+        // Native composition keeps ownership even of Escape/arrows/Enter.
+        // They must reach the IME rather than dismissing its host or editing
+        // the application's committed text underneath its marked range.
+        if self.focused_field.as_ref().is_some_and(|id| {
+            self.fields
+                .get(id)
+                .is_some_and(|field| field.marked_range.is_some())
+        }) {
+            return false;
+        }
+
+        if key == "tab" && !cmd && !modifiers.control && !modifiers.alt && !modifiers.platform {
+            if shift {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
+            return true;
+        }
+        if key == "escape" && self.handle_application_escape(window, cx) {
             return true;
         }
 
@@ -2294,8 +2585,8 @@ impl App {
 
         // These transient surfaces deliberately do not expose media keys.
         // Keeping their key stream local prevents a command, sort, combo, or
-        // shortcut guide from activating content underneath it. Escape still
-        // reaches the ordered dismissal path below.
+        // shortcut guide from activating content underneath it. Escape was
+        // handled by the ordered dismissal path above.
         if (self.sort_menu_open
             || self.workspace_menu_open
             || self.activity_open
@@ -2309,19 +2600,9 @@ impl App {
             return false;
         }
 
-        // Root media shortcuts are centralized in the catalog-backed resolver
-        // below. Menus, popovers, key capture, and the Explorer retain their
-        // own navigation model before the root gets a chance to act.
-        if !self.transient_surface_owns_global_shortcuts() && !self.explorer_focus {
-            if let Some(shortcut) = global_shortcut_for_key(key, cmd, shift, modifiers.alt) {
-                self.invoke_global_shortcut(shortcut, cx);
-                return true;
-            }
-        }
-
         match key {
             "f10" if shift && !cmd && !modifiers.alt => {
-                if self.explorer_focus {
+                if explorer_owns_keyboard {
                     let root = PathBuf::from(self.settings_value(LIBRARY_ROOT));
                     let relative = self.explorer_selected.clone();
                     let path = if relative.is_empty() {
@@ -2344,99 +2625,6 @@ impl App {
                 } else if let Some(media_id) = self.selected.as_ref().map(|selected| selected.id) {
                     self.open_video_context_menu(media_id, window, cx);
                 }
-            }
-            "1" if cmd => self.navigate_to(Page::Library, cx),
-            "2" if cmd => self.navigate_to(Page::History, cx),
-            "," if cmd => self.navigate_to(Page::Settings, cx),
-            "f" if cmd && modifiers.control => {
-                window.toggle_fullscreen();
-                cx.notify();
-            }
-            "f" if cmd => {
-                // Find always opens the global command center (mirrors the
-                // original's StandardKey.Find handler).
-                self.focus_field("command-center", cx);
-                cx.notify();
-            }
-            "k" if cmd => {
-                self.focus_field("command-center", cx);
-                cx.notify();
-            }
-            "p" if cmd && shift => {
-                // Commands scope (mirrors focusCommands in the original).
-                self.command_scope = "commands".into();
-                if let Some(field) = self.fields.get_mut("command-center") {
-                    field.text.clear();
-                    field.caret = 0;
-                }
-                self.focus_field("command-center", cx);
-                cx.notify();
-            }
-            "m" if cmd => {
-                window.minimize_window();
-            }
-            "f11" => {
-                window.toggle_fullscreen();
-                cx.notify();
-            }
-            "w" if cmd && shift => {
-                cx.quit();
-            }
-            "[" if cmd || modifiers.alt => {
-                self.command(Command::NavigateBack);
-            }
-            "]" if cmd || modifiers.alt => {
-                self.command(Command::NavigateForward);
-            }
-            "t" if cmd => {
-                self.choose_new_workspace_folder(cx);
-            }
-            "w" if cmd && !shift => {
-                if let Some(workspace) = self.workspaces.get(self.active_workspace_index) {
-                    let id = workspace.id.clone();
-                    self.command(Command::CloseWorkspace(id));
-                }
-            }
-            "t" if cmd && shift => {
-                self.command(Command::ReopenClosedWorkspace);
-            }
-            "tab" if modifiers.control => {
-                let direction = if shift { -1 } else { 1 };
-                self.save_draft();
-                let count = self.workspaces.len();
-                if count > 0 {
-                    let next = (self.active_workspace_index as isize + direction as isize)
-                        .rem_euclid(count as isize) as usize;
-                    self.activate_workspace_at(next, cx);
-                }
-            }
-            "i" if !cmd
-                && !shift
-                && !modifiers.alt
-                && self.page == Page::Library
-                && self.selected.is_some()
-                && self.prepare.duration > 0.0
-                && !self.checking
-                && !self.transient_surface_owns_global_shortcuts() =>
-            {
-                if self.prepare.mark_in_at_playhead() {
-                    self.save_draft();
-                }
-                cx.notify();
-            }
-            "o" if !cmd
-                && !shift
-                && !modifiers.alt
-                && self.page == Page::Library
-                && self.selected.is_some()
-                && self.prepare.duration > 0.0
-                && !self.checking
-                && !self.transient_surface_owns_global_shortcuts() =>
-            {
-                if self.prepare.mark_out_at_playhead() {
-                    self.save_draft();
-                }
-                cx.notify();
             }
             "up" | "down" if self.random_popup_open && self.focused_field.is_none() => {
                 let rows = self.random_visible_options();
@@ -2466,20 +2654,20 @@ impl App {
                 }
                 cx.notify();
             }
-            "left" | "right" if self.explorer_focus && self.page == Page::Library => {
+            "left" | "right" if explorer_owns_keyboard && !cmd && !modifiers.alt => {
                 self.explorer_key(key, cx);
             }
-            "up" | "down" if self.explorer_focus && self.page == Page::Library => {
+            "up" | "down" if explorer_owns_keyboard => {
                 self.explorer_move(if key == "up" { -1 } else { 1 }, cx);
             }
-            " " | "space" | "enter" if self.explorer_focus && self.page == Page::Library => {
+            " " | "space" | "enter" if explorer_owns_keyboard => {
                 self.explorer_key(key, cx);
             }
             "up" | "down"
                 if self.page == Page::Library
                     && !self.random_popup_open
                     && self.focused_field.is_none()
-                    && !self.explorer_focus =>
+                    && !explorer_owns_keyboard =>
             {
                 let columns = self.library_columns().max(1) as isize;
                 let delta = if key == "up" { -columns } else { columns };
@@ -2502,44 +2690,6 @@ impl App {
                 }
                 cx.notify();
             }
-            "escape" => {
-                if self.random_popup_open {
-                    self.close_random_popup(cx);
-                    return true;
-                } else if self.command_open {
-                    self.dismiss_command_center_to_source();
-                } else if self.shortcut_guide_open {
-                    self.close_shortcut_guide(window);
-                } else if self.sort_menu_open {
-                    self.sort_menu_open = false;
-                    self.mark_menu_closed();
-                    window.focus(&self.sort_source_focus);
-                } else if self.workspace_menu_open {
-                    self.workspace_menu_open = false;
-                    self.mark_menu_closed();
-                    window.focus(&self.workspace_source_focus);
-                } else if self.activity_open {
-                    self.activity_open = false;
-                    self.mark_menu_closed();
-                    window.focus(&self.activity_source_focus);
-                } else if !self.open_combos.is_empty() {
-                    self.open_combos.clear();
-                } else if self.focused_field.as_deref() == Some("workspace-rename") {
-                    // Escape cancels a pending rename (mirrors the original).
-                    self.focused_field = None;
-                    self.renaming_workspace = None;
-                } else if self.focused_field.is_some() {
-                    self.focused_field = None;
-                } else if self.prepare.studio_mode {
-                    self.prepare.studio_mode = false;
-                } else if window.is_fullscreen() {
-                    window.toggle_fullscreen();
-                } else if self.history_more_menu_post.take().is_some() {
-                    self.history_more_menu_closed_at = std::time::Instant::now();
-                    window.focus(&self.history_source_focus);
-                }
-                cx.notify();
-            }
             _ => return false,
         }
         true
@@ -2553,6 +2703,13 @@ impl App {
         cmd: bool,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self
+            .fields
+            .get(field_id)
+            .is_some_and(|field| field.marked_range.is_some())
+        {
+            return false;
+        }
         if field_id == "command-center" && self.command_open {
             match key {
                 "down" | "up" => {
@@ -2614,12 +2771,16 @@ impl App {
             }
             "enter" => {
                 self.focused_field = None;
+                self.platform_input_focus = None;
+                self.root_focus_pending = true;
                 self.on_field_commit(field_id, cx);
                 cx.notify();
                 true
             }
             "escape" => {
                 self.focused_field = None;
+                self.platform_input_focus = None;
+                self.root_focus_pending = true;
                 cx.notify();
                 true
             }
@@ -2787,6 +2948,23 @@ impl App {
     // ---- render ---------------------------------------------------------
 
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl Element {
+        // Semantic text ownership must follow real focus loss (Tab, pointer
+        // activation or a removed Studio field), not linger until a later
+        // Escape. Never move focus here: the newly focused control owns it.
+        if self
+            .platform_input_focus
+            .as_ref()
+            .is_some_and(|focus| !focus.is_focused(window))
+        {
+            self.platform_input_focus = None;
+            if let Some(field) = self.focused_field.take() {
+                if field == "command-center" {
+                    self.command_open = false;
+                    self.finish_command_session();
+                }
+                self.on_field_commit(&field, cx);
+            }
+        }
         let size = window.bounds().size;
         self.window_size = (size.width.into(), size.height.into());
         // Persist the window size (throttled) so the next launch restores it.
@@ -2875,20 +3053,24 @@ impl App {
             }))
             .on_action(cx.listener(|app, _: &Activate, _window, cx| {
                 if let Some(field_id) = app.focused_field.clone() {
-                    app.handle_field_key(&field_id, "enter", None, false, cx);
-                    cx.stop_propagation();
+                    if app
+                        .fields
+                        .get(&field_id)
+                        .is_some_and(|field| field.marked_range.is_some())
+                    {
+                        cx.propagate();
+                    } else {
+                        app.handle_field_key(&field_id, "enter", None, false, cx);
+                    }
+                } else {
+                    cx.propagate();
                 }
             }))
-            .on_action(cx.listener(|app, _: &ActivateSpace, _window, cx| {
-                if let Some(field_id) = app.focused_field.clone() {
-                    app.handle_field_key(&field_id, "space", Some(" "), false, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .on_key_down(cx.listener(|app, event, window, cx| {
-                if app.on_key_down(event, window, cx) {
-                    cx.stop_propagation();
-                }
+            .on_action(cx.listener(|_app, _: &ActivateSpace, _window, cx| {
+                // Space belongs to a focused control only when that control
+                // actually handles it. The root must explicitly propagate:
+                // GPUI action listeners consume by default, even if empty.
+                cx.propagate();
             }));
 
         let explorer_owns_rail_seam = self.page == Page::Library
@@ -2947,6 +3129,10 @@ impl App {
         });
 
         root = root.child(body);
+        if self.transient_surface_owns_global_shortcuts() {
+            // A newly opened menu/dialog supplies its own initial focus.
+            self.root_focus_pending = false;
+        }
         if self.random_popup_open && self.random_popup_focus_pending {
             self.random_popup_focus_pending = false;
             let focus = self.random_popup_focus.clone();
@@ -2955,8 +3141,16 @@ impl App {
             });
         }
         if !self.random_popup_open && self.random_source_focus_pending {
+            self.root_focus_pending = false;
             self.random_source_focus_pending = false;
             let focus = self.random_source_focus.clone();
+            cx.on_next_frame(window, move |_app, window, _cx| {
+                window.focus(&focus);
+            });
+        }
+        if self.root_focus_pending && self.focused_field.is_none() {
+            self.root_focus_pending = false;
+            let focus = self.focus_handle.clone();
             cx.on_next_frame(window, move |_app, window, _cx| {
                 window.focus(&focus);
             });
@@ -3686,12 +3880,7 @@ fn main() {
     Application::new()
         .with_assets(icons::ClipRelayAssets)
         .run(move |app| {
-            app.bind_keys([
-                KeyBinding::new("tab", FocusNext, Some("cliprelay")),
-                KeyBinding::new("shift-tab", FocusPrevious, Some("cliprelay")),
-                KeyBinding::new("enter", Activate, Some("cliprelay")),
-                KeyBinding::new("space", ActivateSpace, Some("cliprelay")),
-            ]);
+            shortcuts::bind_control_keys(app);
             // After the platform is up (the gpui registers its NSApplication
             // ivars during init, so the icon must be applied later).
             apply_dock_icon();

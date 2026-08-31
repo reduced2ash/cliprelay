@@ -794,14 +794,20 @@ pub fn field_with_icon_hint(
                 }))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                     app.focus_field(id, cx);
-                    app.handle_field_key(id, "enter", None, false, cx);
-                    cx.stop_propagation();
+                    if app.handle_field_key(id, "enter", None, false, cx) {
+                        cx.stop_propagation();
+                    } else {
+                        cx.propagate();
+                    }
                 }))
                 .on_action(
                     cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
                         app.focus_field(id, cx);
-                        app.handle_field_key(id, "space", Some(" "), false, cx);
-                        cx.stop_propagation();
+                        if app.handle_field_key(id, "space", Some(" "), false, cx) {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
                     }),
                 )
         })
@@ -896,14 +902,20 @@ pub fn text_area(
         }))
         .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
             app.focus_field(id, cx);
-            app.handle_field_key(id, "enter", None, false, cx);
-            cx.stop_propagation();
+            if app.handle_field_key(id, "enter", None, false, cx) {
+                cx.stop_propagation();
+            } else {
+                cx.propagate();
+            }
         }))
         .on_action(
             cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
                 app.focus_field(id, cx);
-                app.handle_field_key(id, "space", Some(" "), false, cx);
-                cx.stop_propagation();
+                if app.handle_field_key(id, "space", Some(" "), false, cx) {
+                    cx.stop_propagation();
+                } else {
+                    cx.propagate();
+                }
             }),
         )
 }

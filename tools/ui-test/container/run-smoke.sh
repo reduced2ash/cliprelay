@@ -110,6 +110,11 @@ assert_distinct_states() {
     (( metric > 1000 ))
 }
 
+shortcut_dispatch_count() {
+    local app_log="$1"
+    grep -c 'application shortcut dispatched:' "${app_log}" 2>/dev/null || true
+}
+
 capture_case() {
     local case_name="$1"
     shift
@@ -253,6 +258,102 @@ capture_case() {
         sleep 0.5
     fi
 
+    if [[ "${case_name}" == "shortcut-routing" ]]; then
+        local attempt before after
+        for attempt in $(seq 1 120); do
+            grep -q 'ui-test workflow ready for interaction' "${app_log}" && break
+            kill -0 "${app_pid}" >/dev/null 2>&1 || break
+            sleep 0.1
+        done
+        if ! grep -q 'ui-test workflow ready for interaction' "${app_log}" \
+            || ! grep -q 'ui-test workflow observed Prepare autoplay' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: Prepare was not ready for shortcut routing."
+            return 1
+        fi
+
+        xdotool windowactivate --sync "${window_id}"
+        # The Prepare Edit tab is an ordinary control whose pointer activation
+        # intentionally blurs GPUI focus. Shortcuts must work immediately after
+        # this click, without focusing a hidden/root/keyboard-only panel.
+        xdotool mousemove --sync --window "${window_id}" "$((width - 367))" "$((height - 250))" click 1
+        sleep 0.3
+        # Ordinary Library/Prepare ownership: no special focus target is
+        # required for the media commands.
+        xdotool key --window "${window_id}" --delay 250 space Right Left r
+        sleep 0.8
+
+        # A real command-field editing session owns every media single key.
+        xdotool key --window "${window_id}" ctrl+k
+        sleep 0.3
+        before="$(shortcut_dispatch_count "${app_log}")"
+        xdotool key --window "${window_id}" r s space Left Right
+        sleep 0.4
+        after="$(shortcut_dispatch_count "${app_log}")"
+        if (( after != before )); then
+            stop_app
+            record_failure "${case_name}: text entry leaked a media shortcut."
+            return 1
+        fi
+
+        # Leave the current-order fixture unfiltered for the Studio checks.
+        xdotool key --window "${window_id}" --delay 120 BackSpace BackSpace BackSpace
+        sleep 0.3
+
+        # First Escape closes command results; the second ends editing and
+        # returns focus to the application fallback without a pointer click.
+        xdotool key --window "${window_id}" Escape
+        sleep 0.3
+        xdotool key --window "${window_id}" Escape
+        sleep 1.2
+        xdotool key --window "${window_id}" s
+        for attempt in $(seq 1 50); do
+            grep -q 'application shortcut dispatched: OpenStudio' "${app_log}" && break
+            sleep 0.1
+        done
+        if ! grep -q 'application shortcut dispatched: OpenStudio' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: Studio did not open from the application fallback."
+            return 1
+        fi
+
+        # Studio shares the same fallback and current-order navigation path.
+        xdotool key --window "${window_id}" --delay 250 space Right Left r
+        sleep 0.8
+        for shortcut in TogglePlayback NextVideo PreviousVideo PickRandomVideo; do
+            if [[ "$(grep -c "application shortcut dispatched: ${shortcut}" "${app_log}" || true)" -lt 2 ]]; then
+                stop_app
+                record_failure "${case_name}: ${shortcut} did not dispatch in both Prepare and Studio."
+                return 1
+            fi
+        done
+        xwd -silent -id "${window_id}" | convert xwd:- "${screenshot}"
+    fi
+
+    if [[ "${case_name}" == "shortcut-transient" ]]; then
+        local before after
+        xdotool windowactivate --sync "${window_id}"
+        before="$(shortcut_dispatch_count "${app_log}")"
+        xdotool key --window "${window_id}" --delay 150 Down Right Left space Return r
+        sleep 0.3
+        after="$(shortcut_dispatch_count "${app_log}")"
+        if (( after != before )); then
+            stop_app
+            record_failure "${case_name}: Random Sources leaked its R key to the app fallback."
+            return 1
+        fi
+        xdotool key --window "${window_id}" Escape r
+        sleep 0.5
+        after="$(shortcut_dispatch_count "${app_log}")"
+        if (( after != before + 1 )) \
+            || ! grep -q 'application shortcut dispatched: PickRandomVideo' "${app_log}"; then
+            stop_app
+            record_failure "${case_name}: global routing did not resume after Random Sources dismissed."
+            return 1
+        fi
+        xwd -silent -id "${window_id}" | convert xwd:- "${screenshot}"
+    fi
+
     if ! wait_for_capture "${screenshot}"; then
         if kill -0 "${app_pid}" >/dev/null 2>&1; then
             record_failure "${case_name}: GPUI did not produce a renderer capture within 20 seconds."
@@ -315,6 +416,15 @@ run_suite() {
 
     if [[ "${GUI_TEST_ONLY_TALL:-0}" == "1" ]]; then
         capture_case workflow-tall CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
+        return 0
+    fi
+    if [[ "${GUI_TEST_ONLY_SHORTCUTS:-0}" == "1" ]]; then
+        capture_case shortcut-routing \
+            CLIPRELAY_EXERCISE_WORKFLOW=1 \
+            CLIPRELAY_CAPTURE_AFTER=150 || return 1
+        capture_case shortcut-transient \
+            CLIPRELAY_OPEN_RANDOM=1 \
+            CLIPRELAY_CAPTURE_AFTER=90 || return 1
         return 0
     fi
     if [[ "${GUI_TEST_ONLY_SHELL:-0}" == "1" ]]; then
@@ -479,6 +589,8 @@ if run_suite; then
         echo "PASS isolated Library context-menu visual check. Artifacts: /artifacts" > /artifacts/summary.txt
     elif [[ "${GUI_TEST_ONLY_RANDOM_SOURCES:-0}" == "1" ]]; then
         echo "PASS isolated Random Sources visual check (normal, compact, empty, long-list, and keyboard states). Artifacts: /artifacts" > /artifacts/summary.txt
+    elif [[ "${GUI_TEST_ONLY_SHORTCUTS:-0}" == "1" ]]; then
+        echo "PASS isolated global-shortcut interaction check (Library/Prepare, Studio, text entry, Random Sources ownership, and resume after dismissal). Artifacts: /artifacts" > /artifacts/summary.txt
     else
         echo "PASS isolated ClipRelay GUI smoke test (11 semantic states, including the keyboard guide, compact context menu, a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
     fi

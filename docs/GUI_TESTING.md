@@ -38,6 +38,11 @@ long source tree at normal and compact sizes, its empty state, and a real
 keyboard selection. Combine it with `GUI_TEST_THEME_MODE=graphite_glass` for
 the matching glass-material pass.
 
+For the application shortcut-routing contract, run
+`GUI_TEST_ONLY_SHORTCUTS=1 make ui-test`. It uses native X11 key events to
+exercise Library/Prepare and Studio dispatch, text-entry suppression, Random
+Sources ownership, and immediate global resume after dismissal.
+
 The terminal result is intentionally short. Every run writes:
 
 ```text
