@@ -1353,6 +1353,7 @@ impl crate::App {
             self.random_popup_focus_pending = true;
             self.random_loading = true;
             self.random_tree_cursor = 0;
+            self.refresh_random_tree();
             self.command(Command::LoadRandomFolderOptions);
             window.focus(&self.random_popup_focus);
         }

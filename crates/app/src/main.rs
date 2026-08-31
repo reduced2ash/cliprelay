@@ -104,6 +104,7 @@ pub struct App {
     pub folders: Vec<FolderNode>,
     pub folders_expanded: HashMap<String, bool>,
     pub random_options: Vec<RandomFolderOption>,
+    pub random_list: RandomSourceList,
     pub random_summary: String,
     pub random_selected: usize,
     pub random_all_selected: bool,
@@ -166,7 +167,7 @@ pub struct App {
     pub settings_scroll: gpui::ScrollHandle,
     pub prepare_edit_scroll: gpui::ScrollHandle,
     pub prepare_publish_scroll: gpui::ScrollHandle,
-    pub random_tree_scroll: gpui::ScrollHandle,
+    pub random_tree_scroll: gpui::UniformListScrollHandle,
     pub thumbnail_states: HashMap<i64, String>,
     pub thumbnail_requested: std::collections::HashSet<i64>,
     pub preview_hover_generation: u64,
@@ -415,6 +416,7 @@ impl App {
             folders: Vec::new(),
             folders_expanded: HashMap::new(),
             random_options: Vec::new(),
+            random_list: RandomSourceList::default(),
             random_summary: "All folders".into(),
             random_selected: 0,
             random_all_selected: true,
@@ -491,7 +493,7 @@ impl App {
             settings_scroll: gpui::ScrollHandle::new(),
             prepare_edit_scroll: gpui::ScrollHandle::new(),
             prepare_publish_scroll: gpui::ScrollHandle::new(),
-            random_tree_scroll: gpui::ScrollHandle::new(),
+            random_tree_scroll: gpui::UniformListScrollHandle::new(),
             thumbnail_states: HashMap::new(),
             thumbnail_requested: std::collections::HashSet::new(),
             preview_hover_generation: 0,
@@ -1012,7 +1014,7 @@ impl App {
                         self.random_expanded.insert(option.folder.clone());
                     }
                 }
-                self.clamp_random_tree_cursor();
+                self.refresh_random_tree();
                 cx.notify();
             }
             Event::Toast(kind, message) => {
@@ -2627,14 +2629,17 @@ impl App {
                 }
             }
             "up" | "down" if self.random_popup_open && self.focused_field.is_none() => {
-                let rows = self.random_visible_options();
-                if !rows.is_empty() {
+                let row_count = self.random_list.rows.len();
+                if row_count > 0 {
                     let delta = if key == "up" { -1 } else { 1 };
                     self.random_tree_cursor = (self.random_tree_cursor as isize + delta)
-                        .rem_euclid(rows.len() as isize)
+                        .rem_euclid(row_count as isize)
                         as usize;
                     self.random_tree_scroll
-                        .scroll_to_item(self.random_tree_cursor);
+                        .scroll_to_item(self.random_tree_cursor, ScrollStrategy::Top);
+                    // A virtualized row can leave the focus tree while
+                    // scrolling. Menu focus keeps activation on the cursor.
+                    window.focus(&self.random_popup_focus);
                 }
                 cx.notify();
             }
@@ -2642,7 +2647,7 @@ impl App {
                 self.activate_random_tree_cursor(cx);
             }
             "left" | "right" if self.random_popup_open && self.focused_field.is_none() => {
-                if let Some(option) = self.random_visible_options().get(self.random_tree_cursor) {
+                if let Some(option) = self.random_tree_option(self.random_tree_cursor) {
                     let folder = option.folder.clone();
                     if option.has_children {
                         if key == "left" {
@@ -2650,8 +2655,10 @@ impl App {
                         } else {
                             self.random_expanded.insert(folder);
                         }
+                        self.refresh_random_tree();
                     }
                 }
+                window.focus(&self.random_popup_focus);
                 cx.notify();
             }
             "left" | "right" if explorer_owns_keyboard && !cmd && !modifiers.alt => {
@@ -2840,7 +2847,7 @@ impl App {
         }
         if field_id == "random-filter" {
             self.random_filter = text;
-            self.clamp_random_tree_cursor();
+            self.refresh_random_tree();
             cx.notify();
             return;
         }

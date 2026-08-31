@@ -95,6 +95,28 @@ pub struct RandomFolderOption {
     pub parent: String,
 }
 
+impl RandomFolderOption {
+    /// All-folders mode is stored separately from explicit subtree tokens.
+    /// Its rows are checked too, so toggling one excludes that subtree.
+    pub fn effective_selection_state(&self, all_selected: bool) -> i64 {
+        if all_selected {
+            2
+        } else {
+            self.selection_state
+        }
+    }
+}
+
+/// Presentation derived only when sources, filtering, or expansion change.
+/// Virtual rows refer back to the authoritative options by index.
+#[derive(Default)]
+pub struct RandomSourceList {
+    pub rows: Vec<usize>,
+    pub folder_count: usize,
+    pub video_count: i64,
+    pub has_branches: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LibraryPage {
     pub rows: Vec<MediaRow>,
