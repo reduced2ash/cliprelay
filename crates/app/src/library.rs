@@ -140,7 +140,7 @@ impl crate::App {
             .min_w(px(0.0))
             .flex()
             .flex_row()
-            .bg(theme.workbench_canvas)
+            .bg(theme.canvas_background())
             .size_full();
 
         // Explorer column.
@@ -781,7 +781,7 @@ impl crate::App {
             .id("explorer")
             .w(px(EXPLORER_WIDTH))
             .flex_none()
-            .bg(theme.workbench_explorer)
+            .bg(theme.explorer_background())
             .border_l_1()
             .border_r_1()
             .border_color(theme.workbench_border.opacity(0.62))
@@ -806,6 +806,11 @@ impl crate::App {
             .get("__explorer_root__")
             .copied()
             .unwrap_or(true);
+        let root_face: Background = if root_active {
+            theme.selection_face(TactileState::Rest, false)
+        } else {
+            theme.transparent().into()
+        };
         items = items.child(
             div()
                 .id("folder-root")
@@ -815,15 +820,45 @@ impl crate::App {
                 .pr(px(14.0))
                 .rounded_tl(px(4.0))
                 .rounded_bl(px(4.0))
+                .relative()
+                .top(px(0.0))
+                .border_1()
+                .border_color(if root_active {
+                    theme.tactile_edge(TactileState::Rest, false)
+                } else {
+                    theme.transparent()
+                })
+                .bg(root_face)
+                .shadow(if root_active {
+                    theme.tactile_shadow(TactileState::Rest, true)
+                } else {
+                    Vec::new()
+                })
                 .flex()
                 .items_center()
                 .gap(px(row_gap))
                 .cursor_pointer()
                 .tab_index(0)
-                .focus(|style| style.bg(theme.workbench_selection.opacity(0.86)))
-                .active(|style| style.bg(theme.accent_soft))
-                .hover(|style| style.bg(theme.workbench_selection.opacity(0.68)))
-                .bg(theme.transparent())
+                .focus(|style| {
+                    style
+                        .bg(theme.selection_face(TactileState::Hover, false))
+                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                        .border_2()
+                        .border_color(theme.accent)
+                })
+                .active(|style| {
+                    style
+                        .top(px(1.0))
+                        .bg(theme.selection_face(TactileState::Pressed, false))
+                        .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                        .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+                })
+                .hover(|style| {
+                    style
+                        .bg(theme.selection_face(TactileState::Hover, false))
+                        .border_color(theme.tactile_edge(TactileState::Hover, false))
+                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                })
                 .child(
                     div()
                         .id("folder-root-chevron")
@@ -924,6 +959,7 @@ impl crate::App {
                 let count = node.count;
                 let name = node.name.clone();
                 let indent = (8.0 + node.depth as f32 * 14.0).min(8.0 + 6.0 * 14.0);
+                let selected = is_active || is_focused;
                 let mut row = div()
                     .id(SharedString::from(format!("folder-{folder}")))
                     .ml(px(row_inset))
@@ -933,15 +969,40 @@ impl crate::App {
                     .pr(px(14.0))
                     .rounded_tl(px(4.0))
                     .rounded_bl(px(4.0))
+                    .relative()
+                    .top(px(0.0))
+                    .border_1()
+                    .border_color(if selected {
+                        theme.tactile_edge(TactileState::Rest, false)
+                    } else {
+                        theme.transparent()
+                    })
                     .flex()
                     .items_center()
                     .gap(px(row_gap))
                     .cursor_pointer()
-                    .hover(|style| style.bg(theme.workbench_selection.opacity(0.68)))
-                    .bg(if is_active || is_focused {
-                        theme.workbench_selection.opacity(0.86)
+                    .active(|style| {
+                        style
+                            .top(px(1.0))
+                            .bg(theme.selection_face(TactileState::Pressed, false))
+                            .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                            .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+                    })
+                    .hover(|style| {
+                        style
+                            .bg(theme.selection_face(TactileState::Hover, false))
+                            .border_color(theme.tactile_edge(TactileState::Hover, false))
+                            .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                    })
+                    .bg(if selected {
+                        theme.selection_face(TactileState::Rest, false)
                     } else {
-                        theme.transparent()
+                        theme.transparent().into()
+                    })
+                    .shadow(if selected {
+                        theme.tactile_shadow(TactileState::Rest, true)
+                    } else {
+                        Vec::new()
                     });
                 // Disclosure chevron (own hit target; toggles expansion).
                 if has_children {

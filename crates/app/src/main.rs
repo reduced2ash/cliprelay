@@ -161,6 +161,7 @@ pub struct App {
     pub preview_hover_generation: u64,
     pub library_scroll_pause_until: std::time::Instant,
     pub theme: crate::theme::Theme,
+    applied_window_blur: Option<bool>,
     pub window_size: (f32, f32),
     pub fields: HashMap<String, widgets::FieldState>,
     pub focused_field: Option<String>,
@@ -201,6 +202,19 @@ impl App {
         // database. On a fresh profile both connections otherwise race the
         // WAL/schema initialization and one can fail with SQLITE_BUSY.
         let boot_settings_values = boot_settings().unwrap_or_default();
+        let boot_theme_override = std::env::var("CLIPRELAY_THEME_MODE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let boot_theme_mode = ThemeMode::parse(
+            boot_theme_override
+                .as_deref()
+                .or_else(|| {
+                    boot_settings_values
+                        .get(THEME_MODE)
+                        .and_then(|value| value.as_str())
+                })
+                .unwrap_or("relay"),
+        );
         let controller = spawn_controller(None, event_tx.clone());
         // `--library PATH` overrides the stored library root on launch.
         if let Ok(library) = std::env::var("CLIPRELAY_LIBRARY") {
@@ -326,7 +340,7 @@ impl App {
             focus_handle: cx.focus_handle(),
             library_item_focus: cx.focus_handle(),
             focus_library_selection: false,
-            theme_mode: ThemeMode::Relay,
+            theme_mode: boot_theme_mode,
             ui_scale: 1.0,
             sidebar_collapsed: false,
             density: "default".into(),
@@ -428,7 +442,8 @@ impl App {
             thumbnail_requested: std::collections::HashSet::new(),
             preview_hover_generation: 0,
             library_scroll_pause_until: std::time::Instant::now(),
-            theme: crate::theme::Theme::relay(),
+            theme: crate::theme::Theme::for_mode(boot_theme_mode),
+            applied_window_blur: None,
             window_size: (1460.0, 900.0),
             fields,
             platform_input_bounds: None,
@@ -1210,11 +1225,15 @@ impl App {
     }
 
     fn apply_settings(&mut self) {
-        let mode = self
-            .settings
-            .get(THEME_MODE)
-            .and_then(|v| v.as_str())
-            .unwrap_or("relay");
+        let mode_override = std::env::var("CLIPRELAY_THEME_MODE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let mode = mode_override.as_deref().unwrap_or_else(|| {
+            self.settings
+                .get(THEME_MODE)
+                .and_then(|value| value.as_str())
+                .unwrap_or("relay")
+        });
         let new_mode = ThemeMode::parse(mode);
         if new_mode != self.theme_mode {
             self.theme_mode = new_mode;
@@ -2297,12 +2316,29 @@ impl App {
         let theme = self.theme.clone();
         widgets::set_current_theme(&theme);
 
+        let focused_studio =
+            self.page == Page::Library && self.prepare.studio_mode && self.selected.is_some();
+        // Both glass themes use one window-level material, including the
+        // focused Studio shell. The media aperture itself stays opaque in the
+        // Studio renderer, while capable backends blur behind the chrome.
+        let wants_blurred_background = theme.is_frosted();
+        if self.applied_window_blur != Some(wants_blurred_background) {
+            window.set_background_appearance(if wants_blurred_background {
+                WindowBackgroundAppearance::Blurred
+            } else {
+                WindowBackgroundAppearance::Opaque
+            });
+            self.applied_window_blur = Some(wants_blurred_background);
+        }
+
         let mut root = div()
             .id("cliprelay")
             .size_full()
+            .relative()
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .bg(theme.workbench_chrome)
+            .bg(theme.application_background())
             .text_color(theme.text)
             .text_size(px(15.0))
             .font_family(platform_ui_font_family())
@@ -2330,8 +2366,6 @@ impl App {
                 app.on_key_down(event, window, cx);
             }));
 
-        let focused_studio =
-            self.page == Page::Library && self.prepare.studio_mode && self.selected.is_some();
         let explorer_owns_rail_seam = self.page == Page::Library
             && !self.settings_value(LIBRARY_ROOT).is_empty()
             && self.explorer_visible()

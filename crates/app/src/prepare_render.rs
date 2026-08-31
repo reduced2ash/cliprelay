@@ -5,8 +5,8 @@
 //! FORM: User-pinned 1672×941 editor workbench, ranked first in the inherited surface hand; seed 0181ccb2.
 //! FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 //!
-//! Prepare workspace renderers: stage (frame + transport + timeline +
-//! source strip), inspector tabs, edit/publish inspectors, action dock.
+//! Prepare workspace renderers: stage (frame + transport + timeline),
+//! inspector tabs, edit/publish inspectors, action dock.
 
 use crate::prepare::{DragHandle, MaskPreset, ShapeKind};
 use crate::prepare::{CLEANUP_OPTIONS, COMPRESSION_OPTIONS};
@@ -198,6 +198,17 @@ fn prepare_inspector_tab(
     compact: bool,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
+    let selected = active_tab == tab;
+    let rest_face: Background = if selected {
+        theme.selection_face(TactileState::Rest, false)
+    } else {
+        theme.transparent().into()
+    };
+    let hover_face = if selected {
+        theme.selection_face(TactileState::Hover, false)
+    } else {
+        theme.control_face(TactileState::Hover)
+    };
     div()
         .id(id)
         .flex_1()
@@ -206,35 +217,47 @@ fn prepare_inspector_tab(
         .px(px(if compact { 6.0 } else { 8.0 }))
         .cursor_pointer()
         .relative()
+        .top(px(0.0))
         .flex()
         .items_center()
         .justify_center()
         .tab_index(0)
-        .bg(if active_tab == tab {
-            theme.surface_soft
+        .bg(rest_face)
+        .shadow(if selected {
+            theme.tactile_shadow(TactileState::Rest, true)
         } else {
-            theme.transparent()
+            Vec::new()
         })
-        .hover(|style| style.bg(current_theme().hover))
-        .active(|style| style.bg(current_theme().accent_soft))
+        .hover(|style| {
+            style
+                .bg(hover_face)
+                .shadow(theme.tactile_shadow(TactileState::Hover, true))
+        })
+        .active(|style| {
+            style
+                .top(px(1.0))
+                .bg(theme.selection_face(TactileState::Pressed, false))
+                .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+        })
         .focus(|style| {
             style
-                .bg(current_theme().hover)
+                .bg(hover_face)
+                .shadow(theme.tactile_shadow(TactileState::Hover, true))
                 .border_1()
-                .border_color(current_theme().accent)
+                .border_color(theme.accent)
         })
         .child(
             div()
                 .child(label)
                 .text_size(px(if compact { 12.5 } else { 14.0 }))
-                .text_color(if active_tab == tab {
+                .text_color(if selected {
                     theme.accent_text
                 } else {
                     theme.text_soft
                 })
                 .font_weight(FontWeight::MEDIUM),
         )
-        .when(active_tab == tab, |tab| {
+        .when(selected, |tab| {
             tab.child(
                 div()
                     .absolute()
@@ -536,17 +559,26 @@ fn edit_choice_tile(
     let on_select = Rc::new(on_select);
     let click = Rc::clone(&on_select);
     let activate = Rc::clone(&on_select);
+    let rest_face = if selected {
+        theme.selection_face(TactileState::Rest, false)
+    } else {
+        theme.control_face(TactileState::Rest)
+    };
+    let hover_face = if selected {
+        theme.selection_face(TactileState::Hover, false)
+    } else {
+        theme.control_face(TactileState::Hover)
+    };
     div()
         .id(id)
         .flex_1()
         .min_w(px(0.0))
         .h(px(height))
         .rounded(px(2.0))
-        .bg(if selected {
-            theme.active
-        } else {
-            theme.surface_soft
-        })
+        .relative()
+        .top(px(0.0))
+        .bg(rest_face)
+        .shadow(theme.tactile_shadow(TactileState::Rest, true))
         .border_1()
         .border_color(if selected { theme.accent } else { theme.border })
         .cursor_pointer()
@@ -573,10 +605,17 @@ fn edit_choice_tile(
             tile.tab_index(0)
                 .hover(|style| {
                     style
-                        .bg(current_theme().hover)
-                        .border_color(current_theme().border_strong)
+                        .bg(hover_face)
+                        .border_color(theme.tactile_edge(TactileState::Hover, selected))
+                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
                 })
-                .active(|style| style.bg(current_theme().accent_soft))
+                .active(|style| {
+                    style
+                        .top(px(1.0))
+                        .bg(theme.selection_face(TactileState::Pressed, selected))
+                        .border_color(theme.tactile_edge(TactileState::Pressed, selected))
+                        .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+                })
                 .focus(|style| style.border_2().border_color(current_theme().accent))
                 .on_click(cx.listener(move |app, _event, window, cx| {
                     window.blur();
@@ -611,12 +650,27 @@ fn edit_crop_switch(
     is_studio: bool,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
+    let rest_face = if enabled {
+        theme.selection_face(TactileState::Rest, true)
+    } else {
+        theme.control_face(TactileState::Rest)
+    };
+    let hover_face = if enabled {
+        theme.selection_face(TactileState::Hover, true)
+    } else {
+        theme.control_face(TactileState::Hover)
+    };
     let mut track = div()
         .w(px(if is_studio { 42.0 } else { 36.0 }))
         .h(px(if is_studio { 22.0 } else { 20.0 }))
         .px(px(3.0))
         .rounded(px(if is_studio { 11.0 } else { 10.0 }))
-        .bg(if enabled { theme.accent } else { theme.raised })
+        .bg(if enabled {
+            theme.accent_control_face(TactileState::Rest)
+        } else {
+            theme.control_face(TactileState::Pressed)
+        })
+        .shadow(theme.tactile_shadow(TactileState::Pressed, true))
         .border_1()
         .border_color(if enabled {
             theme.accent
@@ -639,7 +693,8 @@ fn edit_crop_switch(
                 theme.accent_content
             } else {
                 theme.muted
-            }),
+            })
+            .shadow(theme.tactile_shadow(TactileState::Rest, true)),
     );
 
     div()
@@ -648,11 +703,10 @@ fn edit_crop_switch(
         .h(px(if is_studio { 68.0 } else { 50.0 }))
         .px(px(if is_studio { 14.0 } else { 10.0 }))
         .rounded(px(2.0))
-        .bg(if enabled {
-            theme.accent_soft
-        } else {
-            theme.surface_soft
-        })
+        .relative()
+        .top(px(0.0))
+        .bg(rest_face)
+        .shadow(theme.tactile_shadow(TactileState::Rest, true))
         .border_1()
         .border_color(if enabled {
             theme.accent.opacity(if is_studio { 0.72 } else { 0.38 })
@@ -666,10 +720,17 @@ fn edit_crop_switch(
         .gap(px(if is_studio { 11.0 } else { 8.0 }))
         .hover(|style| {
             style
-                .bg(current_theme().hover)
-                .border_color(current_theme().border_strong)
+                .bg(hover_face)
+                .border_color(theme.tactile_edge(TactileState::Hover, enabled))
+                .shadow(theme.tactile_shadow(TactileState::Hover, true))
         })
-        .active(|style| style.bg(current_theme().accent_soft))
+        .active(|style| {
+            style
+                .top(px(1.0))
+                .bg(theme.selection_face(TactileState::Pressed, enabled))
+                .border_color(theme.tactile_edge(TactileState::Pressed, enabled))
+                .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+        })
         .focus(|style| style.border_2().border_color(current_theme().accent))
         .child(icon(
             "crop",
@@ -735,7 +796,42 @@ fn edit_crop_switch(
 }
 
 impl crate::App {
-    /// The media stage: frame, transport, timeline, source strip.
+    /// Selected-source copy shared by the dock header and Studio source strip.
+    pub(crate) fn prepare_source_summary(&self) -> (String, String, String) {
+        let name = self
+            .selected
+            .as_ref()
+            .map(|media| media.name.clone())
+            .unwrap_or_default();
+        let path = self
+            .selected
+            .as_ref()
+            .map(|media| media.path.clone())
+            .unwrap_or_default();
+        let size_label = self
+            .selected
+            .as_ref()
+            .map(|media| format_bytes(media.size_bytes as f64))
+            .unwrap_or_default();
+        let resolution_label = self
+            .selected
+            .as_ref()
+            .map(|media| {
+                if media.width > 0 && media.height > 0 {
+                    format!("{}×{}", media.width, media.height)
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
+        let mut details = vec![size_label, self.prepare.format_time(self.prepare.duration)];
+        if !resolution_label.is_empty() {
+            details.push(resolution_label);
+        }
+        (name, details.join("  ·  "), path)
+    }
+
+    /// The media stage: frame, transport, timeline, and Studio source strip.
     pub fn render_prepare_stage(
         &mut self,
         cx: &mut Context<Self>,
@@ -1564,40 +1660,10 @@ impl crate::App {
             stage = stage.child(range_readout);
         }
 
-        // Source strip.
-        let name = self
-            .selected
-            .as_ref()
-            .map(|m| m.name.clone())
-            .unwrap_or_default();
-        let path = self
-            .selected
-            .as_ref()
-            .map(|m| m.path.clone())
-            .unwrap_or_default();
-        let size_label = self
-            .selected
-            .as_ref()
-            .map(|m| format_bytes(m.size_bytes as f64))
-            .unwrap_or_default();
-        let resolution_label = self
-            .selected
-            .as_ref()
-            .map(|m| {
-                if m.width > 0 && m.height > 0 {
-                    format!("{}×{}", m.width, m.height)
-                } else {
-                    String::new()
-                }
-            })
-            .unwrap_or_default();
-        let source_tooltip = path.clone();
-        let mut source_parts = vec![size_label, self.prepare.format_time(duration)];
-        if !resolution_label.is_empty() {
-            source_parts.push(resolution_label);
-        }
-        let source_details = source_parts.join("  ·  ");
+        // Focused Studio retains its in-workspace source strip. Docked Prepare
+        // presents the same information once in the surrounding shell header.
         if is_studio {
+            let (name, source_details, source_tooltip) = self.prepare_source_summary();
             stage = stage.child(
                 div()
                     .w_full()
@@ -1644,62 +1710,6 @@ impl crate::App {
                             cx.notify();
                         },
                     )),
-            );
-        } else {
-            stage = stage.child(
-                div()
-                    .w_full()
-                    .h(px(54.0))
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .id("prepare-source-name")
-                            .flex_1()
-                            .min_w(px(40.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(
-                                div()
-                                    .child(name)
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text_soft)
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_ellipsis(),
-                            )
-                            .child(
-                                div()
-                                    .child(source_details)
-                                    .text_size(px(10.0))
-                                    .text_color(theme.muted)
-                                    .text_ellipsis(),
-                            )
-                            .tooltip(move |_window, cx| {
-                                crate::tooltip_view(cx, source_tooltip.clone().into())
-                            }),
-                    )
-                    .child(
-                        workbench_button(
-                            "reveal-in-library",
-                            if panel_width >= 390.0 { "Reveal" } else { "" },
-                            "folder",
-                            ButtonKind::Secondary,
-                            true,
-                            panel_width < 390.0,
-                            "Reveal in library",
-                            cx,
-                            |app, cx| {
-                                app.command(Command::RevealSelectedInLibrary);
-                                cx.notify();
-                            },
-                        )
-                        .mr(px(10.0)),
-                    ),
             );
         }
         if let Some(precision) = studio_precision {
@@ -5081,7 +5091,7 @@ impl crate::App {
             .id("prepare-dock-footer")
             .w_full()
             .mt_auto()
-            .bg(theme.workbench_canvas)
+            .bg(theme.canvas_background())
             .border_t_1()
             .border_color(theme.border)
             .px(px(PREPARE_GUTTER))

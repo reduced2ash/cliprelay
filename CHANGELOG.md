@@ -17,8 +17,11 @@ a release from the native Rust/GPUI source tree.
   composer handoff.
 - Added independent delivery history, retry actions, generated-file cleanup,
   local settings, and credential-store integration.
-- Added Relay, pitch-black, and full-white themes, compact density settings,
-  command search, keyboard navigation, and a focused Prepare Studio.
+- Added Relay, pitch-black, full-white, colorless frosted-glass, and
+  silver-graphite glass themes, compact density settings, command search,
+  keyboard navigation, and a focused Prepare Studio.
+- Added shared tactile depth for buttons and explicit selections, including
+  dimensional hover, focus, and physically compressed pressed states.
 - Added Rust CI, isolated Docker/Xvfb GUI checks, a self-contained macOS bundle
   builder, and an explicitly gated release-readiness workflow.
 

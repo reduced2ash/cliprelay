@@ -25,6 +25,13 @@ history, settings, command-center, and workflow images must also differ
 materially from the library image, so ignored boot hooks cannot pass as five
 duplicate tests.
 
+Set `GUI_TEST_THEME_MODE=frosted_glass` or
+`GUI_TEST_THEME_MODE=graphite_glass` to run the same state matrix through the
+native backdrop material path. Those variants additionally verify that all
+eight captured Library, History, Settings, command, Prepare, and Studio states
+retain alpha for whole-window compositor blur; Studio media apertures remain
+independently opaque.
+
 The terminal result is intentionally short. Every run writes:
 
 ```text

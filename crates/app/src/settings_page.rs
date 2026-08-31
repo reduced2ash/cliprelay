@@ -776,41 +776,92 @@ fn theme_choices(
         ("relay", "Relay", "Warm dark"),
         ("pitch_black", "Pitch black", "Blue accent"),
         ("full_white", "Full white", "Blue accent"),
+        ("frosted_glass", "Frosted glass", "System backdrop"),
+        ("graphite_glass", "Graphite glass", "Silver material"),
     ];
-    let mut row = div().w_full().flex().flex_row().gap(px(12.0)).mt(px(12.0));
+    let mut row = div()
+        .w_full()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .gap(px(12.0))
+        .mt(px(12.0));
     for (mode, title, subtitle) in choices {
         let selected = app.theme_mode.as_str() == mode;
         let palette = crate::theme::Theme::for_mode(crate::theme::ThemeMode::parse(mode));
         let mode = mode.to_string();
+        let click_mode = mode.clone();
+        let activate_mode = mode.clone();
+        let space_mode = mode.clone();
+        let rest_face = if selected {
+            theme.selection_face(TactileState::Rest, true)
+        } else {
+            theme.surface.into()
+        };
+        let hover_face = if selected {
+            theme.selection_face(TactileState::Hover, true)
+        } else {
+            theme.control_face(TactileState::Hover)
+        };
         let mut card = div()
             .id(SharedString::from(format!("theme-{mode}")))
-            .w(px(230.0))
+            .w(px(196.0))
             .h(px(92.0))
             .rounded(px(10.0))
+            .relative()
+            .top(px(0.0))
             .border_1()
             .border_color(if selected { theme.accent } else { theme.border })
-            .bg(if selected {
-                theme.accent_soft
+            .bg(rest_face)
+            .shadow(if selected {
+                theme.tactile_shadow(TactileState::Rest, false)
             } else {
-                theme.surface
+                Vec::new()
             })
             .cursor_pointer()
+            .tab_index(0)
+            .hover(|style| {
+                style
+                    .bg(hover_face)
+                    .border_color(theme.tactile_edge(TactileState::Hover, selected))
+                    .shadow(theme.tactile_shadow(TactileState::Hover, false))
+            })
+            .active(|style| {
+                style
+                    .top(px(1.0))
+                    .bg(theme.selection_face(TactileState::Pressed, selected))
+                    .border_color(theme.tactile_edge(TactileState::Pressed, selected))
+                    .shadow(theme.tactile_shadow(TactileState::Pressed, false))
+            })
+            .focus(|style| style.border_2().border_color(theme.accent))
             .p(px(10.0))
             .flex()
             .flex_row()
             .gap(px(10.0))
             .on_click(cx.listener(move |app, _event, _window, cx| {
-                app.set_setting(THEME_MODE, json!(mode), cx);
-            }));
+                app.set_setting(THEME_MODE, json!(click_mode), cx);
+            }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                app.set_setting(THEME_MODE, json!(activate_mode), cx);
+                cx.stop_propagation();
+            }))
+            .on_action(
+                cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                    app.set_setting(THEME_MODE, json!(space_mode), cx);
+                    cx.stop_propagation();
+                }),
+            );
         // Mini preview.
         card = card.child(
             div()
                 .w(px(62.0))
                 .h(px(58.0))
                 .rounded(px(8.0))
-                .bg(palette.surface)
+                .bg(palette.application_background())
                 .border_1()
                 .border_color(palette.border)
+                .relative()
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
@@ -923,10 +974,25 @@ fn combo(
         .h(px(CONTROL_HEIGHT))
         .px(px(12.0))
         .rounded(px(RADIUS_SM))
-        .bg(theme.raised)
+        .relative()
+        .top(px(0.0))
+        .bg(theme.control_face(TactileState::Rest))
+        .shadow(theme.tactile_shadow(TactileState::Rest, false))
         .border_1()
         .border_color(if open { theme.accent } else { theme.border })
-        .hover(|style| style.border_color(theme.border_strong))
+        .hover(|style| {
+            style
+                .bg(theme.control_face(TactileState::Hover))
+                .border_color(theme.tactile_edge(TactileState::Hover, false))
+                .shadow(theme.tactile_shadow(TactileState::Hover, false))
+        })
+        .active(|style| {
+            style
+                .top(px(1.0))
+                .bg(theme.control_face(TactileState::Pressed))
+                .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                .shadow(theme.tactile_shadow(TactileState::Pressed, false))
+        })
         .cursor_pointer()
         .flex()
         .items_center()

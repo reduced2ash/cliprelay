@@ -144,7 +144,10 @@ impl Settings {
         let mut value = value;
         if key == THEME_MODE {
             let text = value.as_str().unwrap_or("").to_string();
-            value = if matches!(text.as_str(), "relay" | "pitch_black" | "full_white") {
+            value = if matches!(
+                text.as_str(),
+                "relay" | "pitch_black" | "full_white" | "frosted_glass" | "graphite_glass"
+            ) {
                 Value::String(text)
             } else {
                 Value::String("relay".into())
@@ -288,6 +291,14 @@ mod tests {
             .set(THEME_MODE, Value::String("full_white".into()))
             .unwrap();
         assert_eq!(settings.get_string(THEME_MODE).unwrap(), "full_white");
+        settings
+            .set(THEME_MODE, Value::String("frosted_glass".into()))
+            .unwrap();
+        assert_eq!(settings.get_string(THEME_MODE).unwrap(), "frosted_glass");
+        settings
+            .set(THEME_MODE, Value::String("graphite_glass".into()))
+            .unwrap();
+        assert_eq!(settings.get_string(THEME_MODE).unwrap(), "graphite_glass");
         settings
             .set(FOLDER_SORT_MODE, Value::String("bogus".into()))
             .unwrap();

@@ -193,9 +193,9 @@ capture_case() {
 
         # Exercise the real nested GPUI hitboxes: press the dock's left IN
         # handle, cross the filmstrip while held, then release inside the stage.
-        # The dock keeps its full tabbed inspector visible, so the trim lane
-        # sits higher than it did in the review-summary-only layout.
-        drag_y=$((height - 384))
+        # Source details now live in the Prepare header, so the proofing canvas
+        # absorbs the retired strip and the trim lane sits lower in the dock.
+        drag_y=$((height - 340))
         # The redesigned desktop dock is 420px at this fixture width. Aim at
         # the center of the 20px nested IN hit target rather than the timeline
         # lane beside it.
@@ -318,6 +318,20 @@ run_suite() {
         CLIPRELAY_WORKFLOW_OPEN_STUDIO=1 \
         CLIPRELAY_WORKFLOW_KEEP_CHECKING=1 \
         CLIPRELAY_CAPTURE_AFTER=110 || return 1
+    if [[ "${CLIPRELAY_THEME_MODE:-}" == "frosted_glass" \
+        || "${CLIPRELAY_THEME_MODE:-}" == "graphite_glass" ]]; then
+        local glass_case glass_opaque
+        for glass_case in library history settings command workflow workflow-cut studio studio-compact-checking; do
+            glass_opaque="$(identify -format '%[opaque]' "/artifacts/screenshots/${glass_case}.png")"
+            printf '%s-%s-opaque\t%s\t%s\n' \
+                "${CLIPRELAY_THEME_MODE}" "${glass_case}" "${glass_opaque}" "false" \
+                >> /artifacts/metrics.tsv
+            if [[ "${glass_opaque}" != "false" ]]; then
+                record_failure "glass theme: ${glass_case} must retain the whole-window blurred backdrop."
+                return 1
+            fi
+        done
+    fi
     if [[ "$(convert /artifacts/screenshots/workflow.png -crop 1x1+1025+170 \
         -format '%[fx:r>b+0.2]' info:)" != "1" ]]; then
         record_failure "workflow: Prepare rendered a known red video with swapped color channels."

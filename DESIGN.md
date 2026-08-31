@@ -107,7 +107,7 @@ Editing belongs to that same continuous surface. An Edit inspector is a spatial 
 - Spatial framing consoles instead of property forms
 - Explicit labeled state instead of decorative checkmarks
 - Rare, role-specific color signals
-- Hairline structure instead of decorative elevation
+- Hairline pane structure with shallow tactile depth reserved for interaction
 - Responsive pane swapping at constrained sizes
 - Paired direct manipulation and keyboard-equivalent controls
 
@@ -173,9 +173,15 @@ Wide workspaces pair a dominant task surface with a persistent utility inspector
 
 ## Elevation & Depth
 
-ClipRelay is flat by construction. It uses no shadows, gradients, translucency, or glass; depth comes from the graphite surface ladder, one-pixel steel borders, selective dimming, and the contrast of the media well. Transient menus may use the softer panel tone and stronger border, but they do not float through decoration.
+Passive panes in Relay, Pitch Black, Full White, and focused Studio remain flat by construction. Their hierarchy comes from the graphite surface ladder, one-pixel steel borders, selective dimming, and the contrast of the media well. Interactive controls are the deliberate exception: buttons and explicit selections use a shallow directional face, a restrained upper reflection, a soft offset contact shadow, and one pixel of pressed travel. Transient menus may use the softer panel tone and stronger border, but they do not float through decoration.
 
-**The Hairline Hierarchy Rule.** If hierarchy can be explained by adjacency, tone, or a one-pixel seam, do not add elevation.
+The opt-in **Frosted Glass / macOS Material** theme is the deliberate exception. It uses the platform's whole-window compositor blur with achromatic, low-alpha semantic fills and single-pixel seams above it. The app never manufactures a wallpaper hue: its apparent color comes entirely from the heavily blurred desktop behind the window.
+
+The companion **Graphite Glass** theme copies that exact structure and blur behavior, then adds a denser achromatic silver/graphite tint. It should read as a polished macOS application material while suppressing recognizable desktop shapes. Neither glass theme uses ambient or pane-wide gradients; compact interactive faces may use the same shallow tonal shaping as the opaque themes. Both materials cover the activity rail, header, Explorer, Library, History, Settings, Prepare, overlays, and the focused Studio shell. Video apertures remain opaque so the material never competes with the work. Relay Coral retains ownership of commit actions.
+
+When blur is unavailable, a neutral dark fallback and the semantic alpha ladder preserve grouping without claiming per-element backdrop filtering. Reduced-transparency or opaque environments must preserve the same text, borders, focus states, and pane ownership.
+
+**The Earned Depth Rule.** Passive hierarchy is explained by adjacency, tone, or a one-pixel seam. Elevation belongs only to an actionable control or explicit selection, and must compress on press rather than becoming a decorative halo.
 
 ## Shapes
 
@@ -189,9 +195,11 @@ The form language is squared and mechanical. Action controls, fields, tabs, medi
 
 - **Shape:** Near-square controls with a two-pixel corner, a 36px standard height, 44px preparation controls, and taller primary actions only when anchored in an action dock.
 - **Primary:** Relay Coral fill and dark on-commit content; use for the single most consequential available action.
-- **Hover / Focus:** Primary hover and pressed states deepen to `commit-pressed`; keyboard focus remains visibly distinct. All enabled buttons support pointer, Enter, and Space activation.
-- **Secondary:** Transparent with a steel border; hover introduces the graphite hover fill and a stronger seam.
-- **Ghost / Danger:** Ghost actions stay borderless and quiet until hover; destructive actions use Fault Rose text with an error-soft hover surface.
+- **Construction:** Primary and bordered secondary buttons use a restrained face-to-edge tonal shift, a one-pixel edge, and a soft directional contact shadow. Compact toolbar controls use the same system at lower elevation.
+- **Hover / Focus:** Hover slightly strengthens the face and contact shadow. Keyboard focus keeps a distinct two-pixel accent edge. All enabled buttons support pointer, Enter, and Space activation.
+- **Pressed:** The face darkens or reverses, the shadow compresses, and the control travels down one pixel so the state reads as physically depressed without moving surrounding layout.
+- **Secondary:** A neutral raised face and steel edge establish affordance without competing with the commit action.
+- **Ghost / Danger:** Ghost actions stay borderless and quiet until hover; destructive actions use Fault Rose text with an error-soft tactile hover surface.
 
 ### Inputs / Fields
 
@@ -230,7 +238,7 @@ The framing console is Edit’s signature inspector pattern: a concise heading a
 ### Do:
 
 - **Do** give the active artifact or media surface the largest uninterrupted region, with utility panes fixed, scrollable, and structurally separated.
-- **Do** use one-pixel steel borders and the graphite surface ladder to communicate hierarchy.
+- **Do** use one-pixel steel borders and the graphite surface ladder for passive hierarchy, reserving shallow depth for controls and explicit selections.
 - **Do** reserve coral for commitment and selection, blue for temporal focus, and semantic colors for labeled state.
 - **Do** keep pointer and keyboard states equivalent, including a visible two-pixel accent focus treatment.
 - **Do** use visual preset rails, live geometry, and direct manipulation together when an edit changes spatial framing.
@@ -240,7 +248,8 @@ The framing console is Edit’s signature inspector pattern: a concise heading a
 
 ### Don't:
 
-- **Don't** introduce shadows, gradients, glass, or floating card stacks.
+- **Don't** apply control shadows or tonal faces to passive content, ordinary panes, media tiles, or nested card stacks; depth must identify interaction or selection.
+- **Don't** use zero-offset halos, hard block shadows, or ornamental bevels. Every control shadow has a downward contact offset and soft blur, then compresses on press.
 - **Don't** round every surface; most controls and media apertures use the two-pixel corner.
 - **Don't** use coral, blue, green, amber, or red as decoration.
 - **Don't** represent boolean edit state with a decorative checkbox, checkmark, or color-only indicator.

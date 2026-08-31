@@ -1,5 +1,5 @@
 //! Shared UI widgets — theme-aware primitives matching the design system
-//! (44px targets, 2px focus rings, flat tonal surfaces).
+//! (44px targets, 2px focus rings, and shallow tactile control surfaces).
 
 use crate::theme::*;
 use gpui::prelude::*;
@@ -29,6 +29,77 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         container.child(svg().path(path).w(px(size)).h(px(size)).text_color(color))
     } else {
         container.child(glyph).text_size(px(size)).text_color(color)
+    }
+}
+
+#[derive(Clone)]
+struct ButtonVisual {
+    rest: Background,
+    hover: Background,
+    pressed: Background,
+    rest_edge: Hsla,
+    hover_edge: Hsla,
+    pressed_edge: Hsla,
+    rest_shadow: Vec<BoxShadow>,
+    hover_shadow: Vec<BoxShadow>,
+    pressed_shadow: Vec<BoxShadow>,
+}
+
+fn button_visual(theme: &crate::theme::Theme, kind: ButtonKind, compact: bool) -> ButtonVisual {
+    let transparent: Background = theme.transparent().into();
+    let neutral_edge = theme.tactile_edge(TactileState::Rest, false);
+    let (rest, hover, pressed, rest_edge, hover_edge, pressed_edge, elevated) = match kind {
+        ButtonKind::Primary => (
+            theme.accent_control_face(TactileState::Rest),
+            theme.accent_control_face(TactileState::Hover),
+            theme.accent_control_face(TactileState::Pressed),
+            theme.tactile_edge(TactileState::Rest, true),
+            theme.tactile_edge(TactileState::Hover, true),
+            theme.tactile_edge(TactileState::Pressed, true),
+            true,
+        ),
+        ButtonKind::Secondary => (
+            theme.control_face(TactileState::Rest),
+            theme.control_face(TactileState::Hover),
+            theme.control_face(TactileState::Pressed),
+            neutral_edge,
+            theme.tactile_edge(TactileState::Hover, false),
+            theme.tactile_edge(TactileState::Pressed, false),
+            true,
+        ),
+        ButtonKind::Ghost => (
+            transparent,
+            theme.control_face(TactileState::Hover),
+            theme.control_face(TactileState::Pressed),
+            theme.transparent(),
+            theme.tactile_edge(TactileState::Hover, false),
+            theme.tactile_edge(TactileState::Pressed, false),
+            false,
+        ),
+        ButtonKind::Danger => (
+            transparent,
+            theme.danger_control_face(TactileState::Hover),
+            theme.danger_control_face(TactileState::Pressed),
+            theme.transparent(),
+            theme.error.opacity(0.48),
+            theme.error.opacity(0.36),
+            false,
+        ),
+    };
+    ButtonVisual {
+        rest,
+        hover,
+        pressed,
+        rest_edge,
+        hover_edge,
+        pressed_edge,
+        rest_shadow: if elevated {
+            theme.tactile_shadow(TactileState::Rest, compact)
+        } else {
+            Vec::new()
+        },
+        hover_shadow: theme.tactile_shadow(TactileState::Hover, compact),
+        pressed_shadow: theme.tactile_shadow(TactileState::Pressed, compact),
     }
 }
 
@@ -208,16 +279,16 @@ pub fn button(
     let on_click = Rc::new(on_click);
     let click = Rc::clone(&on_click);
     let activate = Rc::clone(&on_click);
-    let focus_fill = if kind == ButtonKind::Primary {
-        current_theme().accent_pressed
-    } else {
-        current_theme().hover
-    };
+    let theme = current_theme();
+    let visual = button_visual(&theme, kind, false);
+    let focus_fill = visual.hover;
+    let focus_shadow = visual.hover_shadow.clone();
     button_base(id, label, kind, icon, enabled).when(enabled, |this| {
         this.tab_index(0)
             .focus(move |style| {
                 style
                     .bg(focus_fill)
+                    .shadow(focus_shadow.clone())
                     .border_2()
                     .border_color(current_theme().accent)
             })
@@ -269,6 +340,7 @@ fn button_base(
     enabled: bool,
 ) -> Stateful<Div> {
     let theme = current_theme();
+    let visual = button_visual(&theme, kind, false);
     let id: SharedString = id.into();
     let icon_color = if !enabled {
         theme.muted
@@ -284,6 +356,12 @@ fn button_base(
         .h(px(CONTROL_HEIGHT))
         .px(px(12.0))
         .rounded(px(RADIUS_SM))
+        .relative()
+        .top(px(0.0))
+        .border_1()
+        .border_color(visual.rest_edge)
+        .bg(visual.rest)
+        .shadow(visual.rest_shadow.clone())
         .flex()
         .items_center()
         .justify_center()
@@ -293,38 +371,48 @@ fn button_base(
         .font_weight(FontWeight::MEDIUM);
     match kind {
         ButtonKind::Primary => {
-            element = element
-                .bg(theme.accent)
-                .border_1()
-                .border_color(theme.accent)
-                .text_color(theme.accent_content)
-                .hover(|style| {
+            element = element.text_color(theme.accent_content).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
                     style
-                        .bg(theme.accent_pressed)
-                        .border_color(theme.accent_pressed)
-                });
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
         ButtonKind::Secondary => {
-            element = element
-                .bg(theme.transparent())
-                .border_1()
-                .border_color(theme.border.opacity(0.86))
-                .text_color(theme.text)
-                .hover(|style| {
+            element = element.text_color(theme.text).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
                     style
-                        .bg(theme.hover)
-                        .border_color(theme.border_strong.opacity(0.72))
-                });
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
         ButtonKind::Ghost => {
-            element = element
-                .text_color(theme.text)
-                .hover(|style| style.bg(theme.hover));
+            element = element.text_color(theme.text).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
+                    style
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
         ButtonKind::Danger => {
-            element = element
-                .text_color(theme.error)
-                .hover(|style| style.bg(theme.error_soft));
+            element = element.text_color(theme.error).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
+                    style
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
     }
     if let Some(icon) = icon {
@@ -336,21 +424,25 @@ fn button_base(
             .min_w(px(0.0))
             .text_ellipsis(),
     );
-    let pressed_fill = if kind == ButtonKind::Primary {
-        theme.accent_pressed
-    } else {
-        theme.accent_soft
-    };
+    let pressed_shadow = visual.pressed_shadow.clone();
     element
         .when(enabled, |this| {
-            // GPUI's active state exists only while the pointer is held down,
-            // so this orange fill naturally clears on release or cancellation.
-            this.active(move |style| style.bg(pressed_fill))
+            // The one-pixel travel and compressed contact shadow make the
+            // pointer state read as a physical press without changing layout.
+            this.active(move |style| {
+                style
+                    .top(px(1.0))
+                    .bg(visual.pressed)
+                    .border_color(visual.pressed_edge)
+                    .shadow(pressed_shadow.clone())
+            })
         })
         // Disabled: neutral raised fill + muted text (opacity alone washes
         // colored buttons out on light themes).
         .when(!enabled, |this| {
             this.bg(theme.raised)
+                .border_color(theme.border.opacity(0.64))
+                .shadow_none()
                 .text_color(theme.muted)
                 .cursor_default()
         })
@@ -370,6 +462,7 @@ pub fn workbench_button(
     on_click: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
 ) -> Stateful<Div> {
     let theme = current_theme();
+    let visual = button_visual(&theme, kind, true);
     let tooltip = tooltip.into();
     let id: SharedString = id.into();
     let icon_color = if !enabled {
@@ -391,6 +484,12 @@ pub fn workbench_button(
         })
         .when(!icon_only, |this| this.px(px(9.0)))
         .rounded(px(RADIUS_SM))
+        .relative()
+        .top(px(0.0))
+        .border_1()
+        .border_color(visual.rest_edge)
+        .bg(visual.rest)
+        .shadow(visual.rest_shadow.clone())
         .flex()
         .items_center()
         .justify_center()
@@ -400,38 +499,49 @@ pub fn workbench_button(
         .font_weight(FontWeight::MEDIUM);
     match kind {
         ButtonKind::Primary => {
-            element = element
-                .bg(theme.accent)
-                .border_1()
-                .border_color(theme.accent)
-                .text_color(theme.accent_content)
-                .hover(|style| {
+            element = element.text_color(theme.accent_content).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
                     style
-                        .bg(theme.accent_pressed)
-                        .border_color(theme.accent_pressed)
-                });
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
         ButtonKind::Secondary => {
-            element = element
-                .bg(theme.transparent())
-                .border_1()
-                .border_color(theme.border.opacity(0.86))
-                .text_color(theme.text)
-                .hover(|style| {
+            element = element.text_color(theme.text).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
                     style
-                        .bg(theme.hover)
-                        .border_color(theme.border_strong.opacity(0.72))
-                });
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
         ButtonKind::Ghost => {
-            element = element
-                .text_color(theme.muted)
-                .hover(|style| style.bg(theme.hover).text_color(theme.text));
+            element = element.text_color(theme.muted).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
+                    style
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                        .text_color(theme.text)
+                }
+            });
         }
         ButtonKind::Danger => {
-            element = element
-                .text_color(theme.error)
-                .hover(|style| style.bg(theme.error_soft));
+            element = element.text_color(theme.error).hover({
+                let hover_shadow = visual.hover_shadow.clone();
+                move |style| {
+                    style
+                        .bg(visual.hover)
+                        .border_color(visual.hover_edge)
+                        .shadow(hover_shadow.clone())
+                }
+            });
         }
     }
     element = element.child(self::icon(icon, 15.0, icon_color));
@@ -441,42 +551,42 @@ pub fn workbench_button(
     let on_click = Rc::new(on_click);
     let click = Rc::clone(&on_click);
     let activate = Rc::clone(&on_click);
-    let pressed_fill = if kind == ButtonKind::Primary {
-        theme.accent_pressed
-    } else {
-        theme.accent_soft
-    };
-    let focus_fill = if kind == ButtonKind::Primary {
-        theme.accent_pressed
-    } else {
-        theme.hover
-    };
+    let pressed_shadow = visual.pressed_shadow.clone();
+    let focus_fill = visual.hover;
+    let focus_shadow = visual.hover_shadow.clone();
     element
         .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
         .when(!enabled, |this| this.opacity(0.42).cursor_default())
         .when(enabled, |this| {
-            this.active(move |style| style.bg(pressed_fill))
-                .tab_index(0)
-                .focus(move |style| {
-                    style
-                        .bg(focus_fill)
-                        .border_2()
-                        .border_color(current_theme().accent)
-                })
-                .on_click(cx.listener(move |app, _event, window, cx| {
-                    window.blur();
-                    click(app, cx);
-                }))
-                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                    activate(app, cx);
+            this.active(move |style| {
+                style
+                    .top(px(1.0))
+                    .bg(visual.pressed)
+                    .border_color(visual.pressed_edge)
+                    .shadow(pressed_shadow.clone())
+            })
+            .tab_index(0)
+            .focus(move |style| {
+                style
+                    .bg(focus_fill)
+                    .shadow(focus_shadow.clone())
+                    .border_2()
+                    .border_color(current_theme().accent)
+            })
+            .on_click(cx.listener(move |app, _event, window, cx| {
+                window.blur();
+                click(app, cx);
+            }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                activate(app, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(
+                move |app, _: &crate::ActivateSpace, _window, cx| {
+                    on_click(app, cx);
                     cx.stop_propagation();
-                }))
-                .on_action(
-                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                        on_click(app, cx);
-                        cx.stop_propagation();
-                    }),
-                )
+                },
+            ))
         })
 }
 
@@ -759,18 +869,40 @@ pub fn checkbox(
         .w(px(21.0))
         .h(px(21.0))
         .rounded(px(5.0))
+        .relative()
+        .top(px(0.0))
         .border_1()
-        .border_color(theme.border_strong)
+        .border_color(if checked {
+            theme.tactile_edge(TactileState::Rest, true)
+        } else {
+            theme.tactile_edge(TactileState::Rest, false)
+        })
+        .bg(if checked {
+            theme.accent_control_face(TactileState::Rest)
+        } else {
+            theme.control_face(TactileState::Rest)
+        })
+        .shadow(theme.tactile_shadow(TactileState::Rest, true))
         .flex()
         .items_center()
         .justify_center()
         .text_size(px(13.0))
         .text_color(theme.accent_content)
-        // Mirrors the original: the indicator fills with the accent on hover.
-        .hover(|style| style.bg(theme.accent))
+        .hover(|style| {
+            style
+                .bg(theme.accent_control_face(TactileState::Hover))
+                .border_color(theme.tactile_edge(TactileState::Hover, true))
+                .shadow(theme.tactile_shadow(TactileState::Hover, true))
+        })
+        .active(|style| {
+            style
+                .top(px(1.0))
+                .bg(theme.accent_control_face(TactileState::Pressed))
+                .border_color(theme.tactile_edge(TactileState::Pressed, true))
+                .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+        })
         .when(checked, |this| {
-            this.bg(theme.accent)
-                .child(icon("check", 13.0, theme.accent_content))
+            this.child(icon("check", 13.0, theme.accent_content))
         });
     let on_toggle = Rc::new(on_toggle);
     let click = Rc::clone(&on_toggle);
