@@ -823,6 +823,7 @@ impl crate::App {
                 .relative()
                 .top(px(0.0))
                 .border_1()
+                .border_r_0()
                 .border_color(if root_active {
                     theme.tactile_edge(TactileState::Rest, false)
                 } else {
@@ -844,6 +845,7 @@ impl crate::App {
                         .bg(theme.selection_face(TactileState::Hover, false))
                         .shadow(theme.tactile_shadow(TactileState::Hover, true))
                         .border_2()
+                        .border_r_0()
                         .border_color(theme.accent)
                 })
                 .active(|style| {
@@ -972,6 +974,7 @@ impl crate::App {
                     .relative()
                     .top(px(0.0))
                     .border_1()
+                    .border_r_0()
                     .border_color(if selected {
                         theme.tactile_edge(TactileState::Rest, false)
                     } else {

@@ -2332,6 +2332,7 @@ impl crate::App {
             .h(px(if compact { 38.0 } else { 42.0 }))
             .flex_none()
             .bg(theme.surface_soft)
+            .when(compact, |tabs| tabs.border_t_1())
             .border_b_1()
             .border_color(theme.border)
             .flex()
