@@ -3547,6 +3547,163 @@ impl crate::App {
             .child(content)
     }
 
+    pub fn render_context_menu(&mut self, cx: &mut Context<Self>) -> impl Element {
+        let theme = self.theme.clone();
+        let target = self.context_menu.clone();
+        let selected_index = self.context_menu_selected;
+        let (title, detail, items, path_is_present) = match target.as_ref() {
+            Some(ContextMenuTarget::Video(row)) => (
+                "Video actions",
+                row.name.clone(),
+                context_menu_items(target.as_ref().unwrap()),
+                target.as_ref().is_some_and(ContextMenuTarget::has_path),
+            ),
+            Some(ContextMenuTarget::Folder { name, .. }) => (
+                "Folder actions",
+                name.clone(),
+                context_menu_items(target.as_ref().unwrap()),
+                target.as_ref().is_some_and(ContextMenuTarget::has_path),
+            ),
+            None => ("Actions", String::new(), Vec::new(), false),
+        };
+        let mut menu = div()
+            .id("item-context-menu")
+            .track_focus(&self.context_menu_focus)
+            .tab_index(0)
+            .occlude()
+            .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|app, _event, window, cx| {
+                if app.context_menu.is_some() {
+                    app.close_context_menu(window);
+                    cx.notify();
+                }
+            }))
+            .w(px(254.0))
+            .max_h(px((self.window_size.1 - 28.0).clamp(220.0, 430.0)))
+            .rounded(px(10.0))
+            .bg(theme.overlay_surface())
+            .border_1()
+            .border_color(theme.border_strong)
+            .when(theme.is_frosted(), |menu| {
+                menu.shadow(theme.material_shadow())
+            })
+            .when(!theme.is_frosted(), |menu| menu.shadow_lg())
+            .py(px(6.0))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .px(px(12.0))
+                    .pb(px(7.0))
+                    .pt(px(3.0))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .child(title)
+                            .text_size(px(11.0))
+                            .text_color(theme.muted)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child(detail)
+                            .text_size(px(12.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_ellipsis(),
+                    ),
+            );
+        for (index, item) in items.into_iter().enumerate() {
+            if item.separator_before {
+                menu = menu.child(div().my(px(5.0)).mx(px(10.0)).h(px(1.0)).bg(theme.border));
+            }
+            let selected = selected_index == index;
+            let face = if selected {
+                theme.selection_face(TactileState::Rest, false)
+            } else {
+                theme.transparent().into()
+            };
+            let selected_shadow = if selected {
+                theme.tactile_shadow(TactileState::Rest, true)
+            } else {
+                Vec::new()
+            };
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "context-menu-{:?}",
+                        item.action
+                    )))
+                    .mx(px(6.0))
+                    .h(px(34.0))
+                    .px(px(8.0))
+                    .rounded(px(RADIUS_SM))
+                    .bg(face)
+                    .border_1()
+                    .border_color(if selected {
+                        theme.tactile_edge(TactileState::Rest, false)
+                    } else {
+                        theme.transparent()
+                    })
+                    .shadow(selected_shadow)
+                    .when(path_is_present, |row| {
+                        row.cursor_pointer()
+                            .hover(|style| {
+                                style
+                                    .bg(theme.control_face(TactileState::Hover))
+                                    .border_color(theme.tactile_edge(TactileState::Hover, false))
+                                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                            })
+                            .active(|style| {
+                                style
+                                    .top(px(1.0))
+                                    .bg(theme.control_face(TactileState::Pressed))
+                                    .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                                    .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+                            })
+                            .on_click(cx.listener(move |app, _event, window, cx| {
+                                app.activate_context_menu_item(index, window, cx);
+                            }))
+                    })
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(9.0))
+                    .opacity(if path_is_present { 1.0 } else { 0.46 })
+                    .child(icon(
+                        item.glyph,
+                        15.0,
+                        if selected {
+                            theme.accent_text
+                        } else {
+                            theme.muted
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(item.label)
+                            .text_size(px(12.5))
+                            .text_color(theme.text)
+                            .font_weight(if selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_ellipsis(),
+                    ),
+            );
+        }
+        popup_fade(menu, "item-context-menu-fade")
+    }
+
     pub fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
         let collapsed = self.sidebar_collapsed || self.window_size.0 < 1080.0;
@@ -4983,14 +5140,10 @@ impl crate::App {
         menu
     }
 
-    pub fn open_selected_in_player(&mut self, _cx: &mut Context<Self>) {
+    pub fn open_selected_in_player(&mut self, cx: &mut Context<Self>) {
         if let Some(selected) = &self.selected {
             let path = PathBuf::from(&selected.path);
-            if path.is_file() {
-                let _ = std::process::Command::new("open").arg(&path).spawn();
-            } else {
-                self.toast(ToastKind::Error, "That file is no longer available.");
-            }
+            self.open_media_in_default_player(path, cx);
         }
     }
 }

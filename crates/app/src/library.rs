@@ -372,7 +372,7 @@ impl crate::App {
 
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
         theme: &crate::theme::Theme,
         row: &MediaRow,
@@ -434,11 +434,20 @@ impl crate::App {
                 tile.track_focus(&self.library_item_focus)
             })
             .focus(|style| style.border_2().border_color(theme.accent))
-            .on_click(cx.listener(move |app, _event, _window, cx| {
+            .on_click(cx.listener(move |app, event: &ClickEvent, _window, cx| {
+                if !event.standard_click() {
+                    return;
+                }
                 app.explorer_focus = false;
                 app.command(Command::SelectMedia(media_id));
                 cx.notify();
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |app, _event: &MouseDownEvent, window, cx| {
+                    app.open_video_context_menu(media_id, window, cx);
+                }),
+            )
             .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                 app.explorer_focus = false;
                 app.command(Command::SelectMedia(media_id));
@@ -638,8 +647,20 @@ impl crate::App {
                 )
                 .child(meta_row),
         );
+        let context_open = matches!(
+            self.context_menu.as_ref(),
+            Some(ContextMenuTarget::Video(row)) if row.id == media_id
+        );
+        let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
         let _ = (tile_chrome, media_path);
-        tile
+        anchored_overlay(
+            tile,
+            context_popup,
+            OverlayPlacement::BelowStart,
+            size(px(tile_width), px(poster_height + tile_chrome)),
+        )
+        .flex_none()
+        .w(px(tile_width))
     }
 
     fn poster_fallback(&self, theme: &crate::theme::Theme) -> impl Element {
@@ -767,6 +788,7 @@ impl crate::App {
         layout: &Layout,
     ) -> impl Element {
         let _ = layout;
+        let library_root = PathBuf::from(self.settings_value(LIBRARY_ROOT));
         // Keep every Explorer entry on the same four-column rhythm:
         // disclosure, folder, name, count. Fixed rows are important here —
         // allowing the flex column to shrink them is what made large folder
@@ -811,142 +833,175 @@ impl crate::App {
         } else {
             theme.transparent().into()
         };
-        items = items.child(
-            div()
-                .id("folder-root")
-                .ml(px(row_inset))
-                .h(px(row_height))
-                .flex_none()
-                .pr(px(14.0))
-                .rounded_tl(px(4.0))
-                .rounded_bl(px(4.0))
-                .relative()
-                .top(px(0.0))
-                .border_1()
-                .border_r_0()
-                .border_color(if root_active {
-                    theme.tactile_edge(TactileState::Rest, false)
-                } else {
-                    theme.transparent()
-                })
-                .bg(root_face)
-                .shadow(if root_active {
-                    theme.tactile_shadow(TactileState::Rest, true)
-                } else {
-                    Vec::new()
-                })
-                .flex()
-                .items_center()
-                .gap(px(row_gap))
-                .cursor_pointer()
-                .tab_index(0)
-                .focus(|style| {
-                    style
-                        .bg(theme.selection_face(TactileState::Hover, false))
-                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
-                        .border_2()
-                        .border_r_0()
-                        .border_color(theme.accent)
-                })
-                .active(|style| {
-                    style
-                        .top(px(1.0))
-                        .bg(theme.selection_face(TactileState::Pressed, false))
-                        .border_color(theme.tactile_edge(TactileState::Pressed, false))
-                        .shadow(theme.tactile_shadow(TactileState::Pressed, true))
-                })
-                .hover(|style| {
-                    style
-                        .bg(theme.selection_face(TactileState::Hover, false))
-                        .border_color(theme.tactile_edge(TactileState::Hover, false))
-                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
-                })
-                .child(
-                    div()
-                        .id("folder-root-chevron")
-                        .occlude()
-                        .w(px(disclosure_size))
-                        .h(px(disclosure_size))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            icon(
-                                if root_expanded {
-                                    "chevron-down"
-                                } else {
-                                    "chevron-right"
-                                },
-                                13.5,
-                                theme.muted_soft,
-                            )
-                            .relative()
-                            .left(px(-1.0)),
+        let root_context_path = library_root.clone();
+        let root_row = div()
+            .id("folder-root")
+            .ml(px(row_inset))
+            .h(px(row_height))
+            .flex_none()
+            .pr(px(14.0))
+            .rounded_tl(px(4.0))
+            .rounded_bl(px(4.0))
+            .relative()
+            .top(px(0.0))
+            .border_1()
+            .border_r_0()
+            .border_color(if root_active {
+                theme.tactile_edge(TactileState::Rest, false)
+            } else {
+                theme.transparent()
+            })
+            .bg(root_face)
+            .shadow(if root_active {
+                theme.tactile_shadow(TactileState::Rest, true)
+            } else {
+                Vec::new()
+            })
+            .flex()
+            .items_center()
+            .gap(px(row_gap))
+            .cursor_pointer()
+            .tab_index(0)
+            .when(root_active, |row| {
+                row.track_focus(&self.explorer_item_focus)
+            })
+            .focus(|style| {
+                style
+                    .bg(theme.selection_face(TactileState::Hover, false))
+                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                    .border_2()
+                    .border_r_0()
+                    .border_color(theme.accent)
+            })
+            .active(|style| {
+                style
+                    .top(px(1.0))
+                    .bg(theme.selection_face(TactileState::Pressed, false))
+                    .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                    .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+            })
+            .hover(|style| {
+                style
+                    .bg(theme.selection_face(TactileState::Hover, false))
+                    .border_color(theme.tactile_edge(TactileState::Hover, false))
+                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
+            })
+            .child(
+                div()
+                    .id("folder-root-chevron")
+                    .occlude()
+                    .w(px(disclosure_size))
+                    .h(px(disclosure_size))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icon(
+                            if root_expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            13.5,
+                            theme.muted_soft,
                         )
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            let expanded = app
-                                .folders_expanded
-                                .get("__explorer_root__")
-                                .copied()
-                                .unwrap_or(true);
-                            app.folders_expanded
-                                .insert("__explorer_root__".to_string(), !expanded);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    icon(
-                        "folder",
-                        folder_icon_size,
-                        if root_active {
-                            theme.accent_text
-                        } else {
-                            theme.muted
-                        },
+                        .relative()
+                        .left(px(-1.0)),
                     )
-                    .relative()
-                    .top(px(-1.0)),
+                    .on_click(cx.listener(|app, _event, _window, cx| {
+                        let expanded = app
+                            .folders_expanded
+                            .get("__explorer_root__")
+                            .copied()
+                            .unwrap_or(true);
+                        app.folders_expanded
+                            .insert("__explorer_root__".to_string(), !expanded);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                icon(
+                    "folder",
+                    folder_icon_size,
+                    if root_active {
+                        theme.accent_text
+                    } else {
+                        theme.muted
+                    },
                 )
-                .child(
-                    div()
-                        .child("All videos")
-                        .text_size(px(13.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::MEDIUM),
-                )
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .w(px(count_width))
-                        .flex_none()
-                        .child(format!("{}", self.counts.0))
-                        .text_size(px(12.0))
-                        .text_color(theme.muted_soft)
-                        .font_weight(FontWeight::NORMAL)
-                        .text_right(),
-                )
-                .on_click(cx.listener(|app, _event, window, cx| {
-                    window.blur();
-                    app.explorer_focus = true;
-                    app.explorer_selected = String::new();
-                    app.command(Command::SetFolder(String::new()));
-                    cx.notify();
-                }))
-                .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
-                    app.explorer_focus = true;
-                    app.explorer_selected = String::new();
-                    app.command(Command::SetFolder(String::new()));
-                    cx.notify();
-                    cx.stop_propagation();
-                }))
-                .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
-                    app.explorer_focus = true;
-                    app.explorer_selected = String::new();
-                    app.command(Command::SetFolder(String::new()));
-                    cx.notify();
-                    cx.stop_propagation();
-                })),
+                .relative()
+                .top(px(-1.0)),
+            )
+            .child(
+                div()
+                    .child("All videos")
+                    .text_size(px(13.0))
+                    .text_color(theme.text)
+                    .font_weight(FontWeight::MEDIUM),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .w(px(count_width))
+                    .flex_none()
+                    .child(format!("{}", self.counts.0))
+                    .text_size(px(12.0))
+                    .text_color(theme.muted_soft)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_right(),
+            )
+            .on_click(cx.listener(|app, event: &ClickEvent, window, cx| {
+                if !event.standard_click() {
+                    return;
+                }
+                window.blur();
+                app.explorer_focus = true;
+                app.explorer_selected = String::new();
+                app.command(Command::SetFolder(String::new()));
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                app.explorer_focus = true;
+                app.explorer_selected = String::new();
+                app.command(Command::SetFolder(String::new()));
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                app.explorer_focus = true;
+                app.explorer_selected = String::new();
+                app.command(Command::SetFolder(String::new()));
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |app, _event: &MouseDownEvent, window, cx| {
+                    app.open_folder_context_menu(
+                        String::new(),
+                        root_context_path.clone(),
+                        "Video library".to_string(),
+                        window,
+                        cx,
+                    );
+                }),
+            );
+        let root_context_open = matches!(
+            self.context_menu.as_ref(),
+            Some(ContextMenuTarget::Folder { relative_path, .. }) if relative_path.is_empty()
+        );
+        let root_context_popup = root_context_open.then(|| self.render_context_menu(cx).into_any());
+        items = items.child(
+            anchored_overlay(
+                root_row,
+                root_context_popup,
+                OverlayPlacement::BelowStart,
+                size(px(EXPLORER_WIDTH - row_inset), px(row_height)),
+            )
+            .flex_none()
+            .w_full()
+            .h(px(row_height)),
         );
         let active_folder = self.active_folder.clone();
         let expanded_map = self.folders_expanded.clone();
@@ -962,6 +1017,7 @@ impl crate::App {
                 let name = node.name.clone();
                 let indent = (8.0 + node.depth as f32 * 14.0).min(8.0 + 6.0 * 14.0);
                 let selected = is_active || is_focused;
+                let folder_path = library_root.join(&folder);
                 let mut row = div()
                     .id(SharedString::from(format!("folder-{folder}")))
                     .ml(px(row_inset))
@@ -984,6 +1040,9 @@ impl crate::App {
                     .items_center()
                     .gap(px(row_gap))
                     .cursor_pointer()
+                    .tab_index(0)
+                    .when(is_focused, |row| row.track_focus(&self.explorer_item_focus))
+                    .focus(|style| style.border_2().border_r_0().border_color(theme.accent))
                     .active(|style| {
                         style
                             .top(px(1.0))
@@ -1067,7 +1126,7 @@ impl crate::App {
                             .flex_1()
                             .min_w(px(0.0))
                             .overflow_hidden()
-                            .child(name)
+                            .child(name.clone())
                             .text_size(px(13.5))
                             .text_color(if is_active {
                                 theme.text
@@ -1095,13 +1154,51 @@ impl crate::App {
                             .font_weight(FontWeight::NORMAL)
                             .text_right(),
                     )
-                    .on_click(cx.listener(move |app, _event, _window, cx| {
-                        app.explorer_focus = true;
-                        app.explorer_selected = folder.clone();
-                        app.command(Command::SetFolder(folder.clone()));
-                        cx.notify();
-                    }));
-                items = items.child(row);
+                    .on_click(cx.listener({
+                        let folder = folder.clone();
+                        move |app, event: &ClickEvent, _window, cx| {
+                            if !event.standard_click() {
+                                return;
+                            }
+                            app.explorer_focus = true;
+                            app.explorer_selected = folder.clone();
+                            app.command(Command::SetFolder(folder.clone()));
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener({
+                            let folder = folder.clone();
+                            let folder_path = folder_path.clone();
+                            let name = name.clone();
+                            move |app, _event: &MouseDownEvent, window, cx| {
+                                app.open_folder_context_menu(
+                                    folder.clone(),
+                                    folder_path.clone(),
+                                    name.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
+                    );
+                let context_open = matches!(
+                    self.context_menu.as_ref(),
+                    Some(ContextMenuTarget::Folder { relative_path, .. }) if relative_path == &folder
+                );
+                let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
+                items = items.child(
+                    anchored_overlay(
+                        row,
+                        context_popup,
+                        OverlayPlacement::BelowStart,
+                        size(px(EXPLORER_WIDTH - row_inset), px(row_height)),
+                    )
+                    .flex_none()
+                    .w_full()
+                    .h(px(row_height)),
+                );
             }
         }
         let scanning = self.scan.active;

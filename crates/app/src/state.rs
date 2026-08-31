@@ -124,6 +124,182 @@ pub struct FolderNode {
     pub latest_indexed: String,
 }
 
+/// The immutable item a transient context menu acts on. The menu owns this
+/// target so a later library selection cannot redirect an already-open menu.
+#[derive(Debug, Clone)]
+pub enum ContextMenuTarget {
+    Video(Box<MediaRow>),
+    Folder {
+        relative_path: String,
+        path: PathBuf,
+        name: String,
+    },
+}
+
+impl ContextMenuTarget {
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            Self::Video(row) => std::path::Path::new(&row.path),
+            Self::Folder { path, .. } => path,
+        }
+    }
+
+    pub fn has_path(&self) -> bool {
+        !self.path().as_os_str().is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    OpenDefault,
+    RevealInFileManager,
+    OpenContainingFolder,
+    OpenInStudio,
+    CopyPath,
+    UseAsActiveSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContextMenuItem {
+    pub action: ContextMenuAction,
+    pub label: &'static str,
+    pub glyph: &'static str,
+    pub separator_before: bool,
+}
+
+pub fn context_menu_items(target: &ContextMenuTarget) -> Vec<ContextMenuItem> {
+    match target {
+        ContextMenuTarget::Video(_) => vec![
+            ContextMenuItem {
+                action: ContextMenuAction::OpenDefault,
+                label: "Open in default player",
+                glyph: "play",
+                separator_before: false,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::RevealInFileManager,
+                label: "Show in file manager",
+                glyph: "folder",
+                separator_before: false,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::OpenContainingFolder,
+                label: "Open containing folder",
+                glyph: "external",
+                separator_before: false,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::OpenInStudio,
+                label: "Open in Studio",
+                glyph: "maximize",
+                separator_before: true,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::CopyPath,
+                label: "Copy path",
+                glyph: "copy",
+                separator_before: false,
+            },
+        ],
+        ContextMenuTarget::Folder { .. } => vec![
+            ContextMenuItem {
+                action: ContextMenuAction::OpenContainingFolder,
+                label: "Open folder",
+                glyph: "external",
+                separator_before: false,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::CopyPath,
+                label: "Copy folder path",
+                glyph: "copy",
+                separator_before: false,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::UseAsActiveSource,
+                label: "Use as active source",
+                glyph: "folder",
+                separator_before: true,
+            },
+        ],
+    }
+}
+
+/// Wrap keyboard navigation through menu items without relying on render-local
+/// indices. An empty menu intentionally has no valid selection.
+pub fn next_context_menu_index(current: usize, count: usize, direction: i8) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    if direction < 0 {
+        (current + count - 1) % count
+    } else {
+        (current + 1) % count
+    }
+}
+
+#[cfg(test)]
+mod context_menu_tests {
+    use super::*;
+
+    fn video(path: &str) -> ContextMenuTarget {
+        ContextMenuTarget::Video(Box::new(MediaRow {
+            id: 42,
+            name: "Clip.mp4".to_string(),
+            path: path.to_string(),
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn video_menu_keeps_its_immutable_target_and_action_set() {
+        let target = video("/media/Clip.mp4");
+        let actions: Vec<_> = context_menu_items(&target)
+            .into_iter()
+            .map(|item| item.action)
+            .collect();
+        assert_eq!(target.path(), PathBuf::from("/media/Clip.mp4"));
+        assert_eq!(
+            actions,
+            vec![
+                ContextMenuAction::OpenDefault,
+                ContextMenuAction::RevealInFileManager,
+                ContextMenuAction::OpenContainingFolder,
+                ContextMenuAction::OpenInStudio,
+                ContextMenuAction::CopyPath,
+            ]
+        );
+    }
+
+    #[test]
+    fn folder_menu_has_only_safe_folder_actions() {
+        let target = ContextMenuTarget::Folder {
+            relative_path: "Exports".to_string(),
+            path: PathBuf::from("/media/Exports"),
+            name: "Exports".to_string(),
+        };
+        let actions: Vec<_> = context_menu_items(&target)
+            .into_iter()
+            .map(|item| item.action)
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                ContextMenuAction::OpenContainingFolder,
+                ContextMenuAction::CopyPath,
+                ContextMenuAction::UseAsActiveSource,
+            ]
+        );
+    }
+
+    #[test]
+    fn unavailable_paths_are_not_actionable_and_navigation_wraps() {
+        assert!(!video("").has_path());
+        assert_eq!(next_context_menu_index(0, 0, 1), 0);
+        assert_eq!(next_context_menu_index(0, 3, -1), 2);
+        assert_eq!(next_context_menu_index(2, 3, 1), 0);
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PublishPayload {
     pub media_id: i64,

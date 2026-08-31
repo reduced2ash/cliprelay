@@ -184,6 +184,8 @@ pub struct App {
     history_source_focus: FocusHandle,
     shortcut_guide_source_focus: FocusHandle,
     shortcut_guide_focus: FocusHandle,
+    explorer_item_focus: FocusHandle,
+    context_menu_focus: FocusHandle,
     focus_library_selection: bool,
     pub open_combos: std::collections::HashSet<String>,
     pub key_captured: bool,
@@ -195,6 +197,10 @@ pub struct App {
     pub pending_close_workspace: Option<usize>,
     pub activity_open: bool,
     pub shortcut_guide_open: bool,
+    pub context_menu: Option<ContextMenuTarget>,
+    pub context_menu_selected: usize,
+    pending_context_studio_id: Option<i64>,
+    context_menu_boot_open: bool,
 }
 
 impl App {
@@ -323,6 +329,10 @@ impl App {
         let open_sort_at_boot = std::env::var("CLIPRELAY_OPEN_SORT").is_ok();
         let open_activity_at_boot = std::env::var("CLIPRELAY_OPEN_ACTIVITY").is_ok();
         let open_workspace_menu_at_boot = std::env::var("CLIPRELAY_OPEN_WORKSPACE_MENU").is_ok();
+        // Dev-only visual harness state. It waits for a real Library row, then
+        // mounts the same source-anchored video menu used by pointer and
+        // keyboard invocation.
+        let open_context_menu_at_boot = std::env::var("CLIPRELAY_OPEN_CONTEXT_MENU").is_ok();
         let exercise_workflow_at_boot = std::env::var("CLIPRELAY_EXERCISE_WORKFLOW").is_ok();
         let open_studio_in_workflow = std::env::var("CLIPRELAY_WORKFLOW_OPEN_STUDIO").is_ok();
         let studio_inspector_tab_in_workflow =
@@ -365,6 +375,8 @@ impl App {
             history_source_focus: cx.focus_handle(),
             shortcut_guide_source_focus: cx.focus_handle(),
             shortcut_guide_focus: cx.focus_handle(),
+            explorer_item_focus: cx.focus_handle(),
+            context_menu_focus: cx.focus_handle(),
             focus_library_selection: false,
             theme_mode: boot_theme_mode,
             ui_scale: 1.0,
@@ -481,6 +493,10 @@ impl App {
             renaming_workspace: None,
 
             pending_close_workspace: None,
+            context_menu: None,
+            context_menu_selected: 0,
+            pending_context_studio_id: None,
+            context_menu_boot_open: open_context_menu_at_boot,
         };
 
         if app.page == Page::Settings {
@@ -775,6 +791,10 @@ impl App {
                         self.stop_hover_preview(None, cx);
                     }
                 }
+                if self.pending_context_studio_id == self.selected.as_ref().map(|row| row.id) {
+                    self.pending_context_studio_id = None;
+                    self.open_selected_in_studio(cx);
+                }
                 cx.notify();
             }
             Event::SelectionCheckingChanged(media_id, checking) => {
@@ -835,6 +855,13 @@ impl App {
                         self.command(Command::LoadMoreLibrary);
                     } else {
                         self.reveal_target_row = None;
+                    }
+                }
+                if self.context_menu_boot_open {
+                    if let Some(row) = self.library.rows.first().cloned() {
+                        self.context_menu = Some(ContextMenuTarget::Video(Box::new(row)));
+                        self.context_menu_selected = 0;
+                        self.context_menu_boot_open = false;
                     }
                 }
                 cx.notify();
@@ -1341,6 +1368,7 @@ impl App {
             || self.workspace_menu_open
             || self.activity_open
             || self.shortcut_guide_open
+            || self.context_menu.is_some()
             || self.history_more_menu_post.is_some()
             || !self.open_combos.is_empty()
             || self.key_captured
@@ -1400,6 +1428,213 @@ impl App {
         self.shortcut_guide_open = false;
         self.mark_menu_closed();
         window.focus(&self.shortcut_guide_source_focus);
+    }
+
+    pub fn open_video_context_menu(
+        &mut self,
+        media_id: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self
+            .library
+            .rows
+            .iter()
+            .find(|row| row.id == media_id)
+            .cloned()
+        else {
+            self.toast(ToastKind::Error, "That video is no longer available.");
+            cx.notify();
+            return;
+        };
+        self.dismiss_root_popovers();
+        self.explorer_focus = false;
+        self.context_menu = Some(ContextMenuTarget::Video(Box::new(row)));
+        self.context_menu_selected = 0;
+        self.command(Command::SelectMedia(media_id));
+        let focus = self.context_menu_focus.clone();
+        cx.on_next_frame(window, move |_app, window, _cx| window.focus(&focus));
+        cx.notify();
+    }
+
+    pub fn open_folder_context_menu(
+        &mut self,
+        relative_path: String,
+        path: PathBuf,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_root_popovers();
+        self.explorer_focus = true;
+        self.explorer_selected = relative_path.clone();
+        self.context_menu = Some(ContextMenuTarget::Folder {
+            relative_path,
+            path,
+            name,
+        });
+        self.context_menu_selected = 0;
+        let focus = self.context_menu_focus.clone();
+        cx.on_next_frame(window, move |_app, window, _cx| window.focus(&focus));
+        cx.notify();
+    }
+
+    pub fn close_context_menu(&mut self, window: &mut Window) {
+        let target = self.context_menu.take();
+        self.mark_menu_closed();
+        match target {
+            Some(ContextMenuTarget::Video(_)) => {
+                self.focus_library_selection = true;
+                let focus = self.library_item_focus.clone();
+                window.focus(&focus);
+            }
+            Some(ContextMenuTarget::Folder { .. }) => {
+                window.focus(&self.explorer_item_focus);
+            }
+            None => {}
+        }
+    }
+
+    fn launch_path_action(
+        &mut self,
+        action: cliprelay_core::x::FileManagerAction,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let launch = cx.background_spawn(async move {
+            cliprelay_core::x::XAssistant::launch_file_manager(action, &path)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = launch.await;
+            let _ = this.update(cx, |app, cx| {
+                if let Err(error) = result {
+                    app.toast(ToastKind::Error, error.to_string());
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Shared semantic entry point for every in-app path that opens a video
+    /// with the platform's default player. Validation and process spawning are
+    /// intentionally delegated to the same background launch helper as the
+    /// context menu.
+    pub fn open_media_in_default_player(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.launch_path_action(cliprelay_core::x::FileManagerAction::OpenDefault, path, cx);
+    }
+
+    fn open_context_video_in_studio(&mut self, media_id: i64, cx: &mut Context<Self>) {
+        if self.selected.as_ref().map(|row| row.id) == Some(media_id)
+            && self.can_open_selected_in_studio()
+        {
+            self.open_selected_in_studio(cx);
+            return;
+        }
+        self.pending_context_studio_id = Some(media_id);
+        self.command(Command::SelectMedia(media_id));
+        self.toast(ToastKind::Info, "Loading video for Studio…");
+        cx.notify();
+    }
+
+    pub fn activate_context_menu_item(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = self.context_menu.clone() else {
+            return;
+        };
+        let Some(item) = context_menu_items(&target).get(index).copied() else {
+            return;
+        };
+        // The keyboard route observes the same validity rule as the disabled
+        // menu rows. A stale target is a no-op rather than a process launch.
+        if !target.has_path() {
+            return;
+        }
+        let path = target.path().to_path_buf();
+        self.close_context_menu(window);
+        match (item.action, target) {
+            (ContextMenuAction::OpenDefault, ContextMenuTarget::Video(_)) => {
+                self.open_media_in_default_player(path, cx)
+            }
+            (ContextMenuAction::RevealInFileManager, ContextMenuTarget::Video(_)) => {
+                self.launch_path_action(cliprelay_core::x::FileManagerAction::Reveal, path, cx)
+            }
+            (ContextMenuAction::OpenContainingFolder, ContextMenuTarget::Video(_)) => {
+                if let Some(parent) = path.parent() {
+                    self.launch_path_action(
+                        cliprelay_core::x::FileManagerAction::OpenFolder,
+                        parent.to_path_buf(),
+                        cx,
+                    );
+                } else {
+                    self.toast(
+                        ToastKind::Error,
+                        "That video does not have a containing folder.",
+                    );
+                }
+            }
+            (ContextMenuAction::OpenContainingFolder, ContextMenuTarget::Folder { .. }) => {
+                self.launch_path_action(cliprelay_core::x::FileManagerAction::OpenFolder, path, cx)
+            }
+            (ContextMenuAction::OpenInStudio, ContextMenuTarget::Video(row)) => {
+                self.open_context_video_in_studio(row.id, cx)
+            }
+            (ContextMenuAction::CopyPath, _) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                    path.to_string_lossy().to_string(),
+                ));
+                self.toast(ToastKind::Success, "Path copied to the clipboard.");
+                cx.notify();
+            }
+            (
+                ContextMenuAction::UseAsActiveSource,
+                ContextMenuTarget::Folder { relative_path, .. },
+            ) => {
+                self.command(Command::SetFolder(relative_path));
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_context_menu_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.context_menu.as_ref() else {
+            return false;
+        };
+        let count = context_menu_items(target).len();
+        match key {
+            "up" if count > 0 => {
+                self.context_menu_selected =
+                    next_context_menu_index(self.context_menu_selected, count, -1);
+                cx.notify();
+                true
+            }
+            "down" if count > 0 => {
+                self.context_menu_selected =
+                    next_context_menu_index(self.context_menu_selected, count, 1);
+                cx.notify();
+                true
+            }
+            "enter" | " " | "space" => {
+                self.activate_context_menu_item(self.context_menu_selected, window, cx);
+                true
+            }
+            "escape" => {
+                self.close_context_menu(window);
+                cx.notify();
+                true
+            }
+            _ => true,
+        }
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
@@ -1616,6 +1851,7 @@ impl App {
         self.workspace_menu_open = false;
         self.activity_open = false;
         self.shortcut_guide_open = false;
+        self.context_menu = None;
         self.history_more_menu_post = None;
         self.open_combos.clear();
         if self.command_open {
@@ -2029,6 +2265,10 @@ impl App {
             return false;
         }
 
+        if self.context_menu.is_some() {
+            return self.handle_context_menu_key(key, window, cx);
+        }
+
         // These transient surfaces deliberately do not expose media keys.
         // Keeping their key stream local prevents a command, sort, combo, or
         // shortcut guide from activating content underneath it. Escape still
@@ -2037,6 +2277,7 @@ impl App {
             || self.workspace_menu_open
             || self.activity_open
             || self.shortcut_guide_open
+            || self.context_menu.is_some()
             || self.history_more_menu_post.is_some()
             || !self.open_combos.is_empty()
             || self.key_captured)
@@ -2056,6 +2297,31 @@ impl App {
         }
 
         match key {
+            "f10" if shift && !cmd && !modifiers.alt => {
+                if self.explorer_focus {
+                    let root = PathBuf::from(self.settings_value(LIBRARY_ROOT));
+                    let relative = self.explorer_selected.clone();
+                    let path = if relative.is_empty() {
+                        root.clone()
+                    } else {
+                        root.join(&relative)
+                    };
+                    let name = if relative.is_empty() {
+                        "Video library".to_string()
+                    } else {
+                        self.visible_folders()
+                            .into_iter()
+                            .find(|node| node.folder == relative)
+                            .map(|node| node.name)
+                            .unwrap_or_else(|| relative.clone())
+                    };
+                    if !path.as_os_str().is_empty() {
+                        self.open_folder_context_menu(relative, path, name, window, cx);
+                    }
+                } else if let Some(media_id) = self.selected.as_ref().map(|selected| selected.id) {
+                    self.open_video_context_menu(media_id, window, cx);
+                }
+            }
             "1" if cmd => self.navigate_to(Page::Library, cx),
             "2" if cmd => self.navigate_to(Page::History, cx),
             "," if cmd => self.navigate_to(Page::Settings, cx),

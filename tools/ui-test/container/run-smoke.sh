@@ -117,7 +117,7 @@ capture_case() {
     local screenshot="/artifacts/screenshots/${case_name}.png"
     local app_log="/artifacts/logs/app-${case_name}.log"
     local window_id geometry width height target_width=1180 target_height=760
-    if [[ "${case_name}" == "studio-compact-checking" ]]; then
+    if [[ "${case_name}" == "studio-compact-checking" || "${case_name}" == "context-menu-compact" ]]; then
         target_width=700
         target_height=520
     elif [[ "${case_name}" == "workflow-tall" ]]; then
@@ -171,7 +171,7 @@ capture_case() {
         record_failure "${case_name}: window geometry ${width}x${height} is below the app minimum."
         return 1
     fi
-    if [[ "${case_name}" == "studio-compact-checking" || "${case_name}" == "studio-shell" ]] \
+    if [[ "${case_name}" == "studio-compact-checking" || "${case_name}" == "context-menu-compact" || "${case_name}" == "studio-shell" ]] \
         && (( width != target_width || height != target_height )); then
         stop_app
         record_failure "${case_name}: expected exact ${target_width}x${target_height} geometry, got ${width}x${height}."
@@ -302,12 +302,24 @@ run_suite() {
             CLIPRELAY_CAPTURE_AFTER=110 || return 1
         return 0
     fi
+    if [[ "${GUI_TEST_ONLY_CONTEXT_MENU:-0}" == "1" ]]; then
+        capture_case library || return 1
+        capture_case context-menu CLIPRELAY_OPEN_CONTEXT_MENU=1 || return 1
+        capture_case context-menu-compact CLIPRELAY_OPEN_CONTEXT_MENU=1 || return 1
+        assert_distinct_states library context-menu || {
+            record_failure "library/context-menu: opening the item menu produced no meaningful visual change."
+            return 1
+        }
+        return 0
+    fi
 
     capture_case library || return 1
     capture_case history CLIPRELAY_PAGE=history || return 1
     capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
     capture_case command CLIPRELAY_OPEN_COMMAND=1 CLIPRELAY_QUERY=library || return 1
     capture_case shortcut-guide CLIPRELAY_OPEN_SHORTCUT_GUIDE=1 || return 1
+    capture_case context-menu CLIPRELAY_OPEN_CONTEXT_MENU=1 || return 1
+    capture_case context-menu-compact CLIPRELAY_OPEN_CONTEXT_MENU=1 || return 1
     capture_case workflow CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
     if [[ "${GUI_TEST_CAPTURE_TALL:-0}" == "1" ]]; then
         capture_case workflow-tall CLIPRELAY_EXERCISE_WORKFLOW=1 CLIPRELAY_CAPTURE_AFTER=110 || return 1
@@ -322,7 +334,7 @@ run_suite() {
     if [[ "${CLIPRELAY_THEME_MODE:-}" == "frosted_glass" \
         || "${CLIPRELAY_THEME_MODE:-}" == "graphite_glass" ]]; then
         local glass_case glass_opaque
-        for glass_case in library history settings command shortcut-guide workflow workflow-cut studio studio-compact-checking; do
+        for glass_case in library history settings command shortcut-guide context-menu context-menu-compact workflow workflow-cut studio studio-compact-checking; do
             glass_opaque="$(identify -format '%[opaque]' "/artifacts/screenshots/${glass_case}.png")"
             printf '%s-%s-opaque\t%s\t%s\n' \
                 "${CLIPRELAY_THEME_MODE}" "${glass_case}" "${glass_opaque}" "false" \
@@ -375,6 +387,10 @@ run_suite() {
         record_failure "library/shortcut-guide: opening the keyboard guide produced no meaningful visual change."
         return 1
     }
+    assert_distinct_states library context-menu || {
+        record_failure "library/context-menu: opening the item menu produced no meaningful visual change."
+        return 1
+    }
     assert_distinct_states library workflow || {
         record_failure "library/workflow: the exercised playback state produced no meaningful visual change."
         return 1
@@ -397,8 +413,10 @@ if run_suite; then
         echo "PASS isolated 1672x945 workbench-shell visual check. Artifacts: /artifacts" > /artifacts/summary.txt
     elif [[ "${GUI_TEST_ONLY_STUDIO_SHELL:-0}" == "1" ]]; then
         echo "PASS isolated 1672x941 Prepare Studio visual check. Artifacts: /artifacts" > /artifacts/summary.txt
+    elif [[ "${GUI_TEST_ONLY_CONTEXT_MENU:-0}" == "1" ]]; then
+        echo "PASS isolated Library context-menu visual check. Artifacts: /artifacts" > /artifacts/summary.txt
     else
-        echo "PASS isolated ClipRelay GUI smoke test (9 semantic states, including the keyboard guide, a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
+        echo "PASS isolated ClipRelay GUI smoke test (11 semantic states, including the keyboard guide, compact context menu, a real Prepare cut drag, Random/playback/reveal, Prepare Studio, and minimum-size validation). Artifacts: /artifacts" > /artifacts/summary.txt
     fi
     exit 0
 fi
