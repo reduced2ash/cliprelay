@@ -164,6 +164,27 @@ impl LibraryDragScroll {
     }
 }
 
+fn library_thumbnail(
+    path: PathBuf,
+    width: f32,
+    height: f32,
+    fit_whole_frame: bool,
+) -> impl Element {
+    // GPUI's image element supplies the source's intrinsic aspect ratio during
+    // layout. Give it the media well's exact bounds so that ObjectFit controls
+    // only the painted pixels; percentage bounds can otherwise be expanded by
+    // a portrait source and then clipped by the 16:9 parent.
+    img(path)
+        .w(px(width))
+        .h(px(height))
+        .flex_none()
+        .object_fit(if fit_whole_frame {
+            ObjectFit::Contain
+        } else {
+            ObjectFit::Cover
+        })
+}
+
 /// Layout helpers shared by the pages.
 #[allow(dead_code)]
 pub struct Layout {
@@ -338,7 +359,6 @@ impl crate::App {
         let tile_gap = layout.tile_gap;
         let cell_height = layout.cell_height;
         let density = self.density.clone();
-        let fit_thumbnails = self.settings_bool(FIT_LIBRARY_THUMBNAILS);
         let drag_cursor = if self.library_drag.is_active() {
             CursorStyle::ClosedHand
         } else {
@@ -369,6 +389,11 @@ impl crate::App {
                 grid_rows,
                 cx.processor(
                     move |app, visible_grid_rows: std::ops::Range<usize>, _window, cx| {
+                        // Read framing from live App state whenever the
+                        // virtualized list asks for visible rows. Capturing a
+                        // copy when the list element is created can leave
+                        // recycled rows on an earlier setting value.
+                        let fit_thumbnails = app.settings_bool(FIT_LIBRARY_THUMBNAILS);
                         let active_preview = app.active_preview_id;
                         let preview_video =
                             app.preview_video.as_ref().and_then(|(media_id, video)| {
@@ -708,12 +733,11 @@ impl crate::App {
             } else if thumbnail_ok {
                 // Keep the thumbnail stable while the debounced preview encode
                 // and off-thread GStreamer startup complete.
-                poster = poster.child(img(PathBuf::from(thumbnail)).w_full().h_full().object_fit(
-                    if fit_thumbnails {
-                        ObjectFit::Contain
-                    } else {
-                        ObjectFit::Cover
-                    },
+                poster = poster.child(library_thumbnail(
+                    PathBuf::from(thumbnail),
+                    tile_width,
+                    poster_height,
+                    fit_thumbnails,
                 ));
             } else {
                 poster = poster.child(self.poster_fallback(theme));
@@ -727,12 +751,11 @@ impl crate::App {
                 }
             }
         } else if thumbnail_ok {
-            poster = poster.child(img(PathBuf::from(thumbnail)).w_full().h_full().object_fit(
-                if fit_thumbnails {
-                    ObjectFit::Contain
-                } else {
-                    ObjectFit::Cover
-                },
+            poster = poster.child(library_thumbnail(
+                PathBuf::from(thumbnail),
+                tile_width,
+                poster_height,
+                fit_thumbnails,
             ));
         } else {
             poster = poster.child(self.poster_fallback(theme));
