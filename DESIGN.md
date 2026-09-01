@@ -217,6 +217,10 @@ Focused Studio places **Back to Prepare** at the left of its top bar, ahead of t
 
 Status pills use a semantic soft fill, low-opacity semantic border, icon plus explicit text, and the fully rounded pill shape. Ordinary panes remain square and use one-pixel seams rather than card styling.
 
+### Library Thumbnails
+
+Library tiles fill their 16:9 media wells by default. The **Fit the whole video** option preserves the complete source frame and uses the media-well background for letterboxing when aspect ratios differ. Static thumbnails and live hover previews always share the selected framing so the image does not jump on hover.
+
 ### Timeline Range
 
 The timeline is a dark media strip with dimmed out-of-range regions, coral IN/OUT gates and selection border, and a two-pixel Playhead Blue line with a compact marker. Range labels and exact fields use tabular figures. Hover and drag feedback strengthen the active gate without changing the meaning of the playhead color.

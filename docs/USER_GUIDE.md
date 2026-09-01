@@ -162,6 +162,9 @@ Visible thumbnails use a bounded background queue. Hover previews are also
 generated in the background and may be disabled.
 
 Interface scale presets provide 80, 90, and 100 percent workspace density.
+The Interface settings also include **Fit the whole video inside Library
+thumbnails**. Enable it to keep every edge of portrait, square, or ultrawide
+videos visible; the thumbnail uses letterboxing instead of cropping to fill.
 
 **Maximum performance** keeps VSync enabled at the active display refresh
 rate, preloads adjacent clips, and raises safe thumbnail and hover-preview

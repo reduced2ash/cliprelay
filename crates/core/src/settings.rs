@@ -25,6 +25,7 @@ pub const UI_SCALE: &str = "ui_scale";
 pub const THEME_MODE: &str = "theme_mode";
 pub const PERFORMANCE_MODE: &str = "performance_mode";
 pub const LIBRARY_DENSITY: &str = "library_density";
+pub const FIT_LIBRARY_THUMBNAILS: &str = "fit_library_thumbnails";
 pub const EXPORT_ENCODER: &str = "export_encoder";
 pub const SIDEBAR_COLLAPSED: &str = "sidebar_collapsed";
 pub const PREPARE_EXPANDED: &str = "prepare_expanded";
@@ -62,6 +63,7 @@ pub fn defaults() -> HashMap<&'static str, Value> {
     map.insert(THEME_MODE, json_str("relay"));
     map.insert(PERFORMANCE_MODE, json_str("automatic"));
     map.insert(LIBRARY_DENSITY, json_str("default"));
+    map.insert(FIT_LIBRARY_THUMBNAILS, Value::Bool(false));
     map.insert(EXPORT_ENCODER, json_str("auto"));
     // The redesigned workbench opens on the compact activity rail shown in
     // the approved shell. Users can still expand it when they want labels.

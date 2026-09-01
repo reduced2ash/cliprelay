@@ -4,7 +4,7 @@
 use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
-use crate::video_element::video as video_element;
+use crate::video_element::{video as video_element, VideoFit};
 use crate::widgets::*;
 use cliprelay_core::db::MediaRow;
 use gpui::prelude::*;
@@ -186,6 +186,7 @@ impl crate::App {
         let tile_gap = layout.tile_gap;
         let cell_height = layout.cell_height;
         let density = self.density.clone();
+        let fit_thumbnails = self.settings_bool(FIT_LIBRARY_THUMBNAILS);
         if row_count == 0 && !scanning {
             grid = grid.child(self.render_empty_state(cx, &theme));
         } else {
@@ -270,6 +271,7 @@ impl crate::App {
                                     &state,
                                     tile_preview,
                                     &density,
+                                    fit_thumbnails,
                                 ));
                             }
                             rendered_rows.push(tile_row);
@@ -391,6 +393,7 @@ impl crate::App {
         thumbnail_state: &str,
         preview_video: Option<Video>,
         density: &str,
+        fit_thumbnails: bool,
     ) -> impl Element {
         let media_id = row.id;
         let name = row.name.clone();
@@ -512,16 +515,22 @@ impl crate::App {
                     SharedString::from(format!("hover-video-{media_id}")),
                     px(tile_width),
                     px(poster_height),
+                    if fit_thumbnails {
+                        VideoFit::Contain
+                    } else {
+                        VideoFit::Cover
+                    },
                 ));
             } else if thumbnail_ok {
                 // Keep the thumbnail stable while the debounced preview encode
                 // and off-thread GStreamer startup complete.
-                poster = poster.child(
-                    img(PathBuf::from(thumbnail))
-                        .w_full()
-                        .h_full()
-                        .object_fit(ObjectFit::Contain),
-                );
+                poster = poster.child(img(PathBuf::from(thumbnail)).w_full().h_full().object_fit(
+                    if fit_thumbnails {
+                        ObjectFit::Contain
+                    } else {
+                        ObjectFit::Cover
+                    },
+                ));
             } else {
                 poster = poster.child(self.poster_fallback(theme));
                 if thumbnail_state == "failed" {
@@ -534,12 +543,13 @@ impl crate::App {
                 }
             }
         } else if thumbnail_ok {
-            poster = poster.child(
-                img(PathBuf::from(thumbnail))
-                    .w_full()
-                    .h_full()
-                    .object_fit(ObjectFit::Contain),
-            );
+            poster = poster.child(img(PathBuf::from(thumbnail)).w_full().h_full().object_fit(
+                if fit_thumbnails {
+                    ObjectFit::Contain
+                } else {
+                    ObjectFit::Cover
+                },
+            ));
         } else {
             poster = poster.child(self.poster_fallback(theme));
             if thumbnail_state == "failed" {

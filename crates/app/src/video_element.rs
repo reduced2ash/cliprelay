@@ -10,6 +10,12 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use yuv::{yuv_nv12_to_bgra, YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VideoFit {
+    Contain,
+    Cover,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Nv12Layout {
     width: u32,
@@ -99,11 +105,13 @@ pub(crate) fn video(
     id: impl Into<ElementId>,
     width: Pixels,
     height: Pixels,
+    fit: VideoFit,
 ) -> AnyElement {
     StridedVideoElement {
         video,
         width,
         height,
+        fit,
         id: id.into(),
     }
     .into_any_element()
@@ -113,6 +121,7 @@ struct StridedVideoElement {
     video: Video,
     width: Pixels,
     height: Pixels,
+    fit: VideoFit,
     id: ElementId,
 }
 
@@ -121,11 +130,16 @@ impl StridedVideoElement {
         bounds: Bounds<Pixels>,
         frame_width: u32,
         frame_height: u32,
+        fit: VideoFit,
     ) -> Bounds<Pixels> {
         let container_width = f32::from(bounds.size.width);
         let container_height = f32::from(bounds.size.height);
-        let scale =
-            (container_width / frame_width as f32).min(container_height / frame_height as f32);
+        let width_scale = container_width / frame_width as f32;
+        let height_scale = container_height / frame_height as f32;
+        let scale = match fit {
+            VideoFit::Contain => width_scale.min(height_scale),
+            VideoFit::Cover => width_scale.max(height_scale),
+        };
         let width = frame_width as f32 * scale;
         let height = frame_height as f32 * scale;
         Bounds::new(
@@ -239,7 +253,7 @@ impl Element for StridedVideoElement {
         };
         let previous: gpui::Entity<Option<Arc<RenderImage>>> = window.use_state(cx, |_, _| None);
         let old = previous.update(cx, |state, _| state.replace(Arc::clone(&render_image)));
-        let fitted = Self::fitted_bounds(bounds, layout.width, layout.height);
+        let fitted = Self::fitted_bounds(bounds, layout.width, layout.height, self.fit);
         let _ = window.paint_image(
             fitted,
             Corners::default(),
@@ -263,7 +277,28 @@ impl IntoElement for StridedVideoElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Nv12Layout, StridedVideoElement};
+    use super::{Nv12Layout, StridedVideoElement, VideoFit};
+    use gpui::{point, px, size, Bounds, Pixels};
+
+    fn assert_px(actual: Pixels, expected: f32) {
+        assert!((f32::from(actual) - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn framing_modes_fit_or_fill_the_tile() {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let contained = StridedVideoElement::fitted_bounds(bounds, 200, 100, VideoFit::Contain);
+        assert_px(contained.origin.x, 0.0);
+        assert_px(contained.origin.y, 25.0);
+        assert_px(contained.size.width, 100.0);
+        assert_px(contained.size.height, 50.0);
+
+        let covered = StridedVideoElement::fitted_bounds(bounds, 200, 100, VideoFit::Cover);
+        assert_px(covered.origin.x, -50.0);
+        assert_px(covered.origin.y, 0.0);
+        assert_px(covered.size.width, 200.0);
+        assert_px(covered.size.height, 100.0);
+    }
 
     #[test]
     fn tight_nv12_matches_gpui_bgra_contract() {

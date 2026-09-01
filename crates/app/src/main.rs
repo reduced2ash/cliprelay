@@ -1967,6 +1967,7 @@ impl App {
             SIDEBAR_COLLAPSED,
             PREPARE_EXPANDED,
             LIBRARY_DENSITY,
+            FIT_LIBRARY_THUMBNAILS,
         ]
         .contains(&key)
         {

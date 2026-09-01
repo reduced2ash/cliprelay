@@ -124,7 +124,21 @@ impl crate::App {
                     app.set_setting(LIBRARY_DENSITY, json!(if index == 1 { "compact" } else { "default" }), cx);
                 },
             ))
-            .child(help_text(&theme, "Compact fits more videos without changing the rest of the interface."));
+            .child(help_text(&theme, "Compact fits more videos without changing the rest of the interface."))
+            .child(checkbox(
+                "fit-library-thumbnails",
+                "Fit the whole video inside Library thumbnails",
+                self.settings_bool(FIT_LIBRARY_THUMBNAILS),
+                true,
+                cx,
+                |app, cx, value| {
+                    app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(value), cx);
+                },
+            ))
+            .child(help_text(
+                &theme,
+                "Keeps the complete frame visible. Extra space uses the media well instead of cropping the top, bottom, or sides.",
+            ));
 
         // PERFORMANCE
         inner = inner

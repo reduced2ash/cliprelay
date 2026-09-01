@@ -13,7 +13,7 @@ use crate::prepare::{CLEANUP_OPTIONS, COMPRESSION_OPTIONS};
 use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
-use crate::video_element::video as video_element;
+use crate::video_element::{video as video_element, VideoFit};
 use crate::widgets::*;
 use cliprelay_core::media::CropSpec;
 use cliprelay_core::utils::format_bytes;
@@ -997,6 +997,7 @@ impl crate::App {
                 "prepare-video",
                 px(track_width),
                 px(frame_height),
+                VideoFit::Contain,
             ));
         } else if let Some(source) = image_source {
             frame = frame.child(img(source).w_full().h_full().object_fit(ObjectFit::Contain));
