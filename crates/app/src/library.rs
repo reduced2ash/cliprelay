@@ -170,14 +170,14 @@ fn library_thumbnail(
     height: f32,
     fit_whole_frame: bool,
 ) -> impl Element {
-    // GPUI's image element supplies the source's intrinsic aspect ratio during
-    // layout. Give it the media well's exact bounds so that ObjectFit controls
-    // only the painted pixels; percentage bounds can otherwise be expanded by
-    // a portrait source and then clipped by the 16:9 parent.
+    // This is a fixed 16:9 media well. Keep the source's intrinsic ratio out of
+    // layout so Taffy cannot expand a portrait image beyond these bounds;
+    // ObjectFit then applies that ratio only while painting inside the well.
     img(path)
         .w(px(width))
         .h(px(height))
         .flex_none()
+        .infer_layout_aspect_ratio(false)
         .object_fit(if fit_whole_frame {
             ObjectFit::Contain
         } else {

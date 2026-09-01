@@ -128,6 +128,7 @@ where
 pub struct ImageStyle {
     grayscale: bool,
     object_fit: ObjectFit,
+    infer_layout_aspect_ratio: bool,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
 }
@@ -137,6 +138,7 @@ impl Default for ImageStyle {
         Self {
             grayscale: false,
             object_fit: ObjectFit::Contain,
+            infer_layout_aspect_ratio: true,
             loading: None,
             fallback: None,
         }
@@ -157,6 +159,16 @@ pub trait StyledImage: Sized {
     /// Set the object fit for the image.
     fn object_fit(mut self, object_fit: ObjectFit) -> Self {
         self.image_style().object_fit = object_fit;
+        self
+    }
+
+    /// Set whether the source image's aspect ratio participates in layout.
+    ///
+    /// Disable this for a fixed-size media well whose bounds should stay
+    /// independent of the image. [`ObjectFit`] will still preserve or crop the
+    /// source aspect ratio when the image is painted inside those bounds.
+    fn infer_layout_aspect_ratio(mut self, infer: bool) -> Self {
+        self.image_style().infer_layout_aspect_ratio = infer;
         self
     }
 
@@ -333,7 +345,9 @@ impl Element for Img {
                             }
 
                             let image_size = data.render_size(frame_index);
-                            style.aspect_ratio = Some(image_size.width / image_size.height);
+                            if self.style.infer_layout_aspect_ratio {
+                                style.aspect_ratio = Some(image_size.width / image_size.height);
+                            }
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
