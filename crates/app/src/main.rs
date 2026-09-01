@@ -162,6 +162,7 @@ pub struct App {
     pub last_history_scroll_y: f32,
     pub reveal_target_row: Option<usize>,
     pub library_scroll: gpui::UniformListScrollHandle,
+    pub(crate) library_drag: crate::library::LibraryDragScroll,
     pub history_scroll: gpui::ScrollHandle,
     pub tab_scroll: gpui::ScrollHandle,
     pub settings_scroll: gpui::ScrollHandle,
@@ -492,6 +493,7 @@ impl App {
             last_history_scroll_y: 0.0,
             reveal_target_row: None,
             library_scroll: gpui::UniformListScrollHandle::new(),
+            library_drag: crate::library::LibraryDragScroll::default(),
             history_scroll: gpui::ScrollHandle::new(),
             tab_scroll: gpui::ScrollHandle::new(),
             settings_scroll: gpui::ScrollHandle::new(),
@@ -3175,7 +3177,34 @@ impl App {
                 // actually handles it. The root must explicitly propagate:
                 // GPUI action listeners consume by default, even if empty.
                 cx.propagate();
-            }));
+            }))
+            .on_mouse_move(cx.listener(|app, event: &MouseMoveEvent, _window, cx| {
+                app.update_library_drag(event, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|app, event: &MouseUpEvent, window, cx| {
+                    app.finish_library_drag(event, window, cx);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|app, event: &MouseUpEvent, window, cx| {
+                    app.finish_library_drag(event, window, cx);
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|app, event: &MouseUpEvent, _window, cx| {
+                    app.cancel_library_drag(event, cx);
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Right,
+                cx.listener(|app, event: &MouseUpEvent, _window, cx| {
+                    app.cancel_library_drag(event, cx);
+                }),
+            );
 
         let explorer_owns_rail_seam = self.page == Page::Library
             && !self.settings_value(LIBRARY_ROOT).is_empty()

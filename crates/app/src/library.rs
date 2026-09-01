@@ -12,6 +12,158 @@ use gpui::*;
 use gpui_video_player::Video;
 use std::path::PathBuf;
 
+const LIBRARY_DRAG_SLOP: f32 = 6.0;
+const LIBRARY_DRAG_SCROLL_SPEED: f32 = 2.4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LibraryDragButton {
+    Primary,
+    Secondary,
+}
+
+impl LibraryDragButton {
+    fn from_mouse_button(button: MouseButton) -> Option<Self> {
+        match button {
+            MouseButton::Left => Some(Self::Primary),
+            MouseButton::Right => Some(Self::Secondary),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LibraryDragUpdate {
+    pub offset_y: f32,
+    pub just_activated: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LibraryDragRelease {
+    None,
+    ContextMenu(i64),
+    ScrolledPrimary,
+    ScrolledSecondary,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LibraryDragScroll {
+    button: Option<LibraryDragButton>,
+    start_x: f32,
+    start_y: f32,
+    last_x: f32,
+    last_y: f32,
+    start_offset_y: f32,
+    media_id: Option<i64>,
+    active: bool,
+    suppress_primary_click: bool,
+}
+
+impl LibraryDragScroll {
+    pub fn begin(
+        &mut self,
+        button: LibraryDragButton,
+        position: (f32, f32),
+        offset_y: f32,
+        media_id: Option<i64>,
+    ) {
+        let same_press = self.button == Some(button)
+            && (self.start_x - position.0).abs() < f32::EPSILON
+            && (self.start_y - position.1).abs() < f32::EPSILON;
+        if same_press {
+            if media_id.is_some() {
+                self.media_id = media_id;
+            }
+            return;
+        }
+
+        *self = Self {
+            button: Some(button),
+            start_x: position.0,
+            start_y: position.1,
+            last_x: position.0,
+            last_y: position.1,
+            start_offset_y: offset_y,
+            media_id,
+            active: false,
+            suppress_primary_click: false,
+        };
+    }
+
+    pub fn update(
+        &mut self,
+        button: LibraryDragButton,
+        position: (f32, f32),
+        max_offset_y: f32,
+    ) -> Option<LibraryDragUpdate> {
+        if self.button != Some(button)
+            || (self.last_x - position.0).abs() < f32::EPSILON
+                && (self.last_y - position.1).abs() < f32::EPSILON
+        {
+            return None;
+        }
+        self.last_x = position.0;
+        self.last_y = position.1;
+
+        let delta_x = position.0 - self.start_x;
+        let delta_y = position.1 - self.start_y;
+        let just_activated = !self.active
+            && delta_x.mul_add(delta_x, delta_y * delta_y) > LIBRARY_DRAG_SLOP * LIBRARY_DRAG_SLOP;
+        if just_activated {
+            self.active = true;
+        }
+        if !self.active {
+            return None;
+        }
+
+        Some(LibraryDragUpdate {
+            offset_y: (self.start_offset_y + delta_y * LIBRARY_DRAG_SCROLL_SPEED)
+                .clamp(-max_offset_y.max(0.0), 0.0),
+            just_activated,
+        })
+    }
+
+    pub fn finish(&mut self, button: LibraryDragButton) -> LibraryDragRelease {
+        if self.button != Some(button) {
+            return LibraryDragRelease::None;
+        }
+
+        let release = match (button, self.active, self.media_id) {
+            (LibraryDragButton::Secondary, false, Some(media_id)) => {
+                LibraryDragRelease::ContextMenu(media_id)
+            }
+            (LibraryDragButton::Primary, true, _) => {
+                self.suppress_primary_click = true;
+                LibraryDragRelease::ScrolledPrimary
+            }
+            (LibraryDragButton::Secondary, true, _) => LibraryDragRelease::ScrolledSecondary,
+            _ => LibraryDragRelease::None,
+        };
+        self.button = None;
+        self.media_id = None;
+        self.active = false;
+        release
+    }
+
+    pub fn cancel(&mut self) {
+        self.button = None;
+        self.media_id = None;
+        self.active = false;
+        self.suppress_primary_click = false;
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    pub fn blocks_primary_click(&self) -> bool {
+        self.active || self.suppress_primary_click
+    }
+
+    pub fn clear_primary_click_suppression(&mut self) {
+        self.suppress_primary_click = false;
+    }
+}
+
 /// Layout helpers shared by the pages.
 #[allow(dead_code)]
 pub struct Layout {
@@ -187,6 +339,11 @@ impl crate::App {
         let cell_height = layout.cell_height;
         let density = self.density.clone();
         let fit_thumbnails = self.settings_bool(FIT_LIBRARY_THUMBNAILS);
+        let drag_cursor = if self.library_drag.is_active() {
+            CursorStyle::ClosedHand
+        } else {
+            CursorStyle::OpenHand
+        };
         if row_count == 0 && !scanning {
             grid = grid.child(self.render_empty_state(cx, &theme));
         } else {
@@ -286,7 +443,20 @@ impl crate::App {
             .px(px(14.0))
             .pt(px(2.0))
             .pb(px(8.0))
+            .cursor(drag_cursor)
             .track_scroll(self.library_scroll.clone())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|app, event: &MouseDownEvent, _window, _cx| {
+                    app.begin_library_drag(event, None);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|app, event: &MouseDownEvent, _window, _cx| {
+                    app.begin_library_drag(event, None);
+                }),
+            )
             .on_scroll_wheel(cx.listener(|app, _event, _window, cx| {
                 app.mark_library_scrolled(cx);
                 app.hovered_tiles.clear();
@@ -428,12 +598,17 @@ impl crate::App {
         // the 11px label size against the tile width.
         let tile_width = (cell_width - tile_gap).max(1.0);
         let would_truncate = (row.name.len() as f32) * 6.4 > tile_width - 14.0;
+        let drag_scrolling = self.library_drag.is_active();
 
         let mut tile = div()
             .id(SharedString::from(format!("tile-{media_id}")))
             .w(px((cell_width - tile_gap).max(1.0)))
             .flex_none()
-            .cursor_pointer()
+            .cursor(if drag_scrolling {
+                CursorStyle::ClosedHand
+            } else {
+                CursorStyle::PointingHand
+            })
             .flex()
             .flex_col()
             .tab_index(0)
@@ -445,14 +620,23 @@ impl crate::App {
                 if !event.standard_click() {
                     return;
                 }
+                if !event.is_keyboard() && app.library_drag.blocks_primary_click() {
+                    return;
+                }
                 app.explorer_focus = false;
                 app.command(Command::SelectMedia(media_id));
                 cx.notify();
             }))
             .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |app, event: &MouseDownEvent, _window, _cx| {
+                    app.begin_library_drag(event, Some(media_id));
+                }),
+            )
+            .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |app, _event: &MouseDownEvent, window, cx| {
-                    app.open_video_context_menu(media_id, window, cx);
+                cx.listener(move |app, event: &MouseDownEvent, _window, _cx| {
+                    app.begin_library_drag(event, Some(media_id));
                 }),
             )
             .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
@@ -1361,6 +1545,88 @@ impl crate::App {
         }
     }
 
+    pub fn begin_library_drag(&mut self, event: &MouseDownEvent, media_id: Option<i64>) {
+        let Some(button) = LibraryDragButton::from_mouse_button(event.button) else {
+            return;
+        };
+        // An already-open item context menu closes on the new press; allow the
+        // same gesture to select, drag, or open a different tile normally.
+        let another_surface_owns_pointer =
+            self.transient_surface_owns_global_shortcuts() && self.context_menu.is_none();
+        if self.page != Page::Library || another_surface_owns_pointer {
+            return;
+        }
+        let base_handle = self.library_scroll.0.borrow().base_handle.clone();
+        self.library_drag.begin(
+            button,
+            (event.position.x.into(), event.position.y.into()),
+            base_handle.offset().y.into(),
+            media_id,
+        );
+    }
+
+    pub fn update_library_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(button) = event
+            .pressed_button
+            .and_then(LibraryDragButton::from_mouse_button)
+        else {
+            return;
+        };
+        let base_handle = self.library_scroll.0.borrow().base_handle.clone();
+        let Some(update) = self.library_drag.update(
+            button,
+            (event.position.x.into(), event.position.y.into()),
+            base_handle.max_offset().height.into(),
+        ) else {
+            return;
+        };
+
+        if update.just_activated {
+            self.mark_library_scrolled(cx);
+            self.hovered_tiles.clear();
+        } else {
+            self.library_scroll_pause_until =
+                std::time::Instant::now() + std::time::Duration::from_millis(350);
+        }
+        let offset = base_handle.offset();
+        base_handle.set_offset(point(offset.x, px(update.offset_y)));
+        self.load_more_library_if_near_end();
+        cx.notify();
+    }
+
+    pub fn finish_library_drag(
+        &mut self,
+        event: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(button) = LibraryDragButton::from_mouse_button(event.button) else {
+            return;
+        };
+        let release = self.library_drag.finish(button);
+        if let LibraryDragRelease::ContextMenu(media_id) = release {
+            self.open_video_context_menu(media_id, window, cx);
+        }
+        if release == LibraryDragRelease::ScrolledPrimary {
+            cx.on_next_frame(window, |app, _window, _cx| {
+                app.library_drag.clear_primary_click_suppression();
+            });
+        }
+        if release != LibraryDragRelease::None {
+            cx.notify();
+        }
+    }
+
+    pub fn cancel_library_drag(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
+        if LibraryDragButton::from_mouse_button(event.button).is_some() {
+            let was_active = self.library_drag.is_active();
+            self.library_drag.cancel();
+            if was_active {
+                cx.notify();
+            }
+        }
+    }
+
     /// Close the random-source popup and return keyboard focus to its trigger.
     pub fn close_random_popup(&mut self, cx: &mut Context<Self>) {
         self.random_popup_open = false;
@@ -1461,7 +1727,10 @@ fn library_should_prefetch(
 
 #[cfg(test)]
 mod grid_tests {
-    use super::{library_grid_row_count, library_should_prefetch, take_loaded_reveal_grid_row};
+    use super::{
+        library_grid_row_count, library_should_prefetch, take_loaded_reveal_grid_row,
+        LibraryDragButton, LibraryDragRelease, LibraryDragScroll,
+    };
     use gpui::px;
 
     #[test]
@@ -1527,5 +1796,46 @@ mod grid_tests {
             px(250.0),
             false
         ));
+    }
+
+    #[test]
+    fn library_drag_arbitrates_clicks_context_menus_and_fast_scroll() {
+        let mut drag = LibraryDragScroll::default();
+        drag.begin(LibraryDragButton::Primary, (100.0, 100.0), -120.0, Some(7));
+        assert_eq!(
+            drag.update(LibraryDragButton::Primary, (103.0, 104.0), 600.0),
+            None
+        );
+        assert!(!drag.blocks_primary_click());
+
+        let activated = drag
+            .update(LibraryDragButton::Primary, (100.0, 90.0), 600.0)
+            .expect("movement past the slop should start a drag");
+        assert!(activated.just_activated);
+        assert_eq!(activated.offset_y, -144.0);
+        assert_eq!(
+            drag.finish(LibraryDragButton::Primary),
+            LibraryDragRelease::ScrolledPrimary
+        );
+        assert!(drag.blocks_primary_click());
+        drag.clear_primary_click_suppression();
+        assert!(!drag.blocks_primary_click());
+
+        drag.begin(LibraryDragButton::Secondary, (40.0, 50.0), -80.0, None);
+        drag.begin(LibraryDragButton::Secondary, (40.0, 50.0), -80.0, Some(42));
+        assert_eq!(
+            drag.finish(LibraryDragButton::Secondary),
+            LibraryDragRelease::ContextMenu(42)
+        );
+
+        drag.begin(LibraryDragButton::Secondary, (40.0, 50.0), -580.0, Some(42));
+        let clamped = drag
+            .update(LibraryDragButton::Secondary, (40.0, 20.0), 600.0)
+            .expect("secondary-button dragging should scroll too");
+        assert_eq!(clamped.offset_y, -600.0);
+        assert_eq!(
+            drag.finish(LibraryDragButton::Secondary),
+            LibraryDragRelease::ScrolledSecondary
+        );
     }
 }
