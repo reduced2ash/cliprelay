@@ -10,10 +10,23 @@ use cliprelay_core::db::MediaRow;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_video_player::Video;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const LIBRARY_DRAG_SLOP: f32 = 6.0;
 const LIBRARY_DRAG_SCROLL_SPEED: f32 = 2.4;
+
+// Explorer rows keep one four-column rhythm: disclosure, folder, name, count.
+// The fixed height is load-bearing twice over: it stops the flex column from
+// compressing large trees, and it is what lets `uniform_list` virtualize the
+// tree so a scroll frame costs the visible rows instead of the whole library.
+const EXPLORER_ROW_INSET: f32 = 12.0;
+const EXPLORER_ROW_HEIGHT: f32 = 40.0;
+const EXPLORER_ROW_GAP: f32 = 7.0;
+const EXPLORER_DISCLOSURE_SIZE: f32 = 20.0;
+const EXPLORER_FOLDER_ICON_SIZE: f32 = 19.5;
+const EXPLORER_COUNT_WIDTH: f32 = 44.0;
+const EXPLORER_ROOT_KEY: &str = "__explorer_root__";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LibraryDragButton {
@@ -318,7 +331,7 @@ impl crate::App {
 
         // Explorer column.
         if layout.explorer_visible {
-            column = column.child(self.render_explorer(cx, &theme, &layout));
+            column = column.child(self.render_explorer(cx, &theme));
         }
 
         // Grid column.
@@ -382,7 +395,7 @@ impl crate::App {
                     }
                 }
             }
-            self.apply_reveal_scroll();
+            self.apply_reveal_scroll(columns);
             let grid_rows = library_grid_row_count(row_count, columns);
             let list = uniform_list(
                 "tiles",
@@ -612,7 +625,6 @@ impl crate::App {
         let compact = density == "compact";
         let thumbnail = row.thumbnail_path.clone().unwrap_or_default();
         let thumbnail_ok = !thumbnail.is_empty() && thumbnail_state != "failed";
-        let media_path = row.path.clone();
         let tooltip_text: SharedString = if row.folder.is_empty() {
             row.name.clone().into()
         } else {
@@ -873,7 +885,6 @@ impl crate::App {
             Some(ContextMenuTarget::Video(row)) if row.id == media_id
         );
         let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
-        let _ = (tile_chrome, media_path);
         anchored_overlay(
             tile,
             context_popup,
@@ -894,44 +905,47 @@ impl crate::App {
             .child(icon("▷", 26.0, theme.border_strong))
     }
 
+    /// Rebuild the Explorer's visible projection after folder data or an
+    /// expansion state changes. Scrolling reads this cache instead of cloning
+    /// and filtering the complete folder tree on every frame.
+    pub fn rebuild_explorer_rows(&mut self) {
+        let expanded_map = &self.folders_expanded;
+        self.explorer_rows = explorer_visible_nodes(&self.folders, expanded_map);
+    }
+
     /// Folders visible in the explorer tree (ancestors all expanded).
-    pub fn visible_folders(&self) -> Vec<FolderNode> {
-        let nodes: Vec<FolderNode> = self.folders.clone();
-        let expanded_map = self.folders_expanded.clone();
-        let is_visible = |node: &FolderNode| -> bool {
-            let mut ancestor = node.parent.clone();
-            while !ancestor.is_empty() {
-                if !expanded_map.get(&ancestor).copied().unwrap_or(true) {
-                    return false;
-                }
-                ancestor = ancestor
-                    .rsplit_once('/')
-                    .map(|(p, _)| p.to_string())
-                    .unwrap_or_default();
-            }
-            true
-        };
-        nodes
-            .iter()
-            .filter(|node| is_visible(node))
-            .cloned()
-            .collect()
+    pub fn visible_folders(&self) -> &[FolderNode] {
+        &self.explorer_rows
+    }
+
+    /// Reveal visible-folder row `index`. The list is offset by one because
+    /// row 0 is the library root.
+    fn explorer_reveal_row(&self, index: usize) {
+        self.explorer_scroll
+            .scroll_to_item(index + 1, gpui::ScrollStrategy::Center);
     }
 
     /// Move the explorer keyboard selection by `delta` visible rows.
     pub fn explorer_move(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let rows = self.visible_folders();
-        let target = match rows.iter().position(|n| n.folder == self.explorer_selected) {
-            Some(index) => (index as isize + delta).clamp(0, rows.len() as isize) as usize,
+        let row_count = self.explorer_rows.len();
+        let target = match self
+            .explorer_rows
+            .iter()
+            .position(|n| n.folder == self.explorer_selected)
+        {
+            Some(index) => (index as isize + delta).clamp(0, row_count as isize) as usize,
             None => 0,
         };
-        if target < rows.len() {
-            let folder = rows[target].folder.clone();
+        if let Some(node) = self.explorer_rows.get(target) {
+            let folder = node.folder.clone();
             self.explorer_selected = folder.clone();
+            self.explorer_reveal_row(target);
             self.command(Command::SetFolder(folder));
         } else if delta > 0 && !self.library_location.folder.is_empty() {
             // Below the last folder: back to the root ("All videos").
             self.explorer_selected = String::new();
+            self.explorer_scroll
+                .scroll_to_item(0, gpui::ScrollStrategy::Center);
             self.command(Command::SetFolder(String::new()));
         }
         cx.notify();
@@ -940,9 +954,10 @@ impl crate::App {
     /// Explorer keyboard actions (left/right/space/enter) for the focused row.
     pub fn explorer_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
         let Some(node) = self
-            .visible_folders()
-            .into_iter()
+            .explorer_rows
+            .iter()
             .find(|n| n.folder == self.explorer_selected)
+            .cloned()
         else {
             if key == " " || key == "enter" {
                 self.command(Command::SetFolder(String::new()));
@@ -961,8 +976,16 @@ impl crate::App {
                         .unwrap_or(true)
                 {
                     self.folders_expanded.insert(node.folder.clone(), false);
+                    self.rebuild_explorer_rows();
                 } else if !node.parent.is_empty() {
                     self.explorer_selected = node.parent.clone();
+                    if let Some(index) = self
+                        .explorer_rows
+                        .iter()
+                        .position(|row| row.folder == self.explorer_selected)
+                    {
+                        self.explorer_reveal_row(index);
+                    }
                 }
                 cx.notify();
                 true
@@ -976,13 +999,16 @@ impl crate::App {
                         .unwrap_or(true);
                     if !expanded {
                         self.folders_expanded.insert(node.folder.clone(), true);
-                    } else if let Some(first) = self
-                        .visible_folders()
-                        .into_iter()
-                        .find(|n| n.parent == node.folder)
+                        self.rebuild_explorer_rows();
+                    } else if let Some((index, folder)) = self
+                        .explorer_rows
+                        .iter()
+                        .enumerate()
+                        .find(|(_, row)| row.parent == node.folder)
+                        .map(|(index, row)| (index, row.folder.clone()))
                     {
-                        let folder = first.folder.clone();
                         self.explorer_selected = folder.clone();
+                        self.explorer_reveal_row(index);
                         self.command(Command::SetFolder(folder));
                     }
                 } else {
@@ -1002,73 +1028,45 @@ impl crate::App {
         }
     }
 
-    fn render_explorer(
-        &mut self,
-        cx: &mut Context<Self>,
-        theme: &crate::theme::Theme,
-        layout: &Layout,
-    ) -> impl Element {
-        let _ = layout;
-        let library_root = PathBuf::from(self.settings_value(LIBRARY_ROOT));
-        // Keep every Explorer entry on the same four-column rhythm:
-        // disclosure, folder, name, count. Fixed rows are important here —
-        // allowing the flex column to shrink them is what made large folder
-        // trees look compressed despite generous nominal dimensions.
-        let row_inset = 12.0;
-        let row_height = 40.0;
-        let row_gap = 7.0;
-        let disclosure_size = 20.0;
-        let folder_icon_size = 19.5;
-        let count_width = 44.0;
-        let mut tree = div()
-            .id("explorer")
-            .w(px(EXPLORER_WIDTH))
-            .flex_none()
-            .bg(theme.explorer_background())
-            .border_l_1()
-            .border_r_1()
-            .border_color(theme.workbench_border.opacity(0.62))
-            .flex()
-            .flex_col();
-        // The global context toolbar owns the Explorer heading. Starting the
-        // tree immediately avoids the duplicate header band that made this
-        // column feel heavier than VS Code/Zed-style workbench navigation.
-        let mut items = div()
-            .id("explorer-tree")
-            .flex_1()
-            .flex()
-            .flex_col()
-            .pt(px(0.0))
-            .relative()
-            .top(px(-2.0))
-            .overflow_scroll();
-        // Root row.
-        let preview_folder = self
-            .selected
+    /// Folder whose media is currently previewed, when that media belongs to
+    /// the active library root. Explorer indicators highlight that folder.
+    fn explorer_preview_folder(&self, library_root: &std::path::Path) -> Option<String> {
+        self.selected
             .as_ref()
             .filter(|media| {
                 media.root_path.is_empty() || std::path::Path::new(&media.root_path) == library_root
             })
-            .map(|media| media.folder.clone());
-        let root_indicators = self
-            .library_location
-            .folder_indicators("", preview_folder.as_deref());
-        let root_active = root_indicators.browsed;
-        let root_expanded = self
-            .folders_expanded
-            .get("__explorer_root__")
+            .map(|media| media.folder.clone())
+    }
+
+    fn explorer_root_expanded(&self) -> bool {
+        self.folders_expanded
+            .get(EXPLORER_ROOT_KEY)
             .copied()
-            .unwrap_or(true);
-        let root_face: Background = if root_active {
+            .unwrap_or(true)
+    }
+
+    /// Explorer row 0: the library root, "All videos".
+    fn render_explorer_root_row(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+        library_root: &std::path::Path,
+        preview_folder: Option<&str>,
+    ) -> AnyElement {
+        let indicators = self.library_location.folder_indicators("", preview_folder);
+        let active = indicators.browsed;
+        let expanded = self.explorer_root_expanded();
+        let face: Background = if active {
             theme.selection_face(TactileState::Rest, false)
         } else {
             theme.transparent().into()
         };
-        let root_context_path = library_root.clone();
-        let root_row = div()
+        let context_path = library_root.to_path_buf();
+        let row = div()
             .id("folder-root")
-            .ml(px(row_inset))
-            .h(px(row_height))
+            .ml(px(EXPLORER_ROW_INSET))
+            .h(px(EXPLORER_ROW_HEIGHT))
             .flex_none()
             .pr(px(14.0))
             .rounded_tl(px(4.0))
@@ -1077,20 +1075,20 @@ impl crate::App {
             .top(px(0.0))
             .border_1()
             .border_r_0()
-            .border_color(if root_active {
+            .border_color(if active {
                 theme.tactile_edge(TactileState::Rest, false)
             } else {
                 theme.transparent()
             })
-            .bg(root_face)
-            .shadow(if root_active {
+            .bg(face)
+            .shadow(if active {
                 theme.tactile_shadow(TactileState::Rest, true)
             } else {
                 Vec::new()
             })
             .flex()
             .items_center()
-            .gap(px(row_gap))
+            .gap(px(EXPLORER_ROW_GAP))
             .cursor_pointer()
             .tab_index(0)
             .when(self.explorer_selected.is_empty(), |row| {
@@ -1114,15 +1112,15 @@ impl crate::App {
                 div()
                     .id("folder-root-chevron")
                     .occlude()
-                    .w(px(disclosure_size))
-                    .h(px(disclosure_size))
+                    .w(px(EXPLORER_DISCLOSURE_SIZE))
+                    .h(px(EXPLORER_DISCLOSURE_SIZE))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
                     .child(
                         icon(
-                            if root_expanded {
+                            if expanded {
                                 "chevron-down"
                             } else {
                                 "chevron-right"
@@ -1134,23 +1132,19 @@ impl crate::App {
                         .left(px(-1.0)),
                     )
                     .on_click(cx.listener(|app, _event, _window, cx| {
-                        let expanded = app
-                            .folders_expanded
-                            .get("__explorer_root__")
-                            .copied()
-                            .unwrap_or(true);
+                        let expanded = app.explorer_root_expanded();
                         app.folders_expanded
-                            .insert("__explorer_root__".to_string(), !expanded);
+                            .insert(EXPLORER_ROOT_KEY.to_string(), !expanded);
                         cx.notify();
                     })),
             )
             .child(
                 icon(
                     "folder",
-                    folder_icon_size,
-                    if root_indicators.previewed {
+                    EXPLORER_FOLDER_ICON_SIZE,
+                    if indicators.previewed {
                         theme.accent_text
-                    } else if root_active {
+                    } else if active {
                         theme.text
                     } else {
                         theme.muted
@@ -1163,7 +1157,7 @@ impl crate::App {
                 div()
                     .child("All videos")
                     .text_size(px(13.0))
-                    .text_color(if root_indicators.previewed {
+                    .text_color(if indicators.previewed {
                         theme.accent_text
                     } else {
                         theme.text
@@ -1173,7 +1167,7 @@ impl crate::App {
             .child(div().flex_1())
             .child(
                 div()
-                    .w(px(count_width))
+                    .w(px(EXPLORER_COUNT_WIDTH))
                     .flex_none()
                     .child(format!("{}", self.counts.0))
                     .text_size(px(12.0))
@@ -1210,236 +1204,322 @@ impl crate::App {
                 cx.listener(move |app, _event: &MouseDownEvent, window, cx| {
                     app.open_folder_context_menu(
                         String::new(),
-                        root_context_path.clone(),
+                        context_path.clone(),
                         "Video library".to_string(),
                         window,
                         cx,
                     );
                 }),
             );
-        let root_context_open = matches!(
+        let context_open = matches!(
             self.context_menu.as_ref(),
             Some(ContextMenuTarget::Folder { relative_path, .. }) if relative_path.is_empty()
         );
-        let root_context_popup = root_context_open.then(|| self.render_context_menu(cx).into_any());
-        items = items.child(
-            anchored_overlay(
-                root_row,
-                root_context_popup,
-                OverlayPlacement::BelowStart,
-                size(px(EXPLORER_WIDTH - row_inset), px(row_height)),
-            )
+        let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
+        anchored_overlay(
+            row,
+            context_popup,
+            OverlayPlacement::BelowStart,
+            size(
+                px(EXPLORER_WIDTH - EXPLORER_ROW_INSET),
+                px(EXPLORER_ROW_HEIGHT),
+            ),
+        )
+        .flex_none()
+        .w_full()
+        .h(px(EXPLORER_ROW_HEIGHT))
+        .into_any_element()
+    }
+
+    /// Explorer row for `index` of the cached visible-folder projection.
+    fn render_explorer_folder_row(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+        library_root: &std::path::Path,
+        preview_folder: Option<&str>,
+        index: usize,
+    ) -> AnyElement {
+        let Some(node) = self.explorer_rows.get(index) else {
+            return div()
+                .w_full()
+                .h(px(EXPLORER_ROW_HEIGHT))
+                .flex_none()
+                .into_any_element();
+        };
+        let folder = node.folder.clone();
+        let name = node.name.clone();
+        let count = node.count;
+        let depth = node.depth;
+        let has_children = node.has_children;
+        let expanded = self
+            .folders_expanded
+            .get(&folder)
+            .copied()
+            .unwrap_or(depth < 1);
+        let indicators = self
+            .library_location
+            .folder_indicators(&folder, preview_folder);
+        let is_active = indicators.browsed;
+        let is_previewed = indicators.previewed;
+        let is_focused = self.explorer_selected == folder;
+        let indent = (8.0 + depth as f32 * 14.0).min(8.0 + 6.0 * 14.0);
+        // Keyboard focus and preview location never create another
+        // persistent selected-row surface.
+        let selected = is_active;
+        let folder_path = library_root.join(&folder);
+        let mut row = div()
+            .id(SharedString::from(format!("folder-{folder}")))
+            .ml(px(EXPLORER_ROW_INSET))
+            .h(px(EXPLORER_ROW_HEIGHT))
             .flex_none()
-            .w_full()
-            .h(px(row_height)),
-        );
-        let expanded_map = self.folders_expanded.clone();
-        let visible = self.visible_folders();
-        if root_expanded {
-            for node in visible {
-                let folder = node.folder.clone();
-                let indicators = self
-                    .library_location
-                    .folder_indicators(&folder, preview_folder.as_deref());
-                let is_active = indicators.browsed;
-                let is_previewed = indicators.previewed;
-                let is_focused = self.explorer_selected == folder;
-                let has_children = node.has_children;
-                let expanded = expanded_map.get(&folder).copied().unwrap_or(node.depth < 1);
-                let count = node.count;
-                let name = node.name.clone();
-                let indent = (8.0 + node.depth as f32 * 14.0).min(8.0 + 6.0 * 14.0);
-                // Keyboard focus and preview location never create another
-                // persistent selected-row surface.
-                let selected = is_active;
-                let folder_path = library_root.join(&folder);
-                let mut row = div()
-                    .id(SharedString::from(format!("folder-{folder}")))
-                    .ml(px(row_inset))
-                    .h(px(row_height))
+            .pl(px(indent))
+            .pr(px(14.0))
+            .rounded_tl(px(4.0))
+            .rounded_bl(px(4.0))
+            .relative()
+            .top(px(0.0))
+            .border_1()
+            .border_r_0()
+            .border_color(if selected {
+                theme.tactile_edge(TactileState::Rest, false)
+            } else {
+                theme.transparent()
+            })
+            .flex()
+            .items_center()
+            .gap(px(EXPLORER_ROW_GAP))
+            .cursor_pointer()
+            .tab_index(0)
+            .when(is_focused, |row| row.track_focus(&self.explorer_item_focus))
+            .focus(|style| style.border_2().border_r_0().border_color(theme.accent))
+            .active(|style| {
+                style
+                    .top(px(1.0))
+                    .bg(theme.selection_face(TactileState::Pressed, false))
+                    .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                    .shadow(theme.tactile_shadow(TactileState::Pressed, true))
+            })
+            .hover(|style| {
+                style
+                    .bg(theme.selection_face(TactileState::Hover, false))
+                    .border_color(theme.tactile_edge(TactileState::Hover, false))
+                    .shadow(theme.tactile_shadow(TactileState::Hover, true))
+            })
+            .bg(if selected {
+                theme.selection_face(TactileState::Rest, false)
+            } else {
+                theme.transparent().into()
+            })
+            .shadow(if selected {
+                theme.tactile_shadow(TactileState::Rest, true)
+            } else {
+                Vec::new()
+            });
+        // Disclosure chevron (own hit target; toggles expansion).
+        if has_children {
+            let folder_for_toggle = folder.clone();
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("folder-chevron-{folder}")))
+                    .occlude()
+                    .w(px(EXPLORER_DISCLOSURE_SIZE))
+                    .h(px(EXPLORER_DISCLOSURE_SIZE))
                     .flex_none()
-                    .pl(px(indent))
-                    .pr(px(14.0))
-                    .rounded_tl(px(4.0))
-                    .rounded_bl(px(4.0))
-                    .relative()
-                    .top(px(0.0))
-                    .border_1()
-                    .border_r_0()
-                    .border_color(if selected {
-                        theme.tactile_edge(TactileState::Rest, false)
-                    } else {
-                        theme.transparent()
-                    })
                     .flex()
                     .items_center()
-                    .gap(px(row_gap))
-                    .cursor_pointer()
-                    .tab_index(0)
-                    .when(is_focused, |row| row.track_focus(&self.explorer_item_focus))
-                    .focus(|style| style.border_2().border_r_0().border_color(theme.accent))
-                    .active(|style| {
-                        style
-                            .top(px(1.0))
-                            .bg(theme.selection_face(TactileState::Pressed, false))
-                            .border_color(theme.tactile_edge(TactileState::Pressed, false))
-                            .shadow(theme.tactile_shadow(TactileState::Pressed, true))
-                    })
-                    .hover(|style| {
-                        style
-                            .bg(theme.selection_face(TactileState::Hover, false))
-                            .border_color(theme.tactile_edge(TactileState::Hover, false))
-                            .shadow(theme.tactile_shadow(TactileState::Hover, true))
-                    })
-                    .bg(if selected {
-                        theme.selection_face(TactileState::Rest, false)
-                    } else {
-                        theme.transparent().into()
-                    })
-                    .shadow(if selected {
-                        theme.tactile_shadow(TactileState::Rest, true)
-                    } else {
-                        Vec::new()
-                    });
-                // Disclosure chevron (own hit target; toggles expansion).
-                if has_children {
-                    let folder_for_toggle = folder.clone();
-                    row = row.child(
-                        div()
-                            .id(SharedString::from(format!("folder-chevron-{folder}")))
-                            .occlude()
-                            .w(px(disclosure_size))
-                            .h(px(disclosure_size))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                icon(
-                                    if expanded {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                    13.5,
-                                    theme.muted_soft,
-                                )
-                                .relative()
-                                .left(px(-1.0)),
-                            )
-                            .on_click(cx.listener(move |app, _event, _window, cx| {
-                                let current = app
-                                    .folders_expanded
-                                    .get(&folder_for_toggle)
-                                    .copied()
-                                    .unwrap_or(true);
-                                app.folders_expanded
-                                    .insert(folder_for_toggle.clone(), !current);
-                                cx.notify();
-                            })),
-                    );
-                } else {
-                    row = row.child(div().w(px(disclosure_size)).flex_none());
-                }
-                // Row body: select the folder.
-                row = row
+                    .justify_center()
                     .child(
                         icon(
-                            "folder",
-                            folder_icon_size,
-                            if is_previewed {
-                                theme.accent_text
-                            } else if is_active {
-                                theme.text
+                            if expanded {
+                                "chevron-down"
                             } else {
-                                theme.muted
+                                "chevron-right"
                             },
+                            13.5,
+                            theme.muted_soft,
                         )
                         .relative()
-                        .top(px(-1.0)),
+                        .left(px(-1.0)),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .child(name.clone())
-                            .text_size(px(13.5))
-                            .text_color(if is_previewed {
-                                theme.accent_text
-                            } else if is_active {
-                                theme.text
-                            } else {
-                                theme.text_soft
-                            })
-                            .font_weight(if is_active {
-                                FontWeight::MEDIUM
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_ellipsis(),
-                    )
-                    .child(
-                        div()
-                            .w(px(count_width))
-                            .flex_none()
-                            .child(format!("{count}"))
-                            .text_size(px(12.0))
-                            .text_color(if is_active {
-                                theme.text_soft
-                            } else {
-                                theme.muted_soft
-                            })
-                            .font_weight(FontWeight::NORMAL)
-                            .text_right(),
-                    )
-                    .on_click(cx.listener({
-                        let folder = folder.clone();
-                        move |app, event: &ClickEvent, _window, cx| {
-                            if !event.standard_click() {
-                                return;
-                            }
-                            app.explorer_focus = true;
-                            app.explorer_selected = folder.clone();
-                            app.command(Command::SetFolder(folder.clone()));
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener({
-                            let folder = folder.clone();
-                            let folder_path = folder_path.clone();
-                            let name = name.clone();
-                            move |app, _event: &MouseDownEvent, window, cx| {
-                                app.open_folder_context_menu(
-                                    folder.clone(),
-                                    folder_path.clone(),
-                                    name.clone(),
-                                    window,
-                                    cx,
-                                );
-                            }
-                        }),
-                    );
-                let context_open = matches!(
-                    self.context_menu.as_ref(),
-                    Some(ContextMenuTarget::Folder { relative_path, .. }) if relative_path == &folder
-                );
-                let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
-                items = items.child(
-                    anchored_overlay(
-                        row,
-                        context_popup,
-                        OverlayPlacement::BelowStart,
-                        size(px(EXPLORER_WIDTH - row_inset), px(row_height)),
-                    )
-                    .flex_none()
-                    .w_full()
-                    .h(px(row_height)),
-                );
-            }
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        let current = app
+                            .folders_expanded
+                            .get(&folder_for_toggle)
+                            .copied()
+                            .unwrap_or(true);
+                        app.folders_expanded
+                            .insert(folder_for_toggle.clone(), !current);
+                        app.rebuild_explorer_rows();
+                        cx.notify();
+                    })),
+            );
+        } else {
+            row = row.child(div().w(px(EXPLORER_DISCLOSURE_SIZE)).flex_none());
         }
+        // Row body: select the folder.
+        row = row
+            .child(
+                icon(
+                    "folder",
+                    EXPLORER_FOLDER_ICON_SIZE,
+                    if is_previewed {
+                        theme.accent_text
+                    } else if is_active {
+                        theme.text
+                    } else {
+                        theme.muted
+                    },
+                )
+                .relative()
+                .top(px(-1.0)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .child(name.clone())
+                    .text_size(px(13.5))
+                    .text_color(if is_previewed {
+                        theme.accent_text
+                    } else if is_active {
+                        theme.text
+                    } else {
+                        theme.text_soft
+                    })
+                    .font_weight(if is_active {
+                        FontWeight::MEDIUM
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_ellipsis(),
+            )
+            .child(
+                div()
+                    .w(px(EXPLORER_COUNT_WIDTH))
+                    .flex_none()
+                    .child(format!("{count}"))
+                    .text_size(px(12.0))
+                    .text_color(if is_active {
+                        theme.text_soft
+                    } else {
+                        theme.muted_soft
+                    })
+                    .font_weight(FontWeight::NORMAL)
+                    .text_right(),
+            )
+            .on_click(cx.listener({
+                let folder = folder.clone();
+                move |app, event: &ClickEvent, _window, cx| {
+                    if !event.standard_click() {
+                        return;
+                    }
+                    app.explorer_focus = true;
+                    app.explorer_selected = folder.clone();
+                    app.command(Command::SetFolder(folder.clone()));
+                    cx.notify();
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
+                    let folder = folder.clone();
+                    move |app, _event: &MouseDownEvent, window, cx| {
+                        app.open_folder_context_menu(
+                            folder.clone(),
+                            folder_path.clone(),
+                            name.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            );
+        let context_open = matches!(
+            self.context_menu.as_ref(),
+            Some(ContextMenuTarget::Folder { relative_path, .. }) if relative_path == &folder
+        );
+        let context_popup = context_open.then(|| self.render_context_menu(cx).into_any());
+        anchored_overlay(
+            row,
+            context_popup,
+            OverlayPlacement::BelowStart,
+            size(
+                px(EXPLORER_WIDTH - EXPLORER_ROW_INSET),
+                px(EXPLORER_ROW_HEIGHT),
+            ),
+        )
+        .flex_none()
+        .w_full()
+        .h(px(EXPLORER_ROW_HEIGHT))
+        .into_any_element()
+    }
+
+    fn render_explorer(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: &crate::theme::Theme,
+    ) -> impl Element {
+        let mut tree = div()
+            .id("explorer")
+            .w(px(EXPLORER_WIDTH))
+            .flex_none()
+            .bg(theme.explorer_background())
+            .border_l_1()
+            .border_r_1()
+            .border_color(theme.workbench_border.opacity(0.62))
+            .flex()
+            .flex_col();
+        // The global context toolbar owns the Explorer heading. Starting the
+        // tree immediately avoids the duplicate header band that made this
+        // column feel heavier than VS Code/Zed-style workbench navigation.
+        //
+        // Row 0 is the library root; the rest is the cached visible-folder
+        // projection. Virtualizing here is what keeps a scroll frame
+        // proportional to the viewport instead of the whole folder tree.
+        let row_count = 1 + if self.explorer_root_expanded() {
+            self.explorer_rows.len()
+        } else {
+            0
+        };
+        let mut items = uniform_list(
+            "explorer-tree",
+            row_count,
+            cx.processor(|app, range: std::ops::Range<usize>, _window, cx| {
+                // Read framing from live state whenever the list asks for
+                // rows: capturing it when the element was created can leave a
+                // recycled row on an earlier theme or library root.
+                let theme = app.theme.clone();
+                let library_root = PathBuf::from(app.settings_value(LIBRARY_ROOT));
+                let preview_folder = app.explorer_preview_folder(&library_root);
+                range
+                    .map(|index| match index.checked_sub(1) {
+                        None => app.render_explorer_root_row(
+                            cx,
+                            &theme,
+                            &library_root,
+                            preview_folder.as_deref(),
+                        ),
+                        Some(row) => app.render_explorer_folder_row(
+                            cx,
+                            &theme,
+                            &library_root,
+                            preview_folder.as_deref(),
+                            row,
+                        ),
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .flex_1()
+        .min_h(px(0.0))
+        .w_full()
+        .relative()
+        .top(px(-2.0))
+        .track_scroll(self.explorer_scroll.clone());
+        items.style().scrollbar_width = Some(px(10.0).into());
+
         let scanning = self.scan.active;
         let explorer_workspace_popup = (self.workspace_menu_open
             && self.workspace_menu_source == crate::WorkspaceMenuSource::ExplorerActions)
@@ -1535,8 +1615,7 @@ impl crate::App {
     /// Scroll the grid so the pending reveal target is visible (no-op when
     /// the page holding it is not loaded yet). Contains-style: only scrolls
     /// when the row is outside the viewport.
-    pub fn apply_reveal_scroll(&mut self) {
-        let columns = self.library_columns();
+    pub fn apply_reveal_scroll(&mut self, columns: usize) {
         let Some(row_index) = take_loaded_reveal_grid_row(
             &mut self.reveal_target_row,
             self.library.rows.len(),
@@ -1746,6 +1825,98 @@ fn library_should_prefetch(
     has_more: bool,
 ) -> bool {
     has_more && max_offset_y + offset_y <= lead.max(px(0.0))
+}
+
+// Folders with every ancestor expanded, in tree order. This projection is
+// cached so `render_explorer` can virtualize against it each frame instead of
+// re-filtering the whole folder tree.
+fn explorer_visible_nodes(
+    folders: &[FolderNode],
+    expanded_map: &HashMap<String, bool>,
+) -> Vec<FolderNode> {
+    let is_visible = |node: &FolderNode| -> bool {
+        let mut ancestor = node.parent.clone();
+        while !ancestor.is_empty() {
+            if !expanded_map.get(&ancestor).copied().unwrap_or(true) {
+                return false;
+            }
+            ancestor = ancestor
+                .rsplit_once('/')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_default();
+        }
+        true
+    };
+    folders
+        .iter()
+        .filter(|node| is_visible(node))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod explorer_projection_tests {
+    use super::explorer_visible_nodes;
+    use crate::state::FolderNode;
+    use std::collections::HashMap;
+
+    fn test_node(folder: &str, parent: &str, depth: usize) -> FolderNode {
+        FolderNode {
+            folder: folder.to_string(),
+            name: folder.rsplit('/').next().unwrap_or(folder).to_string(),
+            count: 1,
+            depth,
+            has_children: true,
+            expanded: false,
+            parent: parent.to_string(),
+            latest_mtime: 0.0,
+            latest_indexed: String::new(),
+        }
+    }
+
+    #[test]
+    fn only_nodes_with_all_ancestors_expanded_are_visible() {
+        let folders = vec![
+            test_node("a", "", 0),
+            test_node("a/b", "a", 1),
+            test_node("a/b/c", "a/b", 2),
+            test_node("a/b/c/d", "a/b/c", 3),
+            test_node("a/x", "a", 1),
+        ];
+        // Every ancestor defaults to expanded.
+        let expanded = HashMap::new();
+        let projected = explorer_visible_nodes(&folders, &expanded);
+        let visible: Vec<_> = projected
+            .iter()
+            .map(|node| node.folder.as_str())
+            .collect();
+        assert_eq!(visible, ["a", "a/b", "a/b/c", "a/b/c/d", "a/x"]);
+
+        // Collapsing one ancestor hides its whole subtree, keeps siblings.
+        let mut collapsed = HashMap::new();
+        collapsed.insert("a/b".to_string(), false);
+        let projected = explorer_visible_nodes(&folders, &collapsed);
+        let visible: Vec<_> = projected
+            .iter()
+            .map(|node| node.folder.as_str())
+            .collect();
+        assert_eq!(visible, ["a", "a/b", "a/x"]);
+    }
+
+    #[test]
+    fn projection_keeps_tree_order_of_declaration() {
+        let folders = vec![
+            test_node("a", "", 0),
+            test_node("a/b", "a", 1),
+            test_node("z", "", 0),
+        ];
+        let projected = explorer_visible_nodes(&folders, &HashMap::new());
+        let visible: Vec<_> = projected
+            .iter()
+            .map(|node| node.folder.as_str())
+            .collect();
+        assert_eq!(visible, ["a", "a/b", "z"]);
+    }
 }
 
 #[cfg(test)]

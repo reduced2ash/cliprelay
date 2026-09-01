@@ -103,6 +103,7 @@ pub struct App {
     pub history: HistoryPage,
     pub folders: Vec<FolderNode>,
     pub folders_expanded: HashMap<String, bool>,
+    pub explorer_rows: Vec<FolderNode>,
     pub random_options: Vec<RandomFolderOption>,
     pub random_list: RandomSourceList,
     pub random_summary: String,
@@ -162,6 +163,7 @@ pub struct App {
     pub last_history_scroll_y: f32,
     pub reveal_target_row: Option<usize>,
     pub library_scroll: gpui::UniformListScrollHandle,
+    pub explorer_scroll: gpui::UniformListScrollHandle,
     pub(crate) library_drag: crate::library::LibraryDragScroll,
     pub history_scroll: gpui::ScrollHandle,
     pub tab_scroll: gpui::ScrollHandle,
@@ -420,6 +422,7 @@ impl App {
             history: HistoryPage::default(),
             folders: Vec::new(),
             folders_expanded: HashMap::new(),
+            explorer_rows: Vec::new(),
             random_options: Vec::new(),
             random_list: RandomSourceList::default(),
             random_summary: "All folders".into(),
@@ -493,6 +496,7 @@ impl App {
             last_history_scroll_y: 0.0,
             reveal_target_row: None,
             library_scroll: gpui::UniformListScrollHandle::new(),
+            explorer_scroll: gpui::UniformListScrollHandle::new(),
             library_drag: crate::library::LibraryDragScroll::default(),
             history_scroll: gpui::ScrollHandle::new(),
             tab_scroll: gpui::ScrollHandle::new(),
@@ -562,7 +566,7 @@ impl App {
                 let _ = this.update(cx, |app, cx| {
                     if !app.library.rows.is_empty() {
                         app.reveal_target_row = Some(app.library.rows.len().saturating_sub(1));
-                        app.apply_reveal_scroll();
+                        app.apply_reveal_scroll(app.library_columns());
                         log::info!("ui-test workflow applied a one-shot Library reveal");
                         cx.notify();
                     }
@@ -767,7 +771,7 @@ impl App {
                         .flatten();
                     if let Some(index) = loaded_index {
                         self.reveal_target_row = Some(index);
-                        self.apply_reveal_scroll();
+                        self.apply_reveal_scroll(self.library_columns());
                     } else if row.folder == self.library_location.folder
                         && self.search_text.is_empty()
                     {
@@ -903,7 +907,7 @@ impl App {
                 // Chase a pending reveal across paged rows.
                 if let Some(target) = self.reveal_target_row {
                     if target < self.library.rows.len() {
-                        self.apply_reveal_scroll();
+                        self.apply_reveal_scroll(self.library_columns());
                     } else if self.library.has_more {
                         self.command(Command::LoadMoreLibrary);
                     } else {
@@ -936,6 +940,7 @@ impl App {
                 }
                 self.folders_expanded = next;
                 self.folders = nodes;
+                self.rebuild_explorer_rows();
                 if self.random_popup_open {
                     self.random_loading = true;
                     self.command(Command::LoadRandomFolderOptions);
@@ -2149,7 +2154,7 @@ impl App {
                         .position(|row| row.id == item.media_id)
                     {
                         self.reveal_target_row = Some(index);
-                        self.apply_reveal_scroll();
+                        self.apply_reveal_scroll(self.library_columns());
                     } else {
                         self.command(Command::RevealMedia(item.media_id));
                     }
@@ -2696,9 +2701,9 @@ impl App {
                         "Video library".to_string()
                     } else {
                         self.visible_folders()
-                            .into_iter()
+                            .iter()
                             .find(|node| node.folder == relative)
-                            .map(|node| node.name)
+                            .map(|node| node.name.clone())
                             .unwrap_or_else(|| relative.clone())
                     };
                     if !path.as_os_str().is_empty() {
