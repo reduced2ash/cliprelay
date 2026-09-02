@@ -9,8 +9,6 @@ use gpui::*;
 use std::path::PathBuf;
 
 const HISTORY_ROW_HEIGHT: f32 = 176.0;
-/// Earned radius reserved for status pills, dots, and switches.
-const HISTORY_PILL_RADIUS: f32 = 13.0;
 /// Collapse a raw multi-line failure log to a one-line row summary.
 /// Returns the first non-empty line plus how many content lines follow it,
 /// so a tall ffmpeg dump can never blow out the fixed-height row.
@@ -79,17 +77,37 @@ impl crate::App {
             .flex_col()
             .bg(theme.ink);
 
-        // Title row shares the centered measure with the filter chips, so
-        // the search sits over the list instead of at the window edge.
+        // Workbench toolbar, full-bleed: a square segmented status
+        // control, the relay count, and search in one row. The breadcrumb
+        // above already names this page, so there is no second title here.
+        // The status filter is view-side only: search still re-queries, this
+        // just narrows the loaded rows.
         let gutter = if narrow { 16.0 } else { 24.0 };
-        let mut title_row = div()
-            .w_full()
+        let row_count = self.history.rows.len();
+        let shown_count = self
+            .history
+            .rows
+            .iter()
+            .filter(|post| active_filter.matches(post))
+            .count();
+        let mut segments = div()
             .flex()
-            .gap(px(if narrow { 12.0 } else { 16.0 }));
-        if narrow {
-            title_row = title_row.flex_col();
-        } else {
-            title_row = title_row.flex_row().items_end();
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .rounded(px(RADIUS_SM))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.raised)
+            .p(px(2.0))
+            .gap(px(2.0));
+        for option in [
+            HistoryStatusFilter::All,
+            HistoryStatusFilter::NeedsAttention,
+            HistoryStatusFilter::Delivered,
+            HistoryStatusFilter::InProgress,
+        ] {
+            segments = segments.child(filter_segment(&theme, option, option == active_filter, cx));
         }
         let search_field = field(
             "history-search",
@@ -105,62 +123,19 @@ impl crate::App {
         } else {
             search_field.w(px(280.0))
         };
-        title_row = title_row
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .child("Relay history")
-                            .text_size(px(15.0))
-                            .text_color(theme.text)
-                            .font_weight(FontWeight::MEDIUM),
-                    )
-                    .child(
-                        div()
-                            .child("Every post prepared through this app stays visible here")
-                            .text_size(px(12.0))
-                            .text_color(theme.muted)
-                            .text_ellipsis(),
-                    ),
-            )
-            .child(search_field);
-
-        // Status filter chips + relay count. View-side only: search still
-        // re-queries, this just narrows the loaded rows.
-        let row_count = self.history.rows.len();
-        let shown_count = self
-            .history
-            .rows
-            .iter()
-            .filter(|post| active_filter.matches(post))
-            .count();
-        let mut filter_row = div()
-            .w_full()
-            .pb(px(4.0))
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.0));
-        for option in [
-            HistoryStatusFilter::All,
-            HistoryStatusFilter::NeedsAttention,
-            HistoryStatusFilter::Delivered,
-            HistoryStatusFilter::InProgress,
-        ] {
-            filter_row = filter_row.child(filter_chip(&theme, option, option == active_filter, cx));
-        }
-        filter_row = filter_row.child(
+        page = page.child(
             div()
-                .flex_1()
-                .min_w(px(0.0))
+                .w_full()
+                .px(px(gutter))
+                .pt(px(if narrow { 16.0 } else { 24.0 }))
+                .pb(px(12.0))
                 .flex()
-                .justify_end()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(12.0))
+                .child(segments)
+                .child(div().flex_1().min_w(px(8.0)))
                 .child(tabular(
                     div()
                         .child(if active_filter == HistoryStatusFilter::All {
@@ -174,20 +149,8 @@ impl crate::App {
                         })
                         .text_size(px(12.0))
                         .text_color(theme.muted),
-                )),
-        );
-        // Full-bleed header for a list page: the title row and filter
-        // chips share the list gutters and use the whole width.
-        page = page.child(
-            div()
-                .w_full()
-                .px(px(gutter))
-                .pt(px(if narrow { 16.0 } else { 24.0 }))
-                .flex()
-                .flex_col()
-                .gap(px(12.0))
-                .child(title_row)
-                .child(filter_row),
+                ))
+                .child(search_field),
         );
 
         // List.
@@ -638,39 +601,32 @@ impl crate::App {
     }
 }
 
-fn filter_chip(
+/// One cell of the toolbar segmented control: near-square like every
+/// other workbench control, keyboard reachable like the settings nav chips.
+fn filter_segment(
     theme: &crate::theme::Theme,
     option: HistoryStatusFilter,
     active: bool,
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
     let label = option.label();
+    let id = format!("history-filter-{}", label.to_lowercase().replace(' ', "-"));
     div()
-        .id(SharedString::from(format!(
-            "history-filter-{}",
-            label.to_lowercase().replace(' ', "-")
-        )))
-        .h(px(28.0))
-        .px(px(12.0))
-        .rounded(px(HISTORY_PILL_RADIUS))
+        .id(SharedString::from(id))
+        .h(px(26.0))
+        .px(px(10.0))
+        .rounded(px(RADIUS_SM))
         .flex()
         .items_center()
         .justify_center()
-        .border_1()
-        .border_color(if active { theme.accent } else { theme.border })
         .bg(if active {
-            theme.accent_soft
+            theme.active
         } else {
             theme.transparent()
         })
-        .hover(|style| {
-            style.bg(if active {
-                theme.accent_soft
-            } else {
-                theme.hover
-            })
-        })
+        .hover(|style| style.bg(if active { theme.active } else { theme.hover }))
         .cursor_pointer()
+        .tab_index(0)
         .child(
             div()
                 .child(label.to_string())
@@ -686,17 +642,26 @@ fn filter_chip(
             app.history_status_filter = option;
             cx.notify();
         }))
+        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+            app.history_status_filter = option;
+            cx.notify();
+        }))
+        .on_action(
+            cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                app.history_status_filter = option;
+                cx.notify();
+            }),
+        )
 }
 
-/// Status pill with a dot plus text: semantic color is never carried by
-/// color alone, and the 13px earned radius keeps pills distinct from the
-/// near-square controls.
+/// Status tag with a dot plus text: semantic color is never carried by
+/// color alone, and the square cut matches the workbench controls.
 fn status_pill(dot: Hsla, soft: &Hsla, label: &str) -> Div {
     div()
         .h(px(24.0))
         .pl(px(8.0))
         .pr(px(10.0))
-        .rounded(px(HISTORY_PILL_RADIUS))
+        .rounded(px(RADIUS_SM))
         .bg(*soft)
         .flex()
         .flex_row()
