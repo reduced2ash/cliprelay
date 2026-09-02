@@ -135,6 +135,7 @@ pub struct App {
     pub prepare: prepare::PrepareState,
     pub settings_page: settings_page::SettingsUiState,
     pub history_search: String,
+    pub history_status_filter: history::HistoryStatusFilter,
     history_search_generation: u64,
     history_search_task: Option<Task<()>>,
     pub history_more_menu_post: Option<i64>,
@@ -463,6 +464,7 @@ impl App {
             prepare: prepare_state,
             settings_page: settings_page::SettingsUiState::default(),
             history_search: String::new(),
+            history_status_filter: history::HistoryStatusFilter::default(),
             history_search_generation: 0,
             history_search_task: None,
             history_more_menu_post: None,
@@ -3007,9 +3009,14 @@ impl App {
                 }
             }
             "x-limit" => {
-                let mb: f64 = text.parse().unwrap_or(512.0);
-                let mb = if mb == 0.0 { 512.0 } else { mb };
-                self.set_setting(X_LIMIT_MB, json!(mb), cx);
+                // Reject non-numeric and non-positive input so a typo can
+                // never silently reset or corrupt the saved limit; the
+                // settings page says as much next to the field.
+                if let Ok(mb) = text.trim().parse::<f64>() {
+                    if mb > 0.0 {
+                        self.set_setting(X_LIMIT_MB, json!(mb), cx);
+                    }
+                }
             }
             "workspace-rename" => {
                 if let Some(index) = self.renaming_workspace {

@@ -1,7 +1,7 @@
 //! History page: relayed posts with delivery status, retries, and cleanup.
 
 use crate::state::*;
-use crate::theme::CONTROL_HEIGHT;
+use crate::theme::*;
 use crate::widgets::*;
 use cliprelay_core::db::PostRow;
 use gpui::prelude::FluentBuilder;
@@ -9,15 +9,59 @@ use gpui::*;
 use std::path::PathBuf;
 
 const HISTORY_ROW_HEIGHT: f32 = 176.0;
+/// Earned radius reserved for status pills, dots, and switches.
+const HISTORY_PILL_RADIUS: f32 = 13.0;
+
+/// View-side status filter for the loaded history rows. Search stays
+/// controller-side (it re-queries the database); this filter only narrows
+/// what is already loaded so it never disturbs pagination or cleanup.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryStatusFilter {
+    #[default]
+    All,
+    NeedsAttention,
+    Delivered,
+    InProgress,
+}
+
+impl HistoryStatusFilter {
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::NeedsAttention => "Needs attention",
+            Self::Delivered => "Delivered",
+            Self::InProgress => "In progress",
+        }
+    }
+
+    fn matches(self, post: &PostRow) -> bool {
+        match self {
+            Self::All => true,
+            Self::NeedsAttention => post_needs_attention(post),
+            Self::Delivered => post_delivered(post),
+            Self::InProgress => !post_needs_attention(post) && !post_delivered(post),
+        }
+    }
+}
+
+fn post_needs_attention(post: &PostRow) -> bool {
+    post.telegram_status == "failed" || post.x_status == "failed" || !post.error.is_empty()
+}
+
+fn post_delivered(post: &PostRow) -> bool {
+    if post_needs_attention(post) {
+        return false;
+    }
+    post.telegram_status == "sent" || post.x_status == "posted"
+}
 
 impl crate::App {
     pub fn render_history(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
-        let row_count = self.history.rows.len();
-        let has_more = self.history.has_more;
-        let search = self.history_search.clone();
         let narrow = self.window_size.0 < 820.0;
         let empty_field = FieldState::default();
+        let active_filter = self.history_status_filter;
+        let search = self.history_search.clone();
 
         let mut page = div()
             .id("history")
@@ -31,7 +75,8 @@ impl crate::App {
         let mut header = div()
             .w_full()
             .px(px(if narrow { 16.0 } else { 26.0 }))
-            .py(px(if narrow { 16.0 } else { 24.0 }))
+            .pt(px(if narrow { 16.0 } else { 24.0 }))
+            .pb(px(12.0))
             .flex()
             .gap(px(if narrow { 12.0 } else { 16.0 }));
         if narrow {
@@ -50,9 +95,9 @@ impl crate::App {
                     .child(
                         div()
                             .child("Relay history")
-                            .text_size(px(20.0))
+                            .text_size(px(15.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
+                            .font_weight(FontWeight::MEDIUM),
                     )
                     .child(
                         div()
@@ -80,6 +125,54 @@ impl crate::App {
             );
         page = page.child(header);
 
+        // Status filter chips + relay count. View-side only: search still
+        // re-queries, this just narrows the loaded rows.
+        let row_count = self.history.rows.len();
+        let shown_count = self
+            .history
+            .rows
+            .iter()
+            .filter(|post| active_filter.matches(post))
+            .count();
+        let mut filter_row = div()
+            .w_full()
+            .px(px(if narrow { 16.0 } else { 26.0 }))
+            .pb(px(12.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0));
+        for option in [
+            HistoryStatusFilter::All,
+            HistoryStatusFilter::NeedsAttention,
+            HistoryStatusFilter::Delivered,
+            HistoryStatusFilter::InProgress,
+        ] {
+            filter_row = filter_row.child(filter_chip(&theme, option, option == active_filter, cx));
+        }
+        filter_row = filter_row.child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .justify_end()
+                .child(tabular(
+                    div()
+                        .child(if active_filter == HistoryStatusFilter::All {
+                            format!(
+                                "{} {}",
+                                row_count,
+                                if row_count == 1 { "relay" } else { "relays" }
+                            )
+                        } else {
+                            format!("{shown_count} of {row_count}")
+                        })
+                        .text_size(px(12.0))
+                        .text_color(theme.muted),
+                )),
+        );
+        page = page.child(filter_row);
+
         // List.
         let mut list = div()
             .id("history-list")
@@ -89,8 +182,14 @@ impl crate::App {
             .overflow_scroll()
             .scrollbar_width(px(10.0))
             .track_scroll(&self.history_scroll);
-        if row_count == 0 {
-            let (title, body) = if !search.is_empty() {
+        if shown_count == 0 {
+            let filter_empty = row_count > 0 && active_filter != HistoryStatusFilter::All;
+            let (title, body) = if filter_empty {
+                (
+                    "No relays match this filter".to_string(),
+                    "Nothing loaded has this delivery state yet.".to_string(),
+                )
+            } else if !search.is_empty() {
                 (
                     "No matching relays".to_string(),
                     "Try another filename or caption.".to_string(),
@@ -114,19 +213,21 @@ impl crate::App {
                         div()
                             .w(px(58.0))
                             .h(px(58.0))
-                            .rounded(px(16.0))
-                            .bg(theme.active)
+                            .rounded(px(RADIUS_SM))
+                            .bg(theme.raised)
+                            .border_1()
+                            .border_color(theme.border)
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(icon("▷", 27.0, theme.accent)),
+                            .child(icon("▷", 27.0, theme.muted)),
                     )
                     .child(
                         div()
                             .child(title)
-                            .text_size(px(20.0))
+                            .text_size(px(15.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
+                            .font_weight(FontWeight::MEDIUM),
                     )
                     .child(
                         div()
@@ -136,7 +237,21 @@ impl crate::App {
                             .max_w(px(420.0))
                             .text_align(TextAlign::Center),
                     )
-                    .child(if search.is_empty() {
+                    .child(if filter_empty {
+                        button(
+                            "history-clear-filter",
+                            "Show all relays",
+                            ButtonKind::Secondary,
+                            None,
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.history_status_filter = HistoryStatusFilter::All;
+                                cx.notify();
+                            },
+                        )
+                        .into_any()
+                    } else if search.is_empty() {
                         button(
                             "history-open-library",
                             "Open library",
@@ -157,13 +272,21 @@ impl crate::App {
             // History can grow without bound. Keep a fixed-height virtual
             // window so playback ticks and scroll updates render only nearby
             // posts instead of rebuilding every loaded history row.
+            let filtered: Vec<PostRow> = self
+                .history
+                .rows
+                .iter()
+                .filter(|post| active_filter.matches(post))
+                .cloned()
+                .collect();
+            let visible_count = filtered.len();
             let scroll_y = (-f32::from(self.history_scroll.offset().y)).max(0.0);
             let viewport_height =
                 (self.window_size.1 - if narrow { 250.0 } else { 220.0 }).max(HISTORY_ROW_HEIGHT);
             let first = ((scroll_y / HISTORY_ROW_HEIGHT).floor() as isize - 2).max(0) as usize;
             let visible = (viewport_height / HISTORY_ROW_HEIGHT).ceil() as usize + 4;
-            let end = (first + visible).min(row_count);
-            let visible_rows = self.history.rows[first..end].to_vec();
+            let end = (first + visible).min(visible_count);
+            let visible_rows = filtered[first.min(visible_count)..end].to_vec();
             let mut window = div()
                 .absolute()
                 .top(px(first as f32 * HISTORY_ROW_HEIGHT))
@@ -176,7 +299,7 @@ impl crate::App {
             }
             let inner = div()
                 .w_full()
-                .h(px(row_count as f32 * HISTORY_ROW_HEIGHT + 16.0))
+                .h(px(visible_count as f32 * HISTORY_ROW_HEIGHT + 16.0))
                 .relative()
                 .child(window);
             list = list
@@ -184,7 +307,7 @@ impl crate::App {
                 .on_scroll_wheel(cx.listener(|_app, _event, _window, cx| {
                     cx.notify();
                 }));
-            if has_more {
+            if self.history.has_more {
                 let offset = (-f32::from(self.history_scroll.offset().y)).max(0.0);
                 let max = f32::from(self.history_scroll.max_offset().height);
                 if max - offset < 500.0 {
@@ -253,8 +376,10 @@ impl crate::App {
                 .w(px(150.0))
                 .h(px(92.0))
                 .flex_none()
-                .rounded(px(10.0))
-                .bg(theme.surface)
+                .rounded(px(RADIUS_SM))
+                .bg(theme.media_overlay)
+                .border_1()
+                .border_color(theme.border)
                 .overflow_hidden()
                 .child(if thumbnail.is_empty() {
                     div()
@@ -291,6 +416,7 @@ impl crate::App {
                         .w_full()
                         .flex()
                         .flex_row()
+                        .items_baseline()
                         .gap(px(12.0))
                         .child(
                             div()
@@ -298,15 +424,15 @@ impl crate::App {
                                 .child(media_name)
                                 .text_size(px(15.0))
                                 .text_color(theme.text)
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_ellipsis(),
                         )
-                        .child(
+                        .child(tabular(
                             div()
                                 .child(created_label)
                                 .text_size(px(12.0))
                                 .text_color(theme.muted),
-                        ),
+                        )),
                 )
                 .child(
                     div()
@@ -316,7 +442,7 @@ impl crate::App {
                         .text_color(if caption_muted {
                             theme.muted
                         } else {
-                            theme.text
+                            theme.text_soft
                         })
                         .text_ellipsis(),
                 )
@@ -324,9 +450,10 @@ impl crate::App {
                     div()
                         .flex()
                         .flex_row()
+                        .items_center()
                         .gap(px(8.0))
                         .child(if edited {
-                            pill(theme, "Edited copy", theme.accent, &theme.accent_soft)
+                            status_pill(theme.accent, &theme.accent_soft, "Edited copy")
                         } else {
                             div()
                         })
@@ -336,11 +463,10 @@ impl crate::App {
                                 "failed" => (theme.error, theme.error_soft),
                                 _ => (theme.warning, theme.warning_soft),
                             };
-                            pill(
-                                theme,
-                                &format!("Telegram {}", telegram_status.replace('_', " ")),
+                            status_pill(
                                 color,
                                 &soft,
+                                &format!("Telegram {}", telegram_status.replace('_', " ")),
                             )
                         } else {
                             div()
@@ -351,12 +477,12 @@ impl crate::App {
                                 "failed" => (theme.error, theme.error_soft),
                                 _ => (theme.accent, theme.accent_soft),
                             };
-                            pill(
-                                theme,
-                                &format!("X {}", x_status.replace('_', " ")),
-                                color,
-                                &soft,
-                            )
+                            status_pill(color, &soft, &format!("X {}", x_status.replace('_', " ")))
+                        } else {
+                            div()
+                        })
+                        .child(if post.cleanup_state.as_deref() == Some("trashed") {
+                            status_pill(theme.muted, &theme.active, "Cleaned up")
                         } else {
                             div()
                         }),
@@ -470,18 +596,78 @@ impl crate::App {
     }
 }
 
-fn pill(_theme: &crate::theme::Theme, label: &str, color: Hsla, soft: &Hsla) -> Div {
+fn filter_chip(
+    theme: &crate::theme::Theme,
+    option: HistoryStatusFilter,
+    active: bool,
+    cx: &mut Context<crate::App>,
+) -> Stateful<Div> {
+    let label = option.label();
     div()
-        .h(px(24.0))
-        .px(px(9.0))
-        .rounded(px(6.0))
-        .bg(*soft)
+        .id(SharedString::from(format!(
+            "history-filter-{}",
+            label.to_lowercase().replace(' ', "-")
+        )))
+        .h(px(28.0))
+        .px(px(12.0))
+        .rounded(px(HISTORY_PILL_RADIUS))
         .flex()
         .items_center()
-        .child(label.to_string())
-        .text_size(px(12.0))
-        .text_color(color)
-        .font_weight(FontWeight::MEDIUM)
+        .justify_center()
+        .border_1()
+        .border_color(if active { theme.accent } else { theme.border })
+        .bg(if active {
+            theme.accent_soft
+        } else {
+            theme.transparent()
+        })
+        .hover(|style| {
+            style.bg(if active {
+                theme.accent_soft
+            } else {
+                theme.hover
+            })
+        })
+        .cursor_pointer()
+        .child(
+            div()
+                .child(label.to_string())
+                .text_size(px(12.0))
+                .text_color(if active {
+                    theme.accent_text
+                } else {
+                    theme.muted
+                })
+                .font_weight(FontWeight::MEDIUM),
+        )
+        .on_click(cx.listener(move |app, _event, _window, cx| {
+            app.history_status_filter = option;
+            cx.notify();
+        }))
+}
+
+/// Status pill with a dot plus text: semantic color is never carried by
+/// color alone, and the 13px earned radius keeps pills distinct from the
+/// near-square controls.
+fn status_pill(dot: Hsla, soft: &Hsla, label: &str) -> Div {
+    div()
+        .h(px(24.0))
+        .pl(px(8.0))
+        .pr(px(10.0))
+        .rounded(px(HISTORY_PILL_RADIUS))
+        .bg(*soft)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(dot))
+        .child(
+            div()
+                .child(label.to_string())
+                .text_size(px(12.0))
+                .text_color(dot)
+                .font_weight(FontWeight::MEDIUM),
+        )
 }
 
 fn pretty_date(iso: &str) -> String {
@@ -497,7 +683,40 @@ fn pretty_date(iso: &str) -> String {
 
 #[cfg(test)]
 mod history_tests {
-    use super::pretty_date;
+    use super::{post_delivered, post_needs_attention, pretty_date, HistoryStatusFilter};
+    use cliprelay_core::db::PostRow;
+
+    fn post_with(telegram: &str, x: &str, error: &str) -> PostRow {
+        PostRow {
+            id: 1,
+            media_id: 1,
+            export_id: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            telegram_enabled: true,
+            x_enabled: false,
+            telegram_caption: String::new(),
+            x_caption: String::new(),
+            telegram_mode: String::new(),
+            telegram_destination: String::new(),
+            telegram_status: telegram.to_string(),
+            telegram_message_id: String::new(),
+            telegram_message_link: String::new(),
+            x_status: x.to_string(),
+            x_url: String::new(),
+            cleanup_policy: String::new(),
+            error: error.to_string(),
+            source_path: None,
+            media_name: None,
+            thumbnail_path: None,
+            source_duration: None,
+            export_path: None,
+            is_generated: None,
+            edit_spec: None,
+            cleanup_state: None,
+            export_size: None,
+        }
+    }
 
     #[test]
     fn pretty_date_formats_and_falls_back() {
@@ -515,5 +734,29 @@ mod history_tests {
         assert!(pretty_date("2026-08-10T09:05:00Z").starts_with("Aug 10, 2026 · "));
         // Unparseable input passes through unchanged.
         assert_eq!(pretty_date("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn status_filter_partitions_rows() {
+        let sent = post_with("sent", "not_requested", "");
+        let failed = post_with("failed", "not_requested", "");
+        let prepared = post_with("not_requested", "prepared", "");
+        let errored = post_with("sent", "not_requested", "boom");
+
+        assert!(HistoryStatusFilter::All.matches(&sent));
+        assert!(HistoryStatusFilter::Delivered.matches(&sent));
+        assert!(!HistoryStatusFilter::NeedsAttention.matches(&sent));
+        assert!(!HistoryStatusFilter::InProgress.matches(&sent));
+
+        assert!(HistoryStatusFilter::NeedsAttention.matches(&failed));
+        assert!(!HistoryStatusFilter::Delivered.matches(&failed));
+
+        assert!(HistoryStatusFilter::InProgress.matches(&prepared));
+        assert!(!HistoryStatusFilter::Delivered.matches(&prepared));
+
+        // An error line always needs attention, even when a send succeeded.
+        assert!(post_needs_attention(&errored));
+        assert!(!post_delivered(&errored));
+        assert!(HistoryStatusFilter::NeedsAttention.matches(&errored));
     }
 }

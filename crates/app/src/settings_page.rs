@@ -17,6 +17,8 @@ pub struct SettingsUiState {
     pub personal_phone: String,
     pub login_code: String,
     pub login_password: String,
+    /// Section nav filter (`None` shows every section).
+    pub active_section: Option<String>,
 }
 
 impl crate::App {
@@ -30,28 +32,63 @@ impl crate::App {
             .flex_col()
             .bg(theme.ink);
 
-        page = page.child(
-            div()
-                .w_full()
-                .px(px(26.0))
-                .py(px(24.0))
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .child("Settings")
-                        .text_size(px(20.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::SEMIBOLD),
+        // Workbench-style header: title and subtitle on the left, settings
+        // search on the right (mirrors the history page header).
+        let narrow = self.window_size.0 < 820.0;
+        let empty_field = FieldState::default();
+        let mut header = div()
+            .w_full()
+            .px(px(if narrow { 16.0 } else { 26.0 }))
+            .py(px(if narrow { 16.0 } else { 24.0 }))
+            .flex()
+            .gap(px(if narrow { 12.0 } else { 16.0 }));
+        if narrow {
+            header = header.flex_col();
+        } else {
+            header = header.flex_row().items_end();
+        }
+        header = header
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .child("Settings")
+                            .text_size(px(20.0))
+                            .text_color(theme.text)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        div()
+                            .child("Appearance, folders, connections, and safe file behavior")
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    ),
+            )
+            .child(
+                field_with_icon(
+                    "settings-search",
+                    "Search settings",
+                    self.fields.get("settings-search").unwrap_or(&empty_field),
+                    self.focused_field.as_deref() == Some("settings-search"),
+                    true,
+                    false,
+                    Some("⌕"),
+                    cx,
                 )
-                .child(
-                    div()
-                        .child("Appearance, folders, connections, and safe file behavior")
-                        .text_size(px(12.0))
-                        .text_color(theme.muted),
-                ),
-        );
+                .w(px(if narrow {
+                    (self.window_size.0 - 96.0).max(240.0)
+                } else {
+                    280.0
+                })),
+            );
+        page = page.child(header);
+        page = page.child(section_nav(self, cx));
 
         // Content width matches the original: min(820, page − 48).
         let sidebar = if self.sidebar_collapsed || self.window_size.0 < 1080.0 {
@@ -60,6 +97,15 @@ impl crate::App {
             SIDEBAR_EXPANDED_WIDTH
         };
         let content_width = (self.window_size.0 - sidebar - 48.0).clamp(300.0, 820.0);
+
+        // Search + section nav narrow the visible blocks below. Every block
+        // keeps its exact settings keys, persistence, and actions.
+        let mut any_visible = false;
+        let query_display = self
+            .fields
+            .get("settings-search")
+            .map(|field| field.text.trim().to_string())
+            .unwrap_or_default();
 
         let mut content = div()
             .id("settings-scroll")
@@ -80,9 +126,31 @@ impl crate::App {
             .flex_col();
 
         // INTERFACE
-        inner = inner
-            .child(section_label(&theme, "INTERFACE"))
-            .child(group_title(&theme, "Appearance and density"))
+        if section_open(
+            self,
+            "interface",
+            &[
+                "interface",
+                "appearance",
+                "theme",
+                "color",
+                "palette",
+                "relay",
+                "pitch black",
+                "full white",
+                "frosted",
+                "graphite",
+                "density",
+                "scale",
+                "compact",
+                "balanced",
+                "standard",
+                "library thumbnails",
+                "fit",
+            ],
+        ) {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Appearance and density"))
             .child(
                 div()
                     .w_full()
@@ -139,11 +207,38 @@ impl crate::App {
                 &theme,
                 "Keeps the complete frame visible. Extra space uses the media well instead of cropping the top, bottom, or sides.",
             ));
+            inner = inner.child(section_label(&theme, "INTERFACE")).child(group);
+            any_visible = true;
+        }
 
         // PERFORMANCE
-        inner = inner
-            .child(section_label(&theme, "PERFORMANCE"))
-            .child(group_title(&theme, "Rendering and media"))
+        if section_open(
+            self,
+            "performance",
+            &[
+                "performance",
+                "rendering",
+                "media",
+                "vsync",
+                "maximum",
+                "automatic",
+                "export encoder",
+                "hardware",
+                "software",
+                "diagnostics",
+                "renderer",
+                "gpu",
+                "display",
+                "gstreamer",
+                "video playback",
+                "frame pacing",
+                "frame spikes",
+                "resources",
+                "refresh",
+            ],
+        ) {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Rendering and media"))
             .child(help_text(&theme, "VSync stays enabled. Maximum mode preloads adjacent media, allows a second preview encode, and prefers hardware export."))
             .child(setting_row(
                 cx,
@@ -180,16 +275,7 @@ impl crate::App {
                 },
             ))
             .child(help_text(&theme, "Hardware always falls back to software if the device or upload limit requires it."))
-            .child(
-                div()
-                    .w_full()
-                    .mt(px(16.0))
-                    .mb(px(6.0))
-                    .child(tracked("LIVE DIAGNOSTICS"))
-                    .text_size(px(11.0))
-                    .text_color(theme.muted)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
+            .child(sub_label(&theme, "LIVE DIAGNOSTICS"))
             .child(
                 div()
                     .w_full()
@@ -254,13 +340,39 @@ impl crate::App {
                             )),
                     ),
             );
+            inner = inner
+                .child(section_label(&theme, "PERFORMANCE"))
+                .child(group);
+            any_visible = true;
+        }
 
         // FILES
-        inner = inner
-            .child(section_label(&theme, "FILES"))
-            .child(group_title(&theme, "Library and generated media"))
+        if section_open(
+            self,
+            "files",
+            &[
+                "files",
+                "library",
+                "folder",
+                "export",
+                "generated",
+                "reveal",
+                "choose",
+                "random",
+                "repeats",
+                "index",
+                "verify",
+                "deep scan",
+                "thumbnails",
+                "hover previews",
+                "background",
+                "automatic",
+            ],
+        ) {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Library and generated media"))
             .child(help_text(&theme, "Your original videos are never moved or modified."))
-            .child(sub_label(&theme, "Video library"))
+            .child(sub_label(&theme, "VIDEO LIBRARY"))
             .child(
                 div()
                     .w_full()
@@ -281,7 +393,7 @@ impl crate::App {
                     )),
             )
             .child(help_text(&theme, "ClipRelay searches this folder and every folder inside it."))
-            .child(sub_label(&theme, "Generated video folder"))
+            .child(sub_label(&theme, "GENERATED VIDEO FOLDER"))
             .child(
                 div()
                     .w_full()
@@ -388,11 +500,56 @@ impl crate::App {
                     "With verification off, the library appears from filenames and sizes. A video is checked only when you select or publish it."
                 },
             ));
+            inner = inner.child(section_label(&theme, "FILES")).child(group);
+            any_visible = true;
+        }
 
         // TELEGRAM
-        inner = inner
-            .child(section_label(&theme, "TELEGRAM"))
-            .child(group_title(&theme, "Bot connection"))
+        let telegram_bot = section_open(
+            self,
+            "telegram",
+            &[
+                "telegram",
+                "bot",
+                "token",
+                "botfather",
+                "channel",
+                "destination",
+                "chat id",
+                "connect",
+                "disconnect",
+                "connection",
+                "check destination",
+                "configured",
+            ],
+        );
+        let telegram_personal = section_open(
+            self,
+            "telegram",
+            &[
+                "telegram",
+                "personal",
+                "account",
+                "api id",
+                "api hash",
+                "phone",
+                "login code",
+                "password",
+                "sign in",
+                "sign out",
+                "chats",
+                "dialogs",
+                "session",
+                "keychain",
+            ],
+        );
+        if telegram_bot || telegram_personal {
+            inner = inner.child(section_label(&theme, "TELEGRAM"));
+            any_visible = true;
+        }
+        if telegram_bot {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Bot connection"))
             .child(help_text(&theme, "Best for a channel: simple setup, reliable sending, and no personal session stored. Add the bot as an administrator in the channel."))
             .child(
                 div()
@@ -477,8 +634,12 @@ impl crate::App {
                     } else {
                         div().into_any()
                     }),
-            )
-            .child(group_title(&theme, "Personal account"))
+            );
+            inner = inner.child(group);
+        }
+        if telegram_personal {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Personal account"))
             .child(help_text(&theme, "Use this when the sender must be your own account. Telegram requires an API ID and hash from my.telegram.org; the resulting session is stored in your OS keychain."))
             .child(
                 div()
@@ -582,16 +743,35 @@ impl crate::App {
                         if self.personal_configured() { PillState::Success } else { PillState::Warning },
                     )),
             );
-
-        // Chat picker.
-        if !self.dialogs.is_empty() {
-            inner = inner.child(chat_picker(self, cx, &theme));
+            // Chat picker stays with the personal account block.
+            if !self.dialogs.is_empty() {
+                group = group.child(chat_picker(self, cx, &theme));
+            }
+            inner = inner.child(group);
         }
 
         // X HANDOFF
-        inner = inner
-            .child(section_label(&theme, "X HANDOFF"))
-            .child(group_title(&theme, "Manual browser posting"))
+        if section_open(
+            self,
+            "x",
+            &[
+                "x",
+                "handoff",
+                "twitter",
+                "post",
+                "browser",
+                "composer",
+                "clipboard",
+                "file limit",
+                "mb",
+                "512",
+                "compress",
+                "manual",
+                "upload",
+            ],
+        ) {
+            let mut group = seamed_group(&theme);
+            group = group.child(group_title(&theme, "Manual browser posting"))
             .child(help_text(&theme, "ClipRelay opens X’s official composer with your text prefilled, then places the prepared video on the clipboard and keeps drag-to-upload available. You review and press Post yourself. No paid X API is required."))
             .child(
                 div()
@@ -621,71 +801,126 @@ impl crate::App {
                             .text_size(px(13.0))
                             .text_color(theme.muted),
                     ),
-            );
-
-        // DIAGNOSTICS (the accent-colored bottom header, distinct from the
-        // muted "LIVE DIAGNOSTICS" inside PERFORMANCE).
-        inner = inner
-            .child(
-                div()
-                    .mt(px(SPACING_XXL))
-                    .mb(px(SPACING_SM))
-                    .child(tracked("DIAGNOSTICS"))
-                    .text_size(px(12.0))
-                    .text_color(theme.accent_text)
-                    .font_weight(FontWeight::SEMIBOLD),
             )
-            .child(
+            .child(x_limit_feedback(self, &theme));
+            inner = inner.child(section_label(&theme, "X HANDOFF")).child(group);
+            any_visible = true;
+        }
+
+        // DIAGNOSTICS
+        if section_open(
+            self,
+            "diagnostics",
+            &[
+                "diagnostics",
+                "local tools",
+                "ffmpeg",
+                "ffprobe",
+                "database",
+                "secrets",
+                "keychain",
+                "refresh",
+            ],
+        ) {
+            let mut group = seamed_group(&theme);
+            group = group
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(group_title(&theme, "Local tools"))
+                        .child(div().flex_1())
+                        .child(button(
+                            "diagnostics-refresh",
+                            "Refresh",
+                            ButtonKind::Ghost,
+                            Some("↻"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.command(Command::Diagnostics);
+                                cx.notify();
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(16.0))
+                        .child(diagnostic_cell(&theme, "FFmpeg", &self.diagnostics.ffmpeg))
+                        .child(diagnostic_cell(
+                            &theme,
+                            "FFprobe",
+                            &self.diagnostics.ffprobe,
+                        ))
+                        .child(diagnostic_cell(
+                            &theme,
+                            "Database",
+                            &self.diagnostics.database,
+                        ))
+                        .child(diagnostic_cell(
+                            &theme,
+                            "Secrets",
+                            &self.diagnostics.secret_backend,
+                        )),
+                );
+            inner = inner
+                .child(section_label(&theme, "DIAGNOSTICS"))
+                .child(group);
+            any_visible = true;
+        }
+
+        if !any_visible {
+            inner = inner.child(
                 div()
                     .w_full()
+                    .mt(px(SPACING_XL))
+                    .rounded(px(RADIUS_SM))
+                    .bg(theme.surface)
+                    .border_1()
+                    .border_color(theme.border)
+                    .p(px(32.0))
                     .flex()
-                    .flex_row()
+                    .flex_col()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(px(8.0))
                     .child(
                         div()
-                            .child("Local tools")
-                            .text_size(px(16.0))
+                            .child(format!("No settings match “{query_display}”"))
+                            .text_size(px(15.0))
                             .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
+                            .font_weight(FontWeight::MEDIUM),
                     )
-                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .child("Try another term, or clear the search to browse every section.")
+                            .text_size(px(13.0))
+                            .text_color(theme.muted),
+                    )
                     .child(button(
-                        "diagnostics-refresh",
-                        "Refresh",
-                        ButtonKind::Ghost,
-                        Some("↻"),
+                        "settings-clear-search",
+                        "Clear search",
+                        ButtonKind::Secondary,
+                        None,
                         true,
                         cx,
                         |app, cx| {
-                            app.command(Command::Diagnostics);
+                            if let Some(field) = app.fields.get_mut("settings-search") {
+                                field.text.clear();
+                                field.caret = 0;
+                            }
+                            app.settings_page.active_section = None;
                             cx.notify();
                         },
                     )),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .gap(px(16.0))
-                    .child(diagnostic_cell(&theme, "FFmpeg", &self.diagnostics.ffmpeg))
-                    .child(diagnostic_cell(
-                        &theme,
-                        "FFprobe",
-                        &self.diagnostics.ffprobe,
-                    ))
-                    .child(diagnostic_cell(
-                        &theme,
-                        "Database",
-                        &self.diagnostics.database,
-                    ))
-                    .child(diagnostic_cell(
-                        &theme,
-                        "Secrets",
-                        &self.diagnostics.secret_backend,
-                    )),
             );
+        }
 
         content = content.child(inner);
         let _ = &mut page;
@@ -715,22 +950,205 @@ impl crate::App {
     }
 }
 
+/// Workbench section label: 11px semibold uppercase with tracking, muted —
+/// the OUTPUT/DESTINATIONS/CAPTIONS pattern.
 fn section_label(theme: &crate::theme::Theme, label: &str) -> Div {
     div()
         .mt(px(SPACING_XXL))
         .mb(px(SPACING_SM))
         .child(tracked(label))
-        .text_size(px(12.0))
-        .text_color(theme.accent_text)
+        .text_size(px(11.0))
+        .text_color(theme.muted)
         .font_weight(FontWeight::SEMIBOLD)
 }
 
 fn group_title(theme: &crate::theme::Theme, title: &str) -> Div {
     div()
         .child(title.to_string())
-        .text_size(px(16.0))
+        .text_size(px(15.0))
         .text_color(theme.text)
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight::MEDIUM)
+}
+
+/// Workbench-aligned settings card: flat surface, hairline seam, 2px radius.
+fn seamed_group(theme: &crate::theme::Theme) -> Div {
+    div()
+        .w_full()
+        .rounded(px(RADIUS_SM))
+        .bg(theme.surface)
+        .border_1()
+        .border_color(theme.border)
+        .p(px(SPACING_LG))
+        .flex()
+        .flex_col()
+}
+
+fn settings_query(app: &crate::App) -> String {
+    app.fields
+        .get("settings-search")
+        .map(|field| field.text.trim().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// A section stays visible when the section nav selects it (or selects all)
+/// and the search query matches one of its keywords.
+fn section_open(app: &crate::App, id: &str, keywords: &[&str]) -> bool {
+    if app
+        .settings_page
+        .active_section
+        .as_deref()
+        .is_some_and(|active| active != id)
+    {
+        return false;
+    }
+    let query = settings_query(app);
+    if query.is_empty() {
+        return true;
+    }
+    // Every query word must match somewhere: "file limit" finds X HANDOFF
+    // even though no single keyword contains the whole phrase.
+    query
+        .split_whitespace()
+        .all(|word| keywords.iter().any(|key| key.contains(word)))
+}
+
+fn section_nav(app: &mut crate::App, cx: &mut Context<crate::App>) -> Div {
+    const SECTIONS: &[(&str, &str)] = &[
+        ("interface", "Interface"),
+        ("performance", "Performance"),
+        ("files", "Files"),
+        ("telegram", "Telegram"),
+        ("x", "X Handoff"),
+        ("diagnostics", "Diagnostics"),
+    ];
+    let theme = current_theme();
+    let active = app.settings_page.active_section.clone();
+    let mut row = div()
+        .w_full()
+        .px(px(26.0))
+        .pb(px(4.0))
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(SPACING_SM))
+        .child(nav_chip(cx, &theme, active.is_none(), None, "all", "All"));
+    for (id, label) in SECTIONS {
+        row = row.child(nav_chip(
+            cx,
+            &theme,
+            active.as_deref() == Some(id),
+            Some(id.to_string()),
+            id,
+            label,
+        ));
+    }
+    row
+}
+
+fn nav_chip(
+    cx: &mut Context<crate::App>,
+    theme: &crate::theme::Theme,
+    selected: bool,
+    section: Option<String>,
+    id: &str,
+    label: &str,
+) -> Stateful<Div> {
+    let label = label.to_string();
+    let click_section = section.clone();
+    let activate_section = section.clone();
+    let space_section = section;
+    div()
+        .id(SharedString::from(format!("settings-nav-{id}")))
+        .h(px(28.0))
+        .px(px(12.0))
+        .rounded(px(RADIUS_SM))
+        .bg(if selected {
+            theme.active
+        } else {
+            theme.transparent()
+        })
+        .border_1()
+        .border_color(if selected { theme.accent } else { theme.border })
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .tab_index(0)
+        .child(
+            div()
+                .child(label)
+                .text_size(px(12.0))
+                .text_color(if selected {
+                    theme.accent_text
+                } else {
+                    theme.muted
+                })
+                .font_weight(FontWeight::SEMIBOLD),
+        )
+        .on_click(cx.listener(move |app, _event, _window, cx| {
+            app.settings_page.active_section = click_section.clone();
+            cx.notify();
+        }))
+        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+            app.settings_page.active_section = activate_section.clone();
+            cx.stop_propagation();
+        }))
+        .on_action(
+            cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                app.settings_page.active_section = space_section.clone();
+                cx.stop_propagation();
+            }),
+        )
+}
+
+/// Live validation for the X handoff file limit: confirming a non-positive
+/// or non-numeric value keeps the saved limit, so say so before confirm.
+fn x_limit_feedback(app: &crate::App, theme: &crate::theme::Theme) -> Div {
+    let typed = app
+        .fields
+        .get("x-limit")
+        .map(|field| field.text.trim().to_string())
+        .unwrap_or_default();
+    if typed.is_empty() {
+        // The limit is stored as JSON float (see the "x-limit" commit path),
+        // so read it back as f64 — as_i64 would miss a saved 300.0.
+        let saved = app
+            .settings
+            .get(X_LIMIT_MB)
+            .and_then(|value| value.as_f64())
+            .unwrap_or(512.0);
+        let saved_label = if saved.fract() == 0.0 {
+            format!("{}", saved as i64)
+        } else {
+            format!("{saved}")
+        };
+        return help_text(
+            theme,
+            &format!("Videos above {saved_label} MB are compressed before handoff. Press Enter to apply a new limit."),
+        );
+    }
+    match typed.parse::<f64>() {
+        Ok(mb) if mb > 0.0 => help_text(
+            theme,
+            &format!(
+                "Videos above {typed} MB are compressed before handoff. Press Enter to apply."
+            ),
+        ),
+        _ => div()
+            .mt(px(4.0))
+            .mb(px(8.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .child(icon("!", 13.0, theme.error))
+            .child(format!(
+                "“{typed}” is not a positive number — confirming keeps the saved limit."
+            ))
+            .text_size(px(13.0))
+            .text_color(theme.error),
+    }
 }
 
 fn help_text(theme: &crate::theme::Theme, text: &str) -> Div {
@@ -748,7 +1166,7 @@ fn sub_label(theme: &crate::theme::Theme, label: &str) -> Div {
         .mt(px(SPACING_LG))
         .mb(px(4.0))
         .child(tracked(label))
-        .text_size(px(12.0))
+        .text_size(px(11.0))
         .text_color(theme.muted)
         .font_weight(FontWeight::SEMIBOLD)
 }
@@ -821,7 +1239,7 @@ fn theme_choices(
             .id(SharedString::from(format!("theme-{mode}")))
             .w(px(196.0))
             .h(px(92.0))
-            .rounded(px(10.0))
+            .rounded(px(RADIUS_MD))
             .relative()
             .top(px(0.0))
             .border_1()
@@ -870,7 +1288,7 @@ fn theme_choices(
             div()
                 .w(px(62.0))
                 .h(px(58.0))
-                .rounded(px(8.0))
+                .rounded(px(RADIUS_MD))
                 .bg(palette.application_background())
                 .border_1()
                 .border_color(palette.border)
@@ -1176,6 +1594,7 @@ fn diagnostic_row(theme: &crate::theme::Theme, label: &str, value: &str) -> Div 
 fn diagnostic_cell(theme: &crate::theme::Theme, label: &str, value: &str) -> Div {
     div()
         .flex_1()
+        .min_w(px(140.0))
         .flex()
         .flex_col()
         .gap(px(4.0))
