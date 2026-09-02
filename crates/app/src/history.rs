@@ -11,6 +11,36 @@ use std::path::PathBuf;
 const HISTORY_ROW_HEIGHT: f32 = 176.0;
 /// Earned radius reserved for status pills, dots, and switches.
 const HISTORY_PILL_RADIUS: f32 = 13.0;
+/// Capped page width shared by the header, filters, and rows.
+const HISTORY_MAX_W: f32 = 880.0;
+
+/// Centered measure: caps the column and splits leftover window space
+/// evenly instead of pinning content to the left.
+fn center_measure(max_width: f32, gutter: f32, top_pad: Pixels, first: Div, second: Div) -> Div {
+    div().w_full().flex().flex_col().items_center().child(
+        div()
+            .w_full()
+            .max_w(px(max_width))
+            .px(px(gutter))
+            .pt(top_pad)
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(first)
+            .child(second),
+    )
+}
+
+/// Horizontal centering wrapper for scroll-body content: keeps the capped
+/// column centered without disturbing vertical scrolling.
+fn center_row(child: Div) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_row()
+        .justify_center()
+        .child(child)
+}
 
 /// View-side status filter for the loaded history rows. Search stays
 /// controller-side (it re-queries the database); this filter only narrows
@@ -71,20 +101,33 @@ impl crate::App {
             .flex_col()
             .bg(theme.ink);
 
-        // Header collapses to two rows before the title and search compete.
-        let mut header = div()
+        // Title row shares the centered measure with the filter chips, so
+        // the search sits over the list instead of at the window edge.
+        let gutter = if narrow { 16.0 } else { 24.0 };
+        let mut title_row = div()
             .w_full()
-            .px(px(if narrow { 16.0 } else { 26.0 }))
-            .pt(px(if narrow { 16.0 } else { 24.0 }))
-            .pb(px(12.0))
             .flex()
             .gap(px(if narrow { 12.0 } else { 16.0 }));
         if narrow {
-            header = header.flex_col();
+            title_row = title_row.flex_col();
         } else {
-            header = header.flex_row().items_end();
+            title_row = title_row.flex_row().items_end();
         }
-        header = header
+        let search_field = field(
+            "history-search",
+            "Search history",
+            self.fields.get("history-search").unwrap_or(&empty_field),
+            self.focused_field.as_deref() == Some("history-search"),
+            true,
+            false,
+            cx,
+        );
+        let search_field = if narrow {
+            search_field.w_full()
+        } else {
+            search_field.w(px(280.0))
+        };
+        title_row = title_row
             .child(
                 div()
                     .flex_1()
@@ -107,23 +150,7 @@ impl crate::App {
                             .text_ellipsis(),
                     ),
             )
-            .child(
-                field(
-                    "history-search",
-                    "Search history",
-                    self.fields.get("history-search").unwrap_or(&empty_field),
-                    self.focused_field.as_deref() == Some("history-search"),
-                    true,
-                    false,
-                    cx,
-                )
-                .w(px(if narrow {
-                    (self.window_size.0 - 96.0).max(240.0)
-                } else {
-                    280.0
-                })),
-            );
-        page = page.child(header);
+            .child(search_field);
 
         // Status filter chips + relay count. View-side only: search still
         // re-queries, this just narrows the loaded rows.
@@ -136,10 +163,10 @@ impl crate::App {
             .count();
         let mut filter_row = div()
             .w_full()
-            .px(px(if narrow { 16.0 } else { 26.0 }))
-            .pb(px(12.0))
+            .pb(px(4.0))
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(8.0));
         for option in [
@@ -171,13 +198,19 @@ impl crate::App {
                         .text_color(theme.muted),
                 )),
         );
-        page = page.child(filter_row);
+        page = page.child(center_measure(
+            HISTORY_MAX_W,
+            gutter,
+            px(if narrow { 16.0 } else { 24.0 }),
+            title_row,
+            filter_row,
+        ));
 
-        // List.
+        // List rows share the header measure so the page reads as one
+        // centered column instead of full-bleed rows under a floating bar.
         let mut list = div()
             .id("history-list")
             .flex_1()
-            .mx(px(20.0))
             .relative()
             .overflow_scroll()
             .scrollbar_width(px(10.0))
@@ -299,14 +332,16 @@ impl crate::App {
             }
             let inner = div()
                 .w_full()
+                .max_w(px(HISTORY_MAX_W))
+                .px(px(gutter))
                 .h(px(visible_count as f32 * HISTORY_ROW_HEIGHT + 16.0))
                 .relative()
                 .child(window);
-            list = list
-                .child(inner)
-                .on_scroll_wheel(cx.listener(|_app, _event, _window, cx| {
+            list = list.child(center_row(inner)).on_scroll_wheel(cx.listener(
+                |_app, _event, _window, cx| {
                     cx.notify();
-                }));
+                },
+            ));
             if self.history.has_more {
                 let offset = (-f32::from(self.history_scroll.offset().y)).max(0.0);
                 let max = f32::from(self.history_scroll.max_offset().height);

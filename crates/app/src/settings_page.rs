@@ -32,22 +32,38 @@ impl crate::App {
             .flex_col()
             .bg(theme.ink);
 
-        // Workbench-style header: title and subtitle on the left, settings
-        // search on the right (mirrors the history page header).
+        // One centered measure column shared by the header, the section
+        // nav, and the scroll body below: all three share edges at every
+        // window width instead of pinning content to the left with the
+        // search stranded at the window edge.
         let narrow = self.window_size.0 < 820.0;
+        let gutter = if narrow { 16.0 } else { 24.0 };
         let empty_field = FieldState::default();
-        let mut header = div()
+        let mut title_row = div()
             .w_full()
-            .px(px(if narrow { 16.0 } else { 26.0 }))
-            .py(px(if narrow { 16.0 } else { 24.0 }))
             .flex()
             .gap(px(if narrow { 12.0 } else { 16.0 }));
         if narrow {
-            header = header.flex_col();
+            title_row = title_row.flex_col();
         } else {
-            header = header.flex_row().items_end();
+            title_row = title_row.flex_row().items_end();
         }
-        header = header
+        let search_field = field_with_icon(
+            "settings-search",
+            "Search settings",
+            self.fields.get("settings-search").unwrap_or(&empty_field),
+            self.focused_field.as_deref() == Some("settings-search"),
+            true,
+            false,
+            Some("⌕"),
+            cx,
+        );
+        let search_field = if narrow {
+            search_field.w_full()
+        } else {
+            search_field.w(px(280.0))
+        };
+        title_row = title_row
             .child(
                 div()
                     .flex_1()
@@ -70,33 +86,14 @@ impl crate::App {
                             .text_ellipsis(),
                     ),
             )
-            .child(
-                field_with_icon(
-                    "settings-search",
-                    "Search settings",
-                    self.fields.get("settings-search").unwrap_or(&empty_field),
-                    self.focused_field.as_deref() == Some("settings-search"),
-                    true,
-                    false,
-                    Some("⌕"),
-                    cx,
-                )
-                .w(px(if narrow {
-                    (self.window_size.0 - 96.0).max(240.0)
-                } else {
-                    280.0
-                })),
-            );
-        page = page.child(header);
-        page = page.child(section_nav(self, cx));
-
-        // Content width matches the original: min(820, page − 48).
-        let sidebar = if self.sidebar_collapsed || self.window_size.0 < 1080.0 {
-            SIDEBAR_COLLAPSED_WIDTH
-        } else {
-            SIDEBAR_EXPANDED_WIDTH
-        };
-        let content_width = (self.window_size.0 - sidebar - 48.0).clamp(300.0, 820.0);
+            .child(search_field);
+        page = page.child(center_measure(
+            SETTINGS_MAX_W,
+            gutter,
+            px(if narrow { 16.0 } else { 24.0 }),
+            title_row,
+            section_nav(self, cx),
+        ));
 
         // Search + section nav narrow the visible blocks below. Every block
         // keeps its exact settings keys, persistence, and actions.
@@ -117,10 +114,12 @@ impl crate::App {
             .overflow_scroll()
             .scrollbar_width(px(10.0));
 
-        // The inner column is built piece by piece.
+        // The inner column shares the header measure so section cards
+        // line up with the title and search at every window width.
         let mut inner = div()
-            .w(px(content_width))
-            .mx(px(24.0))
+            .w_full()
+            .max_w(px(SETTINGS_MAX_W))
+            .px(px(gutter))
             .pb(px(40.0))
             .flex()
             .flex_col();
@@ -378,6 +377,7 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(static_field("static-library-root", &theme, "No folder chosen", self.settings_value(LIBRARY_ROOT)))
                     .child(button(
@@ -399,6 +399,7 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(static_field("static-export-dir", &theme, "No folder chosen", self.settings_value(EXPORT_DIR)))
                     .child(button(
@@ -556,10 +557,11 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(field("tg-bot-token", "Bot token from @BotFather",
                             self.fields.get("tg-bot-token").unwrap_or(&FieldState::default()),
-                            self.focused_field.as_deref() == Some("tg-bot-token"), true, true, cx))
+                            self.focused_field.as_deref() == Some("tg-bot-token"), true, true, cx).flex_1().min_w(px(200.0)))
                     .child(button(
                         "tg-connect",
                         if self.telegram.bot.starts_with('@') { "Replace bot" } else { "Connect bot" },
@@ -579,10 +581,11 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(field("tg-destination", "@channelname or numeric chat ID",
                             self.fields.get("tg-destination").unwrap_or(&FieldState::default()),
-                            self.focused_field.as_deref() == Some("tg-destination"), true, false, cx))
+                            self.focused_field.as_deref() == Some("tg-destination"), true, false, cx).flex_1().min_w(px(200.0)))
                     .child(button(
                         "tg-check-dest",
                         "Check destination",
@@ -602,6 +605,7 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .items_center()
                     .gap(px(12.0))
                     .child(status_pill(
@@ -646,23 +650,25 @@ impl crate::App {
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(10.0))
                     .child(field("tg-api-id", "API ID",
                         self.fields.get("tg-api-id").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-api-id"), true, false, cx).flex_1())
+                        self.focused_field.as_deref() == Some("tg-api-id"), true, false, cx).flex_1().min_w(px(160.0)))
                     .child(field("tg-api-hash", "API hash",
                         self.fields.get("tg-api-hash").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-api-hash"), true, true, cx).flex_1()),
+                        self.focused_field.as_deref() == Some("tg-api-hash"), true, true, cx).flex_1().min_w(px(160.0))),
             )
             .child(
                 div()
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(10.0))
                     .child(field("tg-phone", "+1 555 123 4567",
                         self.fields.get("tg-phone").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-phone"), true, false, cx).flex_1())
+                        self.focused_field.as_deref() == Some("tg-phone"), true, false, cx).flex_1().min_w(px(200.0)))
                     .child(button(
                         "tg-send-code",
                         "Send login code",
@@ -677,27 +683,28 @@ impl crate::App {
                             app.command(Command::BeginPersonalLogin(api_id, api_hash, phone));
                             cx.notify();
                         },
-                    )
-                    .flex_1()),
+                    )),
             )
             .child(
                 div()
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(10.0))
                     .child(field("tg-code", "Login code",
                         self.fields.get("tg-code").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-code"), true, false, cx).flex_1())
+                        self.focused_field.as_deref() == Some("tg-code"), true, false, cx).flex_1().min_w(px(160.0)))
                     .child(field("tg-password", "2-step password, if requested",
                         self.fields.get("tg-password").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-password"), true, true, cx).flex_1()),
+                        self.focused_field.as_deref() == Some("tg-password"), true, true, cx).flex_1().min_w(px(160.0))),
             )
             .child(
                 div()
                     .w_full()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(button(
                         "tg-finish",
@@ -922,7 +929,7 @@ impl crate::App {
             );
         }
 
-        content = content.child(inner);
+        content = content.child(center_row(inner));
         let _ = &mut page;
         page = page.child(content);
         page
@@ -970,6 +977,37 @@ fn group_title(theme: &crate::theme::Theme, title: &str) -> Div {
         .font_weight(FontWeight::MEDIUM)
 }
 
+/// Capped page width shared by the header, nav, and body of this page.
+const SETTINGS_MAX_W: f32 = 880.0;
+
+/// Centered measure: caps the column and splits leftover window space
+/// evenly instead of pinning content to the left.
+fn center_measure(max_width: f32, gutter: f32, top_pad: Pixels, first: Div, second: Div) -> Div {
+    div().w_full().flex().flex_col().items_center().child(
+        div()
+            .w_full()
+            .max_w(px(max_width))
+            .px(px(gutter))
+            .pt(top_pad)
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(first)
+            .child(second),
+    )
+}
+
+/// Horizontal centering wrapper for scroll-body content: keeps the capped
+/// column centered without disturbing vertical scrolling.
+fn center_row(child: Div) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_row()
+        .justify_center()
+        .child(child)
+}
+
 /// Workbench-aligned settings card: flat surface, hairline seam, 2px radius.
 fn seamed_group(theme: &crate::theme::Theme) -> Div {
     div()
@@ -981,6 +1019,7 @@ fn seamed_group(theme: &crate::theme::Theme) -> Div {
         .p(px(SPACING_LG))
         .flex()
         .flex_col()
+        .gap(px(SPACING_SM))
 }
 
 fn settings_query(app: &crate::App) -> String {
@@ -1023,9 +1062,9 @@ fn section_nav(app: &mut crate::App, cx: &mut Context<crate::App>) -> Div {
     ];
     let theme = current_theme();
     let active = app.settings_page.active_section.clone();
+    // Gutters come from the centered measure; this row only wraps chips.
     let mut row = div()
         .w_full()
-        .px(px(26.0))
         .pb(px(4.0))
         .flex()
         .flex_row()
