@@ -5606,6 +5606,26 @@ impl crate::App {
                     cx.notify();
                 })),
             );
+            if !post.error.is_empty() {
+                let full_error = post.error.clone();
+                menu = menu.child(
+                    add_item(
+                        self,
+                        "menu-copy-error",
+                        "Copy error details",
+                        "⧉",
+                        true,
+                        None,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full_error.clone()));
+                        app.history_more_menu_post = None;
+                        app.toast(ToastKind::Success, "Error details copied to the clipboard.");
+                        cx.notify();
+                    })),
+                );
+            }
             if can_trash {
                 menu = menu.child(add_item(
                     self,

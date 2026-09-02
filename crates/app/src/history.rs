@@ -11,35 +11,13 @@ use std::path::PathBuf;
 const HISTORY_ROW_HEIGHT: f32 = 176.0;
 /// Earned radius reserved for status pills, dots, and switches.
 const HISTORY_PILL_RADIUS: f32 = 13.0;
-/// Capped page width shared by the header, filters, and rows.
-const HISTORY_MAX_W: f32 = 880.0;
-
-/// Centered measure: caps the column and splits leftover window space
-/// evenly instead of pinning content to the left.
-fn center_measure(max_width: f32, gutter: f32, top_pad: Pixels, first: Div, second: Div) -> Div {
-    div().w_full().flex().flex_col().items_center().child(
-        div()
-            .w_full()
-            .max_w(px(max_width))
-            .px(px(gutter))
-            .pt(top_pad)
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(first)
-            .child(second),
-    )
-}
-
-/// Horizontal centering wrapper for scroll-body content: keeps the capped
-/// column centered without disturbing vertical scrolling.
-fn center_row(child: Div) -> Div {
-    div()
-        .w_full()
-        .flex()
-        .flex_row()
-        .justify_center()
-        .child(child)
+/// Collapse a raw multi-line failure log to a one-line row summary.
+/// Returns the first non-empty line plus how many content lines follow it,
+/// so a tall ffmpeg dump can never blow out the fixed-height row.
+fn error_summary(error: &str) -> (&str, usize) {
+    let mut lines = error.lines().filter(|line| !line.trim().is_empty());
+    let first = lines.next().unwrap_or_default();
+    (first, lines.count())
 }
 
 /// View-side status filter for the loaded history rows. Search stays
@@ -198,19 +176,25 @@ impl crate::App {
                         .text_color(theme.muted),
                 )),
         );
-        page = page.child(center_measure(
-            HISTORY_MAX_W,
-            gutter,
-            px(if narrow { 16.0 } else { 24.0 }),
-            title_row,
-            filter_row,
-        ));
+        // Full-bleed header for a list page: the title row and filter
+        // chips share the list gutters and use the whole width.
+        page = page.child(
+            div()
+                .w_full()
+                .px(px(gutter))
+                .pt(px(if narrow { 16.0 } else { 24.0 }))
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .child(title_row)
+                .child(filter_row),
+        );
 
-        // List rows share the header measure so the page reads as one
-        // centered column instead of full-bleed rows under a floating bar.
+        // List.
         let mut list = div()
             .id("history-list")
             .flex_1()
+            .mx(px(gutter))
             .relative()
             .overflow_scroll()
             .scrollbar_width(px(10.0))
@@ -332,16 +316,14 @@ impl crate::App {
             }
             let inner = div()
                 .w_full()
-                .max_w(px(HISTORY_MAX_W))
-                .px(px(gutter))
                 .h(px(visible_count as f32 * HISTORY_ROW_HEIGHT + 16.0))
                 .relative()
                 .child(window);
-            list = list.child(center_row(inner)).on_scroll_wheel(cx.listener(
-                |_app, _event, _window, cx| {
+            list = list
+                .child(inner)
+                .on_scroll_wheel(cx.listener(|_app, _event, _window, cx| {
                     cx.notify();
-                },
-            ));
+                }));
             if self.history.has_more {
                 let offset = (-f32::from(self.history_scroll.offset().y)).max(0.0);
                 let max = f32::from(self.history_scroll.max_offset().height);
@@ -439,10 +421,12 @@ impl crate::App {
                 }),
         );
 
-        // Body.
+        // Body. min_w(0) lets long titles, captions, and error lines
+        // truncate with ellipsis instead of pushing the row sideways.
         top = top.child(
             div()
                 .flex_1()
+                .min_w(px(0.0))
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
@@ -525,12 +509,35 @@ impl crate::App {
                 .child(if error_text.is_empty() {
                     div()
                 } else {
+                    // Raw failure logs can be dozens of lines (ffmpeg dumps
+                    // its whole probe). The fixed-height row only ever shows
+                    // the first line; the full log is one click away in
+                    // More actions → Copy error details.
+                    let (first_line, extra_lines) = error_summary(&error_text);
                     div()
                         .w_full()
-                        .child(error_text)
-                        .text_size(px(12.0))
-                        .text_color(theme.error)
-                        .text_ellipsis()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .w_full()
+                                .child(first_line.to_string())
+                                .text_size(px(12.0))
+                                .text_color(theme.error)
+                                .text_ellipsis(),
+                        )
+                        .child(if extra_lines == 0 {
+                            div()
+                        } else {
+                            div()
+                                .child(format!(
+                                    "+{extra_lines} more lines — full log in More actions"
+                                ))
+                                .text_size(px(11.0))
+                                .text_color(theme.muted)
+                                .text_ellipsis()
+                        })
                 }),
         );
 
@@ -718,7 +725,9 @@ fn pretty_date(iso: &str) -> String {
 
 #[cfg(test)]
 mod history_tests {
-    use super::{post_delivered, post_needs_attention, pretty_date, HistoryStatusFilter};
+    use super::{
+        error_summary, post_delivered, post_needs_attention, pretty_date, HistoryStatusFilter,
+    };
     use cliprelay_core::db::PostRow;
 
     fn post_with(telegram: &str, x: &str, error: &str) -> PostRow {
@@ -793,5 +802,15 @@ mod history_tests {
         assert!(post_needs_attention(&errored));
         assert!(!post_delivered(&errored));
         assert!(HistoryStatusFilter::NeedsAttention.matches(&errored));
+    }
+
+    #[test]
+    fn error_summary_collapses_multiline_logs() {
+        assert_eq!(error_summary(""), ("", 0));
+        assert_eq!(error_summary("boom"), ("boom", 0));
+        // Blank lines carry no information and are skipped.
+        assert_eq!(error_summary("\n  \nboom\n\nbam\n"), ("boom", 1));
+        let ffmpeg = "Input #0, mov,mp4:\n  Metadata:\n    major_brand: isom\nError out of range";
+        assert_eq!(error_summary(ffmpeg), ("Input #0, mov,mp4:", 3));
     }
 }

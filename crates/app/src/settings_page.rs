@@ -932,6 +932,64 @@ impl crate::App {
         content = content.child(center_row(inner));
         let _ = &mut page;
         page = page.child(content);
+        // Persistent filter status: a selected section or search query can
+        // hide Diagnostics and friends below the fold, so the stranded state
+        // must always name itself and offer the way out.
+        if self.settings_page.active_section.is_some() || !query_display.is_empty() {
+            let scope = match self.settings_page.active_section.as_deref() {
+                Some("interface") => "the Interface section",
+                Some("performance") => "the Performance section",
+                Some("files") => "the Files section",
+                Some("telegram") => "the Telegram section",
+                Some("x") => "the X Handoff section",
+                Some("diagnostics") => "the Diagnostics section",
+                _ => "matching sections",
+            };
+            let status = if query_display.is_empty() {
+                format!("Showing {scope}")
+            } else if self.settings_page.active_section.is_some() {
+                format!("Showing {scope} matching “{query_display}”")
+            } else {
+                format!("Showing sections matching “{query_display}”")
+            };
+            page = page.child(
+                div()
+                    .w_full()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .px(px(gutter))
+                    .py(px(8.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(status)
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    )
+                    .child(button(
+                        "settings-show-all",
+                        "Show all",
+                        ButtonKind::Ghost,
+                        None,
+                        true,
+                        cx,
+                        |app, cx| {
+                            if let Some(field) = app.fields.get_mut("settings-search") {
+                                field.text.clear();
+                                field.caret = 0;
+                            }
+                            app.settings_page.active_section = None;
+                            cx.notify();
+                        },
+                    )),
+            );
+        }
         page
     }
 
