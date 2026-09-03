@@ -137,7 +137,7 @@ capture_case() {
     elif [[ "${case_name}" == "workflow-shell" ]]; then
         target_width=1672
         target_height=945
-    elif [[ "${case_name}" == "settings" ]]; then
+    elif [[ "${case_name}" == "settings" || "${case_name}" == "settings-combo" ]]; then
         target_width=1895
         target_height=1148
     fi
@@ -191,6 +191,7 @@ capture_case() {
         || "${case_name}" == "random-sources-compact" \
         || "${case_name}" == "random-sources-empty" \
         || "${case_name}" == "settings" \
+        || "${case_name}" == "settings-combo" \
         || "${case_name}" == "studio-shell" ]] \
         && (( width != target_width || height != target_height )); then
         stop_app
@@ -491,6 +492,7 @@ run_suite() {
 
     if [[ "${GUI_TEST_ONLY_SETTINGS:-0}" == "1" ]]; then
         capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
+        capture_case settings-combo CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 CLIPRELAY_SETTINGS_OPEN_COMBO=scale-select || return 1
         return 0
     fi
 

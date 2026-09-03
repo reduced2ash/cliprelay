@@ -376,6 +376,8 @@ impl App {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
+        let settings_combo_boot: Option<String> =
+            std::env::var("CLIPRELAY_SETTINGS_OPEN_COMBO").ok();
         let global_shortcut_subscription = cx.observe_keystrokes(|app, event, window, cx| {
             app.on_unhandled_keystroke(event, window, cx)
         });
@@ -672,7 +674,11 @@ impl App {
         }
 
         let open_command_at_boot_2 = open_command_at_boot && !query_at_boot.is_empty();
-        if initial_page != Page::Library || settings_scroll_boot > 0.0 || open_command_at_boot_2 {
+        if initial_page != Page::Library
+            || settings_scroll_boot > 0.0
+            || settings_combo_boot.is_some()
+            || open_command_at_boot_2
+        {
             let settings_scroll = app.settings_scroll.clone();
             cx.spawn(
                 async move |this: WeakEntity<crate::App>, cx: &mut AsyncApp| {
@@ -710,6 +716,18 @@ impl App {
                         // Offset is negative for downward scroll (distance from
                         // the container top to the content top).
                         settings_scroll.set_offset(point(px(0.0), px(-settings_scroll_boot)));
+                    }
+                    if let Some(combo_id) = settings_combo_boot {
+                        if let Some(this) = this.upgrade() {
+                            this.update(
+                                cx,
+                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                    app.open_combos.insert(combo_id);
+                                    _cx.notify();
+                                },
+                            )
+                            .ok();
+                        }
                     }
                 },
             )

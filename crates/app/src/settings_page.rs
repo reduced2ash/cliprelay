@@ -65,10 +65,7 @@ impl crate::App {
         let search_field = if narrow {
             search_field.w_full()
         } else {
-            search_field
-                .w(px(300.0))
-                .flex_none()
-                .flex_basis(px(300.0))
+            search_field.w(px(300.0)).flex_none().flex_basis(px(300.0))
         };
         let mut header_row = div()
             .w_full()
@@ -1721,65 +1718,72 @@ fn combo(
                 .text_color(theme.text),
         )
         .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted));
-    if !open {
-        return trigger;
-    }
-    let mut menu = div()
-        .id(id)
-        .w(px(width))
-        .rounded(px(MENU_RADIUS))
-        .bg(theme.surface_soft)
-        .border_1()
-        .border_color(theme.border_strong)
-        .py(px(4.0))
-        .flex()
-        .flex_col();
-    for (index, option) in options.iter().enumerate() {
-        let option = *option;
-        let on_change = std::sync::Arc::clone(&on_change);
-        menu = menu.child(
-            div()
-                .id(SharedString::from(format!("{id}-item-{index}")))
-                .h(px(40.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .cursor_pointer()
-                .bg(if index == selected {
-                    theme.active
-                } else {
-                    theme.transparent()
-                })
-                .child(
-                    div()
-                        .w(px(13.0))
-                        .child(if index == selected { "✓" } else { "" })
-                        .text_size(px(13.0))
-                        .text_color(theme.accent_text),
-                )
-                .child(
-                    div()
-                        .child(option)
-                        .text_size(px(13.0))
-                        .text_color(if index == selected {
-                            theme.text
-                        } else {
-                            theme.text_soft
-                        })
-                        .font_weight(if index == selected {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::MEDIUM
-                        }),
-                )
-                .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.close_combo(id, cx);
-                    on_change(app, cx, index);
-                })),
-        );
-    }
-    menu
+    // The trigger always owns the row's layout slot; the open menu floats
+    // above the page so it never pushes surrounding content around.
+    let popup = open.then(|| {
+        let mut menu = div()
+            .id(id)
+            .w(px(width))
+            .rounded(px(MENU_RADIUS))
+            .bg(theme.surface_soft)
+            .border_1()
+            .border_color(theme.border_strong)
+            .py(px(4.0))
+            .flex()
+            .flex_col();
+        for (index, option) in options.iter().enumerate() {
+            let option = *option;
+            let on_change = std::sync::Arc::clone(&on_change);
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(format!("{id}-item-{index}")))
+                    .h(px(40.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .bg(if index == selected {
+                        theme.active
+                    } else {
+                        theme.transparent()
+                    })
+                    .child(
+                        div()
+                            .w(px(13.0))
+                            .child(if index == selected { "✓" } else { "" })
+                            .text_size(px(13.0))
+                            .text_color(theme.accent_text),
+                    )
+                    .child(
+                        div()
+                            .child(option)
+                            .text_size(px(13.0))
+                            .text_color(if index == selected {
+                                theme.text
+                            } else {
+                                theme.text_soft
+                            })
+                            .font_weight(if index == selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::MEDIUM
+                            }),
+                    )
+                    .on_click(cx.listener(move |app, _event, _window, cx| {
+                        app.close_combo(id, cx);
+                        on_change(app, cx, index);
+                    })),
+            );
+        }
+        menu
+    });
+    anchored_overlay(
+        trigger,
+        popup,
+        OverlayPlacement::BelowStart,
+        size(px(width), px(CONTROL_HEIGHT)),
+    )
 }
 
 fn chat_picker(
