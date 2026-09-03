@@ -1286,9 +1286,12 @@ fn rail_status(app: &crate::App, id: &str) -> String {
     }
 }
 
-/// The section rail: six big rows, each naming its section and its live
-/// state. Replaces the old filter chips; the rail is navigation, so it
-/// never hides content the way a filter does.
+/// The section rail: six icon-led rows, each naming its section and its
+/// live state. The rail is navigation, so it never hides content the way a
+/// filter does. Each row pairs a 32px icon tile drawn for its section with
+/// the section name and status; selection uses the shared tactile
+/// selection face, edge, and shadow so the rail matches theme cards and
+/// stays legible across opaque and glass themes.
 fn section_rail(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
@@ -1310,22 +1313,34 @@ fn section_rail(
             .border_color(theme.border);
     } else {
         rail = rail
-            .w(px(232.0))
+            .w(px(248.0))
             .flex_none()
             .flex_col()
             .py(px(8.0))
             .pl(px(12.0))
-            .pr(px(20.0))
+            .pr(px(16.0))
             .border_r_1()
             .border_color(theme.border);
     }
-    for (id, label) in [
-        ("interface", "Interface"),
-        ("performance", "Performance"),
-        ("files", "Files"),
-        ("telegram", "Telegram"),
-        ("x", "X handoff"),
-        ("diagnostics", "Diagnostics"),
+    if !stacked {
+        rail = rail.child(
+            div()
+                .px(px(12.0))
+                .pt(px(4.0))
+                .pb(px(6.0))
+                .child(tracked("SECTIONS"))
+                .text_size(px(11.0))
+                .text_color(theme.muted)
+                .font_weight(FontWeight::SEMIBOLD),
+        );
+    }
+    for (id, label, glyph) in [
+        ("interface", "Interface", "settings-interface"),
+        ("performance", "Performance", "settings-performance"),
+        ("files", "Files", "settings-files"),
+        ("telegram", "Telegram", "settings-telegram"),
+        ("x", "X handoff", "settings-x"),
+        ("diagnostics", "Diagnostics", "settings-diagnostics"),
     ] {
         let selected = active == id;
         let status = rail_status(app, id);
@@ -1333,39 +1348,106 @@ fn section_rail(
         let click_id = id.clone();
         let activate_id = id.clone();
         let space_id = id;
+        // The tile carries the section color: an accent-tinted tile on the
+        // selected row, a quiet raised tile otherwise. The row itself keeps
+        // the workbench near-square geometry and tactile selection.
+        let tile = div()
+            .w(px(32.0))
+            .h(px(32.0))
+            .flex_none()
+            .rounded(px(RADIUS_MD))
+            .bg(if selected {
+                theme.accent_soft
+            } else {
+                theme.raised
+            })
+            .border_1()
+            .border_color(if selected {
+                theme.tactile_edge(TactileState::Rest, true)
+            } else {
+                theme.border
+            })
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icon(
+                glyph,
+                16.0,
+                if selected {
+                    theme.accent_text
+                } else {
+                    theme.muted
+                },
+            ));
         let mut row = div()
             .id(SharedString::from(format!("settings-rail-{click_id}")))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(RADIUS_SM))
+            .px(px(8.0))
+            .py(px(8.0))
+            .rounded(px(RADIUS_MD))
             .flex()
-            .flex_col()
-            .gap(px(2.0))
+            .flex_row()
+            .items_center()
+            .gap(px(12.0))
             .bg(if selected {
-                theme.active
+                theme.selection_face(TactileState::Rest, true)
+            } else {
+                theme.transparent().into()
+            })
+            .border_1()
+            .border_color(if selected {
+                theme.tactile_edge(TactileState::Rest, true)
             } else {
                 theme.transparent()
             })
-            .hover(|style| style.bg(if selected { theme.active } else { theme.hover }))
+            .shadow(if selected {
+                theme.tactile_shadow(TactileState::Rest, true)
+            } else {
+                Vec::new()
+            })
+            .hover(|style| {
+                style
+                    .bg(if selected {
+                        theme.selection_face(TactileState::Hover, true)
+                    } else {
+                        theme.control_face(TactileState::Hover)
+                    })
+                    .border_color(theme.tactile_edge(TactileState::Hover, selected))
+            })
+            .active(|style| {
+                style
+                    .bg(theme.selection_face(TactileState::Pressed, selected))
+                    .border_color(theme.tactile_edge(TactileState::Pressed, selected))
+            })
+            .focus(|style| style.border_color(theme.accent))
             .cursor_pointer()
             .tab_index(0)
+            .child(tile)
             .child(
                 div()
-                    .child(label.to_string())
-                    .text_size(px(15.0))
-                    .text_color(if selected {
-                        theme.accent_text
-                    } else {
-                        theme.text_soft
-                    })
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(
-                div()
-                    .child(status)
-                    .text_size(px(12.0))
-                    .text_color(theme.muted)
-                    .text_ellipsis(),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .child(label.to_string())
+                            .text_size(px(14.0))
+                            .text_color(if selected {
+                                theme.accent_text
+                            } else {
+                                theme.text_soft
+                            })
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_ellipsis(),
+                    )
+                    .child(
+                        div()
+                            .child(status)
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .text_ellipsis(),
+                    ),
             )
             .on_click(cx.listener(move |app, _event, _window, cx| {
                 app.settings_page.active_section = Some(click_id.clone());
@@ -1382,7 +1464,7 @@ fn section_rail(
                 }),
             );
         if stacked {
-            row = row.flex_1().min_w(px(150.0));
+            row = row.flex_1().min_w(px(170.0));
         } else {
             row = row.w_full();
         }

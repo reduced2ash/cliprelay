@@ -59,6 +59,30 @@ impl AssetSource for ClipRelayAssets {
             "icons/ellipsis.svg" => Some(icon_svg!(
                 r#"<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>"#
             )),
+            // Settings rail set: drawn for the six settings sections in the
+            // same 24-grid, 1.8-weight round-cap language as the shell icons.
+            // Each pairs a familiar container with one section-specific
+            // detail (slider knobs, gauge needle, index lines, plane-in-
+            // bubble, composer arrow, chip pulse) so the rail reads as one
+            // family without reusing a generic glyph.
+            "icons/sliders.svg" => Some(icon_svg!(
+                r#"<path d="M4 7h2.4M11.6 7H20"/><circle cx="9" cy="7" r="2.2"/><path d="M4 12h8.4M17.6 12H20"/><circle cx="15" cy="12" r="2.2"/><path d="M4 17h1.4M10.6 17H20"/><circle cx="8" cy="17" r="2.2"/>"#
+            )),
+            "icons/gauge.svg" => Some(icon_svg!(
+                r#"<path d="M4.5 19a7.5 7.5 0 0 1 15 0"/><path d="M12 8.8v1.6"/><path d="M12 17 15.8 12.4"/><circle cx="12" cy="17" r="1.2" fill="currentColor" stroke="none"/>"#
+            )),
+            "icons/folder-index.svg" => Some(icon_svg!(
+                r#"<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M7 12.5h10"/><path d="M7 15.5h6"/>"#
+            )),
+            "icons/chat-plane.svg" => Some(icon_svg!(
+                r#"<path d="M6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H9.5L4 20.5v-15A2.5 2.5 0 0 1 6.5 3z"/><path d="M15.5 7.5 8 11.5l3.2.6 1 2.4z"/><path d="M15.5 7.5 11.2 12.1"/>"#
+            )),
+            "icons/composer-export.svg" => Some(icon_svg!(
+                r#"<rect x="3.5" y="4.5" width="17" height="13" rx="2"/><path d="M3.5 9h17"/><path d="M12 16v-4.5"/><path d="m9.8 13.2 2.2-2.2 2.2 2.2"/>"#
+            )),
+            "icons/chip-pulse.svg" => Some(icon_svg!(
+                r#"<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9.5 3.5V7M14.5 3.5V7M9.5 17v3.5M14.5 17v3.5M3.5 9.5H7M3.5 14.5H7M17 9.5h3.5M17 14.5h3.5"/><path d="M9.3 12h1.7l1-1.8 1.8 3.6 1-1.8h1"/>"#
+            )),
             "icons/external-link.svg" => Some(icon_svg!(
                 r#"<path d="M15 3h6v6"/><path d="m10 14 11-11"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>"#
             )),
@@ -168,6 +192,12 @@ pub fn icon_path(name: &str) -> Option<&'static str> {
         "delivery-info" => "icons/delivery-info.svg",
         "edit" => "icons/pencil.svg",
         "ellipsis" | "⋯" => "icons/ellipsis.svg",
+        "settings-interface" | "sliders" => "icons/sliders.svg",
+        "settings-performance" | "gauge" => "icons/gauge.svg",
+        "settings-files" | "folder-index" => "icons/folder-index.svg",
+        "settings-telegram" | "chat-plane" => "icons/chat-plane.svg",
+        "settings-x" | "composer-export" => "icons/composer-export.svg",
+        "settings-diagnostics" | "chip-pulse" => "icons/chip-pulse.svg",
         "expand" => "icons/expand-horizontal.svg",
         "expand-horizontal" => "icons/expand-horizontal.svg",
         "external" => "icons/external-link.svg",
@@ -203,4 +233,33 @@ pub fn icon_path(name: &str) -> Option<&'static str> {
         "x" | "close" | "✕" | "×" => "icons/x.svg",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The settings rail renders glyph names through [`icon`], which falls
+    /// back to raw text when a name has no mapping. A mistyped key would
+    /// silently degrade, so pin the six rail names to non-empty assets.
+    #[test]
+    fn settings_rail_icons_resolve_and_load() {
+        let assets = ClipRelayAssets;
+        for name in [
+            "settings-interface",
+            "settings-performance",
+            "settings-files",
+            "settings-telegram",
+            "settings-x",
+            "settings-diagnostics",
+        ] {
+            let path =
+                icon_path(name).unwrap_or_else(|| panic!("missing icon mapping for {name}"));
+            let bytes = assets
+                .load(path)
+                .expect("asset load failed")
+                .unwrap_or_else(|| panic!("missing asset bytes for {path}"));
+            assert!(!bytes.is_empty(), "empty asset bytes for {path}");
+        }
+    }
 }
