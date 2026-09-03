@@ -543,6 +543,26 @@ pub fn parse_hex_color(text: &str) -> Option<(f32, f32, f32)> {
     }
 }
 
+/// Curated swatches offered by the theme color picker. Every entry is
+/// uppercase `#RRGGBB` (see [`normalize_hex_color`]), so the picker can
+/// commit a preset through the same path as typed hex.
+pub const THEME_PRESETS: [&str; 14] = [
+    "#FF7152", // Relay coral
+    "#F2C94C", // Amber
+    "#E5A13D", // Honey
+    "#4CC38A", // Leaf
+    "#46C8C8", // Teal
+    "#4C8DFF", // Sky
+    "#9E8CFF", // Iris
+    "#FF7EB6", // Rose
+    "#E5484D", // Ember
+    "#F5F0E6", // Paper
+    "#8A93A6", // Fog
+    "#2B2E3A", // Slate
+    "#14151B", // Coal
+    "#0D0E13", // Void
+];
+
 /// Media area colors are theme-independent.
 pub const MEDIA_WELL: &str = "#050509";
 pub const MEDIA_TEXT: &str = "#F4F7FB";
@@ -1257,6 +1277,17 @@ mod tests {
         assert!(parse_hex_color("not a color").is_none());
         assert!(parse_hex_color("#12345").is_none());
         assert!(parse_hex_color("").is_none());
+    }
+
+    #[test]
+    fn theme_presets_are_committable_hex_colors() {
+        assert_eq!(THEME_PRESETS.len(), 14);
+        for preset in THEME_PRESETS {
+            // The picker commits presets through `normalize_hex_color`, so a
+            // typo here would silently reject the swatch at runtime.
+            assert_eq!(normalize_hex_color(preset).as_deref(), Some(preset));
+            assert!(parse_hex_color(preset).is_some());
+        }
     }
 
     #[test]

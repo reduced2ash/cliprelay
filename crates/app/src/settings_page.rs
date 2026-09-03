@@ -8,6 +8,7 @@ use crate::widgets::*;
 use gpui::*;
 use serde_json::json;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Default)]
 pub struct SettingsUiState {
@@ -24,6 +25,11 @@ pub struct SettingsUiState {
     pub theme_error: Option<String>,
     /// Whether the editor shows every color role (`false` shows basics).
     pub advanced_colors: bool,
+    /// Role key whose color picker panel is open (`None` closes it).
+    pub color_picker_role: Option<String>,
+    /// Hover-to-paint stays off until this instant: scrolling slides cells
+    /// under a resting cursor, and those enters must not commit colors.
+    pub picker_hover_pause_until: Option<Instant>,
 }
 
 /// Pretty labels for [`BUILTIN_THEME_MODES`], used by the rebase picker.
@@ -162,6 +168,11 @@ impl crate::App {
                 "overrides",
                 "based",
                 "hex",
+                "picker",
+                "hue",
+                "saturation",
+                "preset",
+                "presets",
             ],
         ) {
             let mut group = seamed_group(&theme);
@@ -1060,6 +1071,9 @@ impl crate::App {
                     .overflow_scroll()
                     .scrollbar_width(px(10.0))
                     .track_scroll(&self.settings_scroll)
+                    .on_scroll_wheel(cx.listener(|app, _event, _window, _cx| {
+                        app.pause_picker_hover();
+                    }))
                     .child(
                         div()
                             .w_full()
@@ -1088,6 +1102,9 @@ impl crate::App {
                         .overflow_scroll()
                         .scrollbar_width(px(10.0))
                         .track_scroll(&self.settings_scroll)
+                        .on_scroll_wheel(cx.listener(|app, _event, _window, _cx| {
+                            app.pause_picker_hover();
+                        }))
                         .child(
                             div()
                                 .w_full()
@@ -1363,20 +1380,39 @@ impl crate::App {
     /// color and explains itself under the editor instead of corrupting
     /// anything. Editing a built-in forks a personal copy first — customs
     /// edit in place — so the editor never needs an explicit duplicate step.
-    pub fn commit_active_theme_hex(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
-        let Some(role_key) = field_id.strip_prefix("theme-hex-") else {
-            return;
-        };
+    /// Scrolling slides picker cells under a resting cursor; those hover
+    /// enters must not paint, so the wheel pauses hover-to-paint briefly.
+    pub fn pause_picker_hover(&mut self) {
+        self.settings_page.picker_hover_pause_until =
+            Some(Instant::now() + Duration::from_millis(350));
+    }
+
+    /// Hover-to-paint is live only while no scroll is settling.
+    pub fn picker_hover_live(&self) -> bool {
+        !matches!(
+            self.settings_page.picker_hover_pause_until,
+            Some(until) if Instant::now() < until
+        )
+    }
+
+    /// Validate one hex color and apply it to the active custom theme,
+    /// forking built-ins on first touch. `false` means invalid input (the
+    /// rejection is recorded under the color editor).
+    pub fn set_active_role_hex(
+        &mut self,
+        role_key: &str,
+        hex: &str,
+        cx: &mut Context<crate::App>,
+    ) -> bool {
         if THEME_ROLES.iter().all(|role| role.key != role_key) {
-            return;
+            return false;
         }
-        let text = self.field_text(field_id);
-        let Some(hex) = normalize_hex_color(&text) else {
+        let Some(normalized) = normalize_hex_color(hex) else {
             self.settings_page.theme_error = Some(format!(
                 "“{}” is not a hex color — use #RRGGBB.",
-                text.trim()
+                hex.trim()
             ));
-            return;
+            return false;
         };
         if !matches!(self.theme_mode, ThemeMode::Custom(_)) {
             let base = self.theme_mode.as_str().to_string();
@@ -1388,13 +1424,24 @@ impl crate::App {
             );
         }
         let ThemeMode::Custom(active_id) = self.theme_mode.clone() else {
+            return false;
+        };
+        let role_key = role_key.to_string();
+        self.update_custom_theme(&active_id, cx, |theme| {
+            theme.colors.insert(role_key, normalized);
+        });
+        true
+    }
+
+    pub fn commit_active_theme_hex(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
+        let Some(role_key) = field_id.strip_prefix("theme-hex-") else {
             return;
         };
         let role_key = role_key.to_string();
-        self.fields.remove(field_id);
-        self.update_custom_theme(&active_id, cx, |theme| {
-            theme.colors.insert(role_key, hex);
-        });
+        let text = self.field_text(field_id);
+        if self.set_active_role_hex(&role_key, &text, cx) {
+            self.fields.remove(field_id);
+        }
     }
 }
 
@@ -2001,6 +2048,9 @@ fn theme_color_editor(
                 role,
                 &empty_field,
             ));
+            if app.settings_page.color_picker_role.as_deref() == Some(role.key) {
+                group = group.child(theme_picker_panel(cx, theme, role, &resolved));
+            }
         }
     }
     let advanced_open = app.settings_page.advanced_colors;
@@ -2071,10 +2121,230 @@ fn theme_color_editor(
                     role,
                     &empty_field,
                 ));
+                if app.settings_page.color_picker_role.as_deref() == Some(role.key) {
+                    group = group.child(theme_picker_panel(cx, theme, role, &resolved));
+                }
             }
         }
     }
     group
+}
+
+/// Picker geometry: a fixed 192px saturation/lightness square (24 x 24
+/// paintable cells) plus a 48-segment hue strip, so the knob math needs no
+/// layout reads.
+const PICKER_SV: f32 = 192.0;
+const SV_CELLS: usize = 24;
+const SV_CELL: f32 = 8.0;
+const HUE_SEGS: usize = 48;
+const HUE_SEG_W: f32 = 6.0;
+
+/// Pop-open color picker for one theme role: a saturation/lightness square
+/// at the role's hue, a hue strip, and curated presets. Hovering a cell
+/// paints it live through [`crate::App::set_active_role_hex`] — the same
+/// path as the hex field, so built-ins fork on first touch — and click
+/// covers taps; scrolling briefly pauses hover painting (see
+/// [`crate::App::pause_picker_hover`]).
+fn theme_picker_panel(
+    cx: &mut Context<crate::App>,
+    theme: &crate::theme::Theme,
+    role: &ThemeRole,
+    resolved: &Theme,
+) -> Div {
+    let current = (role.get)(resolved);
+    let role_key = role.key.to_string();
+    let live_hex = hsla_to_hex(current);
+
+    let mut square = div().flex().flex_col().flex_none();
+    for row in 0..SV_CELLS {
+        let mut line = div().flex().flex_row().flex_none();
+        for col in 0..SV_CELLS {
+            let cell = Hsla {
+                h: current.h,
+                s: (col as f32 + 0.5) / SV_CELLS as f32,
+                l: 1.0 - (row as f32 + 0.5) / SV_CELLS as f32,
+                a: 1.0,
+            };
+            let hex = hsla_to_hex(cell);
+            let hover_key = role_key.clone();
+            let hover_hex = hex.clone();
+            let tap_key = role_key.clone();
+            line = line.child(
+                div()
+                    .id(ElementId::Name(format!("theme-sv-{row}-{col}").into()))
+                    .w(px(SV_CELL))
+                    .h(px(SV_CELL))
+                    .flex_none()
+                    .bg(Rgba::from(cell))
+                    .on_hover(cx.listener(move |app, &hovered, _window, cx| {
+                        if hovered && app.picker_hover_live() {
+                            app.set_active_role_hex(&hover_key, &hover_hex, cx);
+                        }
+                    }))
+                    .on_click(cx.listener(move |app, _: &ClickEvent, _window, cx| {
+                        app.set_active_role_hex(&tap_key, &hex, cx);
+                    })),
+            );
+        }
+        square = square.child(line);
+    }
+    let square = div()
+        .relative()
+        .flex_none()
+        .w(px(PICKER_SV))
+        .h(px(PICKER_SV))
+        .border_1()
+        .border_color(theme.border)
+        .child(square)
+        .child(
+            div()
+                .absolute()
+                .left(px(current.s * PICKER_SV - 7.0))
+                .top(px((1.0 - current.l) * PICKER_SV - 7.0))
+                .w(px(14.0))
+                .h(px(14.0))
+                .rounded(px(7.0))
+                .border_2()
+                .border_color(white())
+                .bg(theme.transparent()),
+        );
+
+    // The strip shows the full rainbow; painting keeps the role's current
+    // saturation and lightness so sliding hue never washes the color out.
+    let active_seg = (current.h * HUE_SEGS as f32).floor() as usize;
+    let mut strip = div().flex().flex_row().items_center().flex_none();
+    for seg in 0..HUE_SEGS {
+        let hue = seg as f32 / HUE_SEGS as f32;
+        let commit_hex = hsla_to_hex(Hsla {
+            h: hue,
+            s: current.s,
+            l: current.l,
+            a: 1.0,
+        });
+        let hover_key = role_key.clone();
+        let hover_hex = commit_hex.clone();
+        let tap_key = role_key.clone();
+        let mut cell = div()
+            .id(ElementId::Name(format!("theme-hue-{seg}").into()))
+            .w(px(HUE_SEG_W))
+            .flex_none()
+            .bg(Rgba::from(Hsla {
+                h: hue,
+                s: 1.0,
+                l: 0.5,
+                a: 1.0,
+            }))
+            .on_hover(cx.listener(move |app, &hovered, _window, cx| {
+                if hovered && app.picker_hover_live() {
+                    app.set_active_role_hex(&hover_key, &hover_hex, cx);
+                }
+            }))
+            .on_click(cx.listener(move |app, _: &ClickEvent, _window, cx| {
+                app.set_active_role_hex(&tap_key, &commit_hex, cx);
+            }));
+        if seg == active_seg {
+            cell = cell.h(px(24.0)).border_1().border_color(white());
+        } else {
+            cell = cell.h(px(16.0));
+        }
+        strip = strip.child(cell);
+    }
+    let strip = div()
+        .flex_none()
+        .w(px(HUE_SEG_W * HUE_SEGS as f32))
+        .border_1()
+        .border_color(theme.border)
+        .child(strip);
+
+    let mut presets = div().flex().flex_row().flex_wrap().gap(px(6.0));
+    for preset in THEME_PRESETS {
+        let paint_key = role_key.clone();
+        let tap_key = role_key.clone();
+        // Display through the same hex parse the commit path uses, so the
+        // swatch matches the stored color exactly.
+        let swatch = parse_hex_color(preset)
+            .map(|(r, g, b)| Hsla::from(Rgba { r, g, b, a: 1.0 }))
+            .unwrap_or(theme.text);
+        let mut cell = div()
+            .id(ElementId::Name(format!("theme-preset-{preset}").into()))
+            .w(px(26.0))
+            .h(px(26.0))
+            .flex_none()
+            .rounded(px(RADIUS_SM))
+            .bg(swatch)
+            .cursor_pointer()
+            .tab_index(0)
+            .on_click(cx.listener(move |app, _: &ClickEvent, _window, cx| {
+                app.set_active_role_hex(&paint_key, preset, cx);
+            }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                app.set_active_role_hex(&tap_key, preset, cx);
+            }));
+        if live_hex == preset {
+            cell = cell.border_2().border_color(theme.accent);
+        } else {
+            cell = cell.border_1().border_color(theme.border);
+        }
+        presets = presets.child(cell);
+    }
+
+    let done = button(
+        "theme-picker-done",
+        "Done",
+        ButtonKind::Ghost,
+        None,
+        true,
+        cx,
+        |app, cx| {
+            app.settings_page.color_picker_role = None;
+            cx.notify();
+        },
+    );
+    div().w_full().child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .bg(theme.raised)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(px(RADIUS_MD))
+            .p(px(12.0))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(format!("{} · {}", role.label, live_hex))
+                            .text_size(px(12.0))
+                            .text_color(theme.muted),
+                    )
+                    .child(done),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .gap(px(12.0))
+                    .child(square)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .flex_col()
+                            .gap(px(10.0))
+                            .min_w(px(0.0))
+                            .child(strip)
+                            .child(presets),
+                    ),
+            ),
+    )
 }
 
 /// One editable color: override dot, live swatch, label, hex field, reset.
@@ -2093,6 +2363,9 @@ fn theme_role_row(
     let reset_id = custom.id.clone();
     let reset_role = role.key.to_string();
     let reset_field = field_id.clone();
+    let picker_open = app.settings_page.color_picker_role.as_deref() == Some(role.key);
+    let toggle_key = role.key.to_string();
+    let toggle_key_action = role.key.to_string();
     div()
         .w_full()
         .flex()
@@ -2112,14 +2385,40 @@ fn theme_role_row(
                 }),
         )
         .child(
+            // The swatch doubles as the picker toggle: click (or Enter on
+            // keyboard focus) opens the panel below this row.
             div()
+                .id(ElementId::Name(format!("theme-swatch-{}", role.key).into()))
                 .w(px(24.0))
                 .h(px(24.0))
                 .flex_none()
                 .rounded(px(RADIUS_SM))
                 .bg((role.get)(resolved))
                 .border_1()
-                .border_color(theme.border),
+                .border_color(if picker_open {
+                    theme.accent
+                } else {
+                    theme.border
+                })
+                .cursor_pointer()
+                .tab_index(0)
+                .on_click(cx.listener(move |app, _: &ClickEvent, _window, cx| {
+                    let open =
+                        app.settings_page.color_picker_role.as_deref() == Some(toggle_key.as_str());
+                    app.settings_page.color_picker_role =
+                        if open { None } else { Some(toggle_key.clone()) };
+                    cx.notify();
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    let open = app.settings_page.color_picker_role.as_deref()
+                        == Some(toggle_key_action.as_str());
+                    app.settings_page.color_picker_role = if open {
+                        None
+                    } else {
+                        Some(toggle_key_action.clone())
+                    };
+                    cx.notify();
+                })),
         )
         .child(
             div()
