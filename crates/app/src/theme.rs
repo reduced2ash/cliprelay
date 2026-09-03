@@ -1,7 +1,8 @@
 //! Theme palettes for Relay, Pitch Black, Full White, and glass materials.
 #![allow(dead_code)]
 
-use gpui::{linear_color_stop, linear_gradient, point, px, Background, BoxShadow, Hsla};
+use gpui::{linear_color_stop, linear_gradient, point, px, Background, BoxShadow, Hsla, Rgba};
+use std::collections::HashMap;
 
 fn color(hex: &str) -> Hsla {
     Hsla::from(hex_to_rgba(hex))
@@ -16,13 +17,20 @@ fn hex_to_rgba(hex: &str) -> gpui::Rgba {
     gpui::Rgba { r, g, b, a: 1.0 }
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+/// Selector prefix persisted in the `theme_mode` setting for user themes
+/// (e.g. `"custom:custom-2"`). The id after the prefix keys into the
+/// `custom_themes` setting.
+pub const CUSTOM_THEME_PREFIX: &str = "custom:";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThemeMode {
     Relay,
     PitchBlack,
     FullWhite,
     FrostedGlass,
     GraphiteGlass,
+    /// A user-created theme; the payload is the custom theme id.
+    Custom(String),
 }
 
 /// Physical state for the app's deliberately shallow interactive surfaces.
@@ -42,18 +50,483 @@ impl ThemeMode {
             "full_white" => Self::FullWhite,
             "frosted_glass" => Self::FrostedGlass,
             "graphite_glass" => Self::GraphiteGlass,
+            _ if value.starts_with(CUSTOM_THEME_PREFIX) => {
+                Self::Custom(value[CUSTOM_THEME_PREFIX.len()..].to_string())
+            }
             _ => Self::Relay,
         }
     }
 
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Relay => "relay",
             Self::PitchBlack => "pitch_black",
             Self::FullWhite => "full_white",
             Self::FrostedGlass => "frosted_glass",
             Self::GraphiteGlass => "graphite_glass",
+            Self::Custom(id) => id.as_str(),
         }
+    }
+
+    /// Persisted selector for the `theme_mode` setting (`"custom:<id>"` for
+    /// user themes, the plain mode id otherwise).
+    pub fn selection_key(&self) -> String {
+        match self {
+            Self::Custom(id) => format!("{CUSTOM_THEME_PREFIX}{id}"),
+            _ => self.as_str().to_string(),
+        }
+    }
+
+    /// Display label for the built-in modes, in rail order.
+    pub fn builtin_label(mode: &str) -> &'static str {
+        match mode {
+            "pitch_black" => "Pitch black",
+            "full_white" => "Full white",
+            "frosted_glass" => "Frosted glass",
+            "graphite_glass" => "Graphite glass",
+            _ => "Relay",
+        }
+    }
+}
+
+/// Built-in mode ids in rail order, for pickers and duplication flows.
+pub const BUILTIN_THEME_MODES: [&str; 5] = [
+    "relay",
+    "pitch_black",
+    "full_white",
+    "frosted_glass",
+    "graphite_glass",
+];
+
+/// A user-created theme: a built-in base palette plus a sparse set of
+/// `role -> #RRGGBB` overrides. Overrides carry RGB only; the base color's
+/// alpha is preserved on apply so glass bases stay translucent after edits.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub base: String,
+    #[serde(default)]
+    pub colors: HashMap<String, String>,
+}
+
+impl CustomTheme {
+    pub fn base_theme(&self) -> Theme {
+        Theme::for_mode(ThemeMode::parse(&self.base))
+    }
+
+    /// The fully resolved palette: base plus overrides.
+    pub fn resolve(&self) -> Theme {
+        let mut theme = self.base_theme();
+        for (key, hex) in &self.colors {
+            let Some(role) = THEME_ROLES.iter().find(|role| role.key == key.as_str()) else {
+                continue;
+            };
+            let Some((r, g, b)) = parse_hex_color(hex) else {
+                continue;
+            };
+            let current = (role.get)(&theme);
+            let mut next = Hsla::from(Rgba { r, g, b, a: 1.0 });
+            next.a = current.a;
+            (role.set)(&mut theme, next);
+        }
+        theme
+    }
+
+    /// Effective color for a role: the override when present, else base.
+    pub fn effective(&self, role: &ThemeRole) -> Hsla {
+        (role.get)(&self.resolve())
+    }
+
+    /// Display hex for a role: the stored override, else the base hex.
+    pub fn role_hex(&self, role: &ThemeRole) -> String {
+        self.colors
+            .get(role.key)
+            .cloned()
+            .unwrap_or_else(|| hsla_to_hex((role.get)(&self.base_theme())))
+    }
+}
+
+/// One user-editable color role: a stable key plus typed accessors into
+/// [`Theme`] so the configurator never duplicates palette wiring.
+pub struct ThemeRole {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    pub get: fn(&Theme) -> Hsla,
+    pub set: fn(&mut Theme, Hsla),
+}
+
+macro_rules! theme_role {
+    ($get:ident, $set:ident, $field:ident) => {
+        fn $get(theme: &Theme) -> Hsla {
+            theme.$field
+        }
+        fn $set(theme: &mut Theme, value: Hsla) {
+            theme.$field = value;
+        }
+    };
+}
+
+theme_role!(role_get_accent, role_set_accent, accent);
+theme_role!(
+    role_get_accent_pressed,
+    role_set_accent_pressed,
+    accent_pressed
+);
+theme_role!(role_get_accent_soft, role_set_accent_soft, accent_soft);
+theme_role!(role_get_accent_text, role_set_accent_text, accent_text);
+theme_role!(
+    role_get_accent_content,
+    role_set_accent_content,
+    accent_content
+);
+theme_role!(role_get_ink, role_set_ink, ink);
+theme_role!(role_get_surface, role_set_surface, surface);
+theme_role!(role_get_surface_soft, role_set_surface_soft, surface_soft);
+theme_role!(role_get_raised, role_set_raised, raised);
+theme_role!(role_get_active, role_set_active, active);
+theme_role!(role_get_hover, role_set_hover, hover);
+theme_role!(role_get_text, role_set_text, text);
+theme_role!(role_get_text_soft, role_set_text_soft, text_soft);
+theme_role!(role_get_muted, role_set_muted, muted);
+theme_role!(role_get_muted_soft, role_set_muted_soft, muted_soft);
+theme_role!(role_get_border, role_set_border, border);
+theme_role!(
+    role_get_border_strong,
+    role_set_border_strong,
+    border_strong
+);
+theme_role!(role_get_success, role_set_success, success);
+theme_role!(role_get_success_soft, role_set_success_soft, success_soft);
+theme_role!(role_get_warning, role_set_warning, warning);
+theme_role!(role_get_warning_soft, role_set_warning_soft, warning_soft);
+theme_role!(role_get_error, role_set_error, error);
+theme_role!(role_get_error_soft, role_set_error_soft, error_soft);
+theme_role!(
+    role_get_workbench_chrome,
+    role_set_workbench_chrome,
+    workbench_chrome
+);
+theme_role!(
+    role_get_workbench_rail,
+    role_set_workbench_rail,
+    workbench_rail
+);
+theme_role!(
+    role_get_workbench_explorer,
+    role_set_workbench_explorer,
+    workbench_explorer
+);
+theme_role!(
+    role_get_workbench_canvas,
+    role_set_workbench_canvas,
+    workbench_canvas
+);
+theme_role!(
+    role_get_workbench_header,
+    role_set_workbench_header,
+    workbench_header
+);
+theme_role!(
+    role_get_workbench_border,
+    role_set_workbench_border,
+    workbench_border
+);
+theme_role!(
+    role_get_workbench_selection,
+    role_set_workbench_selection,
+    workbench_selection
+);
+theme_role!(
+    role_get_media_overlay,
+    role_set_media_overlay,
+    media_overlay
+);
+
+/// Every color a custom theme may override, grouped for the configurator.
+pub const THEME_ROLES: &[ThemeRole] = &[
+    ThemeRole {
+        key: "workbench_chrome",
+        label: "Top chrome",
+        group: "Chrome",
+        get: role_get_workbench_chrome,
+        set: role_set_workbench_chrome,
+    },
+    ThemeRole {
+        key: "workbench_rail",
+        label: "Activity rail",
+        group: "Chrome",
+        get: role_get_workbench_rail,
+        set: role_set_workbench_rail,
+    },
+    ThemeRole {
+        key: "workbench_explorer",
+        label: "Explorer",
+        group: "Chrome",
+        get: role_get_workbench_explorer,
+        set: role_set_workbench_explorer,
+    },
+    ThemeRole {
+        key: "workbench_canvas",
+        label: "Canvas",
+        group: "Chrome",
+        get: role_get_workbench_canvas,
+        set: role_set_workbench_canvas,
+    },
+    ThemeRole {
+        key: "workbench_header",
+        label: "Section headers",
+        group: "Chrome",
+        get: role_get_workbench_header,
+        set: role_set_workbench_header,
+    },
+    ThemeRole {
+        key: "workbench_border",
+        label: "Chrome borders",
+        group: "Chrome",
+        get: role_get_workbench_border,
+        set: role_set_workbench_border,
+    },
+    ThemeRole {
+        key: "workbench_selection",
+        label: "Chrome selection",
+        group: "Chrome",
+        get: role_get_workbench_selection,
+        set: role_set_workbench_selection,
+    },
+    ThemeRole {
+        key: "ink",
+        label: "App background",
+        group: "Surfaces",
+        get: role_get_ink,
+        set: role_set_ink,
+    },
+    ThemeRole {
+        key: "surface",
+        label: "Cards",
+        group: "Surfaces",
+        get: role_get_surface,
+        set: role_set_surface,
+    },
+    ThemeRole {
+        key: "surface_soft",
+        label: "Popups",
+        group: "Surfaces",
+        get: role_get_surface_soft,
+        set: role_set_surface_soft,
+    },
+    ThemeRole {
+        key: "raised",
+        label: "Fields",
+        group: "Surfaces",
+        get: role_get_raised,
+        set: role_set_raised,
+    },
+    ThemeRole {
+        key: "active",
+        label: "Selected rows",
+        group: "Surfaces",
+        get: role_get_active,
+        set: role_set_active,
+    },
+    ThemeRole {
+        key: "hover",
+        label: "Hover rows",
+        group: "Surfaces",
+        get: role_get_hover,
+        set: role_set_hover,
+    },
+    ThemeRole {
+        key: "text",
+        label: "Primary text",
+        group: "Text & hairlines",
+        get: role_get_text,
+        set: role_set_text,
+    },
+    ThemeRole {
+        key: "text_soft",
+        label: "Secondary text",
+        group: "Text & hairlines",
+        get: role_get_text_soft,
+        set: role_set_text_soft,
+    },
+    ThemeRole {
+        key: "muted",
+        label: "Muted text",
+        group: "Text & hairlines",
+        get: role_get_muted,
+        set: role_set_muted,
+    },
+    ThemeRole {
+        key: "muted_soft",
+        label: "Faint text",
+        group: "Text & hairlines",
+        get: role_get_muted_soft,
+        set: role_set_muted_soft,
+    },
+    ThemeRole {
+        key: "border",
+        label: "Hairlines",
+        group: "Text & hairlines",
+        get: role_get_border,
+        set: role_set_border,
+    },
+    ThemeRole {
+        key: "border_strong",
+        label: "Strong hairlines",
+        group: "Text & hairlines",
+        get: role_get_border_strong,
+        set: role_set_border_strong,
+    },
+    ThemeRole {
+        key: "accent",
+        label: "Accent",
+        group: "Accent",
+        get: role_get_accent,
+        set: role_set_accent,
+    },
+    ThemeRole {
+        key: "accent_pressed",
+        label: "Accent pressed",
+        group: "Accent",
+        get: role_get_accent_pressed,
+        set: role_set_accent_pressed,
+    },
+    ThemeRole {
+        key: "accent_soft",
+        label: "Accent wash",
+        group: "Accent",
+        get: role_get_accent_soft,
+        set: role_set_accent_soft,
+    },
+    ThemeRole {
+        key: "accent_text",
+        label: "Accent text",
+        group: "Accent",
+        get: role_get_accent_text,
+        set: role_set_accent_text,
+    },
+    ThemeRole {
+        key: "accent_content",
+        label: "Text on accent",
+        group: "Accent",
+        get: role_get_accent_content,
+        set: role_set_accent_content,
+    },
+    ThemeRole {
+        key: "success",
+        label: "Success",
+        group: "Status",
+        get: role_get_success,
+        set: role_set_success,
+    },
+    ThemeRole {
+        key: "success_soft",
+        label: "Success wash",
+        group: "Status",
+        get: role_get_success_soft,
+        set: role_set_success_soft,
+    },
+    ThemeRole {
+        key: "warning",
+        label: "Warning",
+        group: "Status",
+        get: role_get_warning,
+        set: role_set_warning,
+    },
+    ThemeRole {
+        key: "warning_soft",
+        label: "Warning wash",
+        group: "Status",
+        get: role_get_warning_soft,
+        set: role_set_warning_soft,
+    },
+    ThemeRole {
+        key: "error",
+        label: "Error",
+        group: "Status",
+        get: role_get_error,
+        set: role_set_error,
+    },
+    ThemeRole {
+        key: "error_soft",
+        label: "Error wash",
+        group: "Status",
+        get: role_get_error_soft,
+        set: role_set_error_soft,
+    },
+    ThemeRole {
+        key: "media_overlay",
+        label: "Media dim",
+        group: "Media",
+        get: role_get_media_overlay,
+        set: role_set_media_overlay,
+    },
+];
+
+/// Render a color as `#RRGGBB` (alpha is structural and never edited).
+pub fn hsla_to_hex(color: Hsla) -> String {
+    let rgb = Rgba::from(color);
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!(
+        "#{:02X}{:02X}{:02X}",
+        channel(rgb.r),
+        channel(rgb.g),
+        channel(rgb.b)
+    )
+}
+
+/// Decode the stored `custom_themes` array. Corrupt entries are dropped so
+/// one bad edit can never lock the theme system out.
+pub fn decode_custom_themes(value: Option<&serde_json::Value>) -> Vec<CustomTheme> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Normalize user input to uppercase `#RRGGBB` (`#RGB` expands). `None`
+/// means the text is not a hex color at all.
+pub fn normalize_hex_color(text: &str) -> Option<String> {
+    let hex = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    let full = match hex.len() {
+        3 => hex
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{}{}", *byte as char, *byte as char))
+            .collect::<String>(),
+        6 => hex.to_string(),
+        _ => return None,
+    };
+    if full.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(format!("#{}", full.to_uppercase()))
+    } else {
+        None
+    }
+}
+
+/// Parse `#RRGGBB` or `#RGB` (leading `#` optional) into linear channels.
+pub fn parse_hex_color(text: &str) -> Option<(f32, f32, f32)> {
+    let hex = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    let channel = |pair: &str| u8::from_str_radix(pair, 16).ok().map(|v| v as f32 / 255.0);
+    match hex.len() {
+        3 => {
+            let bytes = hex.as_bytes();
+            let expand = |i: usize| channel(&format!("{}{}", bytes[i] as char, bytes[i] as char));
+            Some((expand(0)?, expand(1)?, expand(2)?))
+        }
+        6 => Some((
+            channel(&hex[0..2])?,
+            channel(&hex[2..4])?,
+            channel(&hex[4..6])?,
+        )),
+        _ => None,
     }
 }
 
@@ -62,7 +535,7 @@ pub const MEDIA_WELL: &str = "#050509";
 pub const MEDIA_TEXT: &str = "#F4F7FB";
 pub const MEDIA_MUTED: &str = "#A9B2C0";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub mode: ThemeMode,
     pub is_light: bool,
@@ -507,10 +980,11 @@ impl Theme {
                 color(raised),
             )
         };
+        let uses_blue_accent = mode != ThemeMode::Relay;
         Self {
             mode,
             is_light,
-            uses_blue_accent: mode != ThemeMode::Relay,
+            uses_blue_accent,
             workbench_chrome,
             workbench_rail,
             workbench_explorer,
@@ -554,6 +1028,20 @@ impl Theme {
             ThemeMode::FullWhite => Self::full_white(),
             ThemeMode::FrostedGlass => Self::frosted_glass(),
             ThemeMode::GraphiteGlass => Self::graphite_glass(),
+            ThemeMode::Custom(_) => Self::relay(),
+        }
+    }
+
+    /// Resolve a mode against stored user themes. A custom id with no stored
+    /// theme falls back to Relay, matching `parse` for unknown built-ins.
+    pub fn resolve(mode: &ThemeMode, customs: &[CustomTheme]) -> Self {
+        match mode {
+            ThemeMode::Custom(id) => customs
+                .iter()
+                .find(|custom| &custom.id == id)
+                .map(|custom| custom.resolve())
+                .unwrap_or_else(Self::relay),
+            other => Self::for_mode(other.clone()),
         }
     }
 
@@ -735,6 +1223,93 @@ mod tests {
     #[test]
     fn unknown_theme_values_still_fall_back_to_relay() {
         assert_eq!(ThemeMode::parse("unknown"), ThemeMode::Relay);
+    }
+
+    #[test]
+    fn custom_mode_round_trips_through_its_selection_key() {
+        let mode = ThemeMode::parse("custom:custom-2");
+        assert_eq!(mode, ThemeMode::Custom("custom-2".to_string()));
+        assert_eq!(mode.as_str(), "custom-2");
+        assert_eq!(mode.selection_key(), "custom:custom-2");
+        assert_eq!(ThemeMode::parse(&mode.selection_key()), mode);
+        assert_eq!(ThemeMode::Relay.selection_key(), "relay");
+    }
+
+    #[test]
+    fn hex_helpers_round_trip_and_reject_garbage() {
+        assert_eq!(hsla_to_hex(Theme::relay().accent), "#FF7152");
+        let (r, g, b) = parse_hex_color("#ff7152").expect("valid hex");
+        assert_eq!(hsla_to_hex(Hsla::from(Rgba { r, g, b, a: 1.0 })), "#FF7152");
+        assert!(parse_hex_color("#F72").is_some());
+        assert!(parse_hex_color("not a color").is_none());
+        assert!(parse_hex_color("#12345").is_none());
+        assert!(parse_hex_color("").is_none());
+    }
+
+    #[test]
+    fn custom_theme_overrides_apply_but_keep_base_alpha() {
+        let glass = Theme::frosted_glass();
+        assert!(glass.surface.a < 1.0);
+        let custom = CustomTheme {
+            id: "custom-1".to_string(),
+            name: "Test".to_string(),
+            base: "frosted_glass".to_string(),
+            colors: [("accent".to_string(), "#123456".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let resolved = custom.resolve();
+        assert_eq!(hsla_to_hex(resolved.accent), "#123456");
+        assert_eq!(resolved.accent.a, glass.accent.a);
+        // Untouched roles match the base exactly.
+        assert_eq!(resolved.surface, glass.surface);
+        // Unknown roles and garbage hex never break resolution.
+        let sloppy = CustomTheme {
+            colors: [
+                ("nope".to_string(), "#123456".to_string()),
+                ("text".to_string(), "garbage".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..custom.clone()
+        };
+        assert_eq!(sloppy.resolve().text, glass.text);
+    }
+
+    #[test]
+    fn resolve_falls_back_when_a_custom_theme_is_missing() {
+        let missing = ThemeMode::parse("custom:gone");
+        assert_eq!(Theme::resolve(&missing, &[]), Theme::relay());
+        let stored = CustomTheme {
+            id: "custom-1".to_string(),
+            name: "Test".to_string(),
+            base: "pitch_black".to_string(),
+            colors: HashMap::new(),
+        };
+        assert_eq!(
+            Theme::resolve(&ThemeMode::parse("custom:custom-1"), &[stored]),
+            Theme::pitch_black()
+        );
+    }
+
+    #[test]
+    fn every_theme_role_reads_and_writes_a_distinct_field() {
+        let mut seen = std::collections::HashSet::new();
+        for role in THEME_ROLES {
+            assert!(seen.insert(role.key), "duplicate role key {}", role.key);
+            let mut theme = Theme::relay();
+            let before = (role.get)(&theme);
+            let flipped = Hsla {
+                h: (before.h + 0.5) % 1.0,
+                s: before.s,
+                l: 1.0 - before.l,
+                a: before.a,
+            };
+            (role.set)(&mut theme, flipped);
+            assert_eq!((role.get)(&theme), flipped);
+        }
+        // The configurator covers the full palette surface.
+        assert!(THEME_ROLES.len() >= 31);
     }
 
     #[test]

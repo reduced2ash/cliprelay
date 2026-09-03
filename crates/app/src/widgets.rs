@@ -659,9 +659,11 @@ pub fn workbench_button(
 }
 
 /// Text input field (44px, raised, 2px accent focus ring). Keyboard input is
-/// handled by the view's key dispatch (see `App::on_key_down`).
+/// handled by the view's key dispatch (see `App::on_key_down`). The id
+/// accepts any string so generated editors (e.g. per-color theme fields)
+/// can own stable identities; it must simply be stable across renders.
 pub fn field(
-    id: &'static str,
+    id: impl Into<SharedString>,
     placeholder: &str,
     state: &FieldState,
     focused: bool,
@@ -695,7 +697,7 @@ pub fn tabular<E: Styled + 'static>(element: E) -> E {
 /// `field` with an optional leading glyph (used by the command center).
 #[allow(clippy::too_many_arguments)]
 pub fn field_with_icon(
-    id: &'static str,
+    id: impl Into<SharedString>,
     placeholder: &str,
     state: &FieldState,
     focused: bool,
@@ -720,7 +722,7 @@ pub fn field_with_icon(
 /// `field_with_icon` plus an optional right-side hint chip (e.g. ⌘K).
 #[allow(clippy::too_many_arguments)]
 pub fn field_with_icon_hint(
-    id: &'static str,
+    id: impl Into<SharedString>,
     placeholder: &str,
     state: &FieldState,
     focused: bool,
@@ -731,6 +733,10 @@ pub fn field_with_icon_hint(
     cx: &mut Context<crate::App>,
 ) -> Stateful<Div> {
     let theme = current_theme();
+    // Own the key once: element identity plus every focus/key listener below
+    // need the same stable string without a `'static` bound.
+    let id: SharedString = id.into();
+    let key = id.to_string();
     let mut element = div()
         .id(id)
         .flex_1()
@@ -798,24 +804,28 @@ pub fn field_with_icon_hint(
     element
         .when(!enabled, |this| this.opacity(0.46).cursor_default())
         .when(enabled, |this| {
+            let click_key = key.clone();
+            let type_key = key.clone();
+            let enter_key = key.clone();
+            let space_key = key.clone();
             this.tab_index(0)
                 .focus(|style| style.border_2().border_color(current_theme().accent))
                 .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.focus_field(id, cx);
+                    app.focus_field(&click_key, cx);
                 }))
                 .on_key_down(cx.listener(move |app, event, window, cx| {
-                    if app.focused_field.as_deref() != Some(id) {
-                        app.focus_field(id, cx);
+                    if app.focused_field.as_deref() != Some(type_key.as_str()) {
+                        app.focus_field(&type_key, cx);
                     }
                     if app.on_key_down(event, window, cx) {
                         cx.stop_propagation();
                     }
                 }))
                 .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                    if app.focused_field.as_deref() != Some(id) {
-                        app.focus_field(id, cx);
+                    if app.focused_field.as_deref() != Some(enter_key.as_str()) {
+                        app.focus_field(&enter_key, cx);
                     }
-                    if app.handle_field_key(id, "enter", None, false, cx) {
+                    if app.handle_field_key(&enter_key, "enter", None, false, cx) {
                         cx.stop_propagation();
                     } else {
                         cx.propagate();
@@ -823,10 +833,10 @@ pub fn field_with_icon_hint(
                 }))
                 .on_action(
                     cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                        if app.focused_field.as_deref() != Some(id) {
-                            app.focus_field(id, cx);
+                        if app.focused_field.as_deref() != Some(space_key.as_str()) {
+                            app.focus_field(&space_key, cx);
                         }
-                        if app.handle_field_key(id, "space", Some(" "), false, cx) {
+                        if app.handle_field_key(&space_key, "space", Some(" "), false, cx) {
                             cx.stop_propagation();
                         } else {
                             cx.propagate();

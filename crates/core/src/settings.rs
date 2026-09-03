@@ -23,6 +23,8 @@ pub const RANDOM_FOLDER_MODE: &str = "random_folder_mode";
 pub const RANDOM_FOLDERS: &str = "random_folders";
 pub const UI_SCALE: &str = "ui_scale";
 pub const THEME_MODE: &str = "theme_mode";
+/// User-created themes (JSON array of theme objects, see app `CustomTheme`).
+pub const CUSTOM_THEMES: &str = "custom_themes";
 pub const PERFORMANCE_MODE: &str = "performance_mode";
 pub const LIBRARY_DENSITY: &str = "library_density";
 pub const FIT_LIBRARY_THUMBNAILS: &str = "fit_library_thumbnails";
@@ -61,6 +63,7 @@ pub fn defaults() -> HashMap<&'static str, Value> {
     map.insert(RANDOM_FOLDERS, Value::Array(vec![]));
     map.insert(UI_SCALE, Value::from(1.0_f64));
     map.insert(THEME_MODE, json_str("relay"));
+    map.insert(CUSTOM_THEMES, Value::Array(vec![]));
     map.insert(PERFORMANCE_MODE, json_str("automatic"));
     map.insert(LIBRARY_DENSITY, json_str("default"));
     map.insert(FIT_LIBRARY_THUMBNAILS, Value::Bool(false));
@@ -208,9 +211,7 @@ impl Settings {
         if matches!(key, LIBRARY_ROOT | EXPORT_DIR) {
             if let Some(text) = value.as_str() {
                 if !text.is_empty() {
-                    let expanded = std::path::Path::new(text)
-                        .expanduser()
-                        .to_path_buf();
+                    let expanded = std::path::Path::new(text).expanduser().to_path_buf();
                     if key == EXPORT_DIR {
                         let _ = std::fs::create_dir_all(&expanded);
                     }
@@ -218,7 +219,8 @@ impl Settings {
                 }
             }
         }
-        self.database.set_setting(key, &serde_json::to_string(&value)?)
+        self.database
+            .set_setting(key, &serde_json::to_string(&value)?)
     }
 
     /// All settings as JSON values (stored, falling back to defaults).

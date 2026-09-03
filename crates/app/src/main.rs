@@ -263,6 +263,10 @@ impl App {
                 })
                 .unwrap_or("relay"),
         );
+        let boot_theme = crate::theme::Theme::resolve(
+            &boot_theme_mode,
+            &crate::theme::decode_custom_themes(boot_settings_values.get(CUSTOM_THEMES)),
+        );
         let controller = spawn_controller(None, event_tx.clone());
         // `--library PATH` overrides the stored library root on launch.
         if let Ok(library) = std::env::var("CLIPRELAY_LIBRARY") {
@@ -378,6 +382,9 @@ impl App {
             .unwrap_or(0.0);
         let settings_combo_boot: Option<String> =
             std::env::var("CLIPRELAY_SETTINGS_OPEN_COMBO").ok();
+        let settings_section_boot: Option<String> =
+            std::env::var("CLIPRELAY_SETTINGS_SECTION").ok();
+        let theme_edit_boot: Option<String> = std::env::var("CLIPRELAY_THEME_EDIT").ok();
         let global_shortcut_subscription = cx.observe_keystrokes(|app, event, window, cx| {
             app.on_unhandled_keystroke(event, window, cx)
         });
@@ -525,7 +532,7 @@ impl App {
             thumbnail_requested: std::collections::HashSet::new(),
             preview_hover_generation: 0,
             library_scroll_pause_until: std::time::Instant::now(),
-            theme: crate::theme::Theme::for_mode(boot_theme_mode),
+            theme: boot_theme,
             applied_window_blur: None,
             window_size: (1460.0, 900.0),
             fields,
@@ -677,6 +684,8 @@ impl App {
         if initial_page != Page::Library
             || settings_scroll_boot > 0.0
             || settings_combo_boot.is_some()
+            || settings_section_boot.is_some()
+            || theme_edit_boot.is_some()
             || open_command_at_boot_2
         {
             let settings_scroll = app.settings_scroll.clone();
@@ -723,6 +732,30 @@ impl App {
                                 cx,
                                 |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
                                     app.open_combos.insert(combo_id);
+                                    _cx.notify();
+                                },
+                            )
+                            .ok();
+                        }
+                    }
+                    if let Some(section) = settings_section_boot {
+                        if let Some(this) = this.upgrade() {
+                            this.update(
+                                cx,
+                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                    app.settings_page.active_section = Some(section);
+                                    _cx.notify();
+                                },
+                            )
+                            .ok();
+                        }
+                    }
+                    if let Some(theme_id) = theme_edit_boot {
+                        if let Some(this) = this.upgrade() {
+                            this.update(
+                                cx,
+                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
+                                    app.settings_page.editing_theme = Some(theme_id);
                                     _cx.notify();
                                 },
                             )
@@ -1387,8 +1420,8 @@ impl App {
         });
         let new_mode = ThemeMode::parse(mode);
         if new_mode != self.theme_mode {
+            self.theme = Theme::resolve(&new_mode, &self.custom_theme_list());
             self.theme_mode = new_mode;
-            self.theme = Theme::for_mode(new_mode);
         }
         if let Some(scale) = self.settings.get(UI_SCALE).and_then(|v| v.as_f64()) {
             self.ui_scale = scale as f32;
@@ -2006,6 +2039,7 @@ impl App {
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
         if [
             THEME_MODE,
+            CUSTOM_THEMES,
             UI_SCALE,
             SIDEBAR_COLLAPSED,
             PREPARE_EXPANDED,
@@ -3078,6 +3112,15 @@ impl App {
                     }
                 }
                 self.renaming_workspace = None;
+            }
+            "theme-new-name" => {
+                self.create_custom_theme_from_new_field(cx);
+            }
+            _ if field_id.starts_with("theme-hex-") => {
+                self.commit_theme_hex(field_id, cx);
+            }
+            _ if field_id.starts_with("theme-name-") => {
+                self.commit_theme_name(field_id, cx);
             }
             "tg-bot-token" => {}
             "tg-destination" => {
