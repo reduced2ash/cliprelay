@@ -38,6 +38,16 @@ impl crate::App {
         // search stranded at the window edge.
         let narrow = self.window_size.0 < 820.0;
         let gutter = if narrow { 16.0 } else { 24.0 };
+        let sidebar = if self.sidebar_collapsed || self.window_size.0 < 1080.0 {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_EXPANDED_WIDTH
+        };
+        // The scroll body centers itself with symmetric padding instead of
+        // a centering wrapper: the scrollable stays one exact column, so
+        // the scroll range always covers the last row (Diagnostics).
+        let page_width = (self.window_size.0 - sidebar).max(1.0);
+        let side_pad = ((page_width - SETTINGS_MAX_W) / 2.0).max(gutter);
         let empty_field = FieldState::default();
         let mut title_row = div()
             .w_full()
@@ -118,8 +128,7 @@ impl crate::App {
         // line up with the title and search at every window width.
         let mut inner = div()
             .w_full()
-            .max_w(px(SETTINGS_MAX_W))
-            .px(px(gutter))
+            .px(px(side_pad))
             .pb(px(40.0))
             .flex()
             .flex_col();
@@ -929,7 +938,7 @@ impl crate::App {
             );
         }
 
-        content = content.child(center_row(inner));
+        content = content.child(inner);
         let _ = &mut page;
         page = page.child(content);
         // Persistent filter status: a selected section or search query can
@@ -1053,17 +1062,6 @@ fn center_measure(max_width: f32, gutter: f32, top_pad: Pixels, first: Div, seco
             .child(first)
             .child(second),
     )
-}
-
-/// Horizontal centering wrapper for scroll-body content: keeps the capped
-/// column centered without disturbing vertical scrolling.
-fn center_row(child: Div) -> Div {
-    div()
-        .w_full()
-        .flex()
-        .flex_row()
-        .justify_center()
-        .child(child)
 }
 
 /// Workbench-aligned settings card: flat surface, hairline seam, 2px radius.
