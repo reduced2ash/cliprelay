@@ -137,6 +137,9 @@ capture_case() {
     elif [[ "${case_name}" == "workflow-shell" ]]; then
         target_width=1672
         target_height=945
+    elif [[ "${case_name}" == "settings" ]]; then
+        target_width=1895
+        target_height=1148
     fi
 
     local library_root=/tmp/library
@@ -187,6 +190,7 @@ capture_case() {
         || "${case_name}" == "context-menu-compact" \
         || "${case_name}" == "random-sources-compact" \
         || "${case_name}" == "random-sources-empty" \
+        || "${case_name}" == "settings" \
         || "${case_name}" == "studio-shell" ]] \
         && (( width != target_width || height != target_height )); then
         stop_app
@@ -482,6 +486,11 @@ run_suite() {
                 fi
             done
         fi
+        return 0
+    fi
+
+    if [[ "${GUI_TEST_ONLY_SETTINGS:-0}" == "1" ]]; then
+        capture_case settings CLIPRELAY_PAGE=settings CLIPRELAY_SETTINGS_SCROLL=0 || return 1
         return 0
     fi
 
