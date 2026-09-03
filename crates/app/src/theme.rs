@@ -244,6 +244,19 @@ theme_role!(
     media_overlay
 );
 
+/// Roles shown without opening Advanced: the handful that restyle the app
+/// on their own (backgrounds, text, hairlines, accent).
+pub const BASIC_THEME_ROLE_KEYS: [&str; 8] = [
+    "accent",
+    "ink",
+    "surface",
+    "raised",
+    "text",
+    "text_soft",
+    "muted",
+    "border",
+];
+
 /// Every color a custom theme may override, grouped for the configurator.
 pub const THEME_ROLES: &[ThemeRole] = &[
     ThemeRole {
@@ -1290,6 +1303,20 @@ mod tests {
             Theme::resolve(&ThemeMode::parse("custom:custom-1"), &[stored]),
             Theme::pitch_black()
         );
+    }
+
+    #[test]
+    fn basic_roles_name_real_unique_roles() {
+        assert!(!BASIC_THEME_ROLE_KEYS.is_empty());
+        let mut seen = std::collections::HashSet::new();
+        for key in BASIC_THEME_ROLE_KEYS {
+            assert!(seen.insert(key), "duplicate basic role {key}");
+            assert!(
+                THEME_ROLES.iter().any(|role| role.key == key),
+                "unknown basic role {key}"
+            );
+        }
+        assert!(BASIC_THEME_ROLE_KEYS.len() < THEME_ROLES.len());
     }
 
     #[test]

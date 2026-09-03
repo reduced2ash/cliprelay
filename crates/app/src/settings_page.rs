@@ -22,6 +22,8 @@ pub struct SettingsUiState {
     pub active_section: Option<String>,
     /// Last theme edit rejection, shown under the color editor.
     pub theme_error: Option<String>,
+    /// Whether the editor shows every color role (`false` shows basics).
+    pub advanced_colors: bool,
 }
 
 /// Pretty labels for [`BUILTIN_THEME_MODES`], used by the rebase picker.
@@ -1863,8 +1865,9 @@ fn theme_custom_group(
 }
 
 /// The color editor for the active theme: rename and rebase for custom
-/// themes, plus one hex row per color role with live swatches. Commits
-/// apply instantly; editing a built-in forks a personal copy first.
+/// themes, basic color rows with live swatches, and the remaining roles
+/// behind an Advanced toggle. Commits apply instantly; editing a built-in
+/// forks a personal copy first.
 fn theme_color_editor(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
@@ -1986,16 +1989,9 @@ fn theme_color_editor(
         );
     }
 
-    for group_name in [
-        "Chrome",
-        "Surfaces",
-        "Text & hairlines",
-        "Accent",
-        "Status",
-        "Media",
-    ] {
-        group = group.child(sub_label(theme, &group_name.to_uppercase()));
-        for role in THEME_ROLES.iter().filter(|role| role.group == group_name) {
+    // Basics first: the handful of roles that restyle the app on their own.
+    for key in BASIC_THEME_ROLE_KEYS {
+        if let Some(role) = THEME_ROLES.iter().find(|role| role.key == key) {
             group = group.child(theme_role_row(
                 app,
                 cx,
@@ -2005,6 +2001,77 @@ fn theme_color_editor(
                 role,
                 &empty_field,
             ));
+        }
+    }
+    let advanced_open = app.settings_page.advanced_colors;
+    let mut toggle = div()
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .child(button(
+            "theme-advanced",
+            if advanced_open {
+                "Hide advanced colors"
+            } else {
+                "Show advanced colors"
+            },
+            ButtonKind::Ghost,
+            Some(if advanced_open {
+                "chevron-up"
+            } else {
+                "chevron-down"
+            }),
+            true,
+            cx,
+            |app, cx| {
+                app.settings_page.advanced_colors = !app.settings_page.advanced_colors;
+                cx.notify();
+            },
+        ));
+    if !advanced_open {
+        toggle = toggle.child(
+            div()
+                .child(format!(
+                    "{} more colors",
+                    THEME_ROLES.len() - BASIC_THEME_ROLE_KEYS.len()
+                ))
+                .text_size(px(12.0))
+                .text_color(theme.muted),
+        );
+    }
+    group = group.child(toggle);
+    if advanced_open {
+        for group_name in [
+            "Chrome",
+            "Surfaces",
+            "Text & hairlines",
+            "Accent",
+            "Status",
+            "Media",
+        ] {
+            let rest: Vec<&ThemeRole> = THEME_ROLES
+                .iter()
+                .filter(|role| {
+                    role.group == group_name && !BASIC_THEME_ROLE_KEYS.contains(&role.key)
+                })
+                .collect();
+            if rest.is_empty() {
+                continue;
+            }
+            group = group.child(sub_label(theme, &group_name.to_uppercase()));
+            for role in rest {
+                group = group.child(theme_role_row(
+                    app,
+                    cx,
+                    theme,
+                    &view,
+                    &resolved,
+                    role,
+                    &empty_field,
+                ));
+            }
         }
     }
     group
@@ -2221,7 +2288,7 @@ fn theme_choices(
         };
         let mut card = div()
             .id(SharedString::from(format!("theme-{mode}")))
-            .w(px(196.0))
+            .w(px(212.0))
             .h(px(92.0))
             .rounded(px(RADIUS_MD))
             .relative()
@@ -2267,11 +2334,13 @@ fn theme_choices(
                     cx.stop_propagation();
                 }),
             );
-        // Mini preview.
+        // Mini preview. Pinned against shrinking: the longest theme name
+        // used to squeeze its own preview narrower than the rest.
         card = card.child(
             div()
                 .w(px(62.0))
                 .h(px(58.0))
+                .flex_none()
                 .rounded(px(RADIUS_MD))
                 .bg(palette.application_background())
                 .border_1()
@@ -2305,13 +2374,20 @@ fn theme_choices(
                 ),
         );
         card = card.child(
-            div().flex_1().flex().flex_col().justify_center().child(
-                div()
-                    .child(title)
-                    .text_size(px(15.0))
-                    .text_color(theme.text)
-                    .font_weight(FontWeight::SEMIBOLD),
-            ),
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .child(
+                    div()
+                        .child(title)
+                        .text_size(px(15.0))
+                        .text_color(theme.text)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_ellipsis(),
+                ),
         );
         if selected {
             card = card.child(
