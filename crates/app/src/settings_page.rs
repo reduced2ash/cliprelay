@@ -32,10 +32,8 @@ impl crate::App {
             .flex_col()
             .bg(theme.ink);
 
-        // One centered measure column shared by the header, the section
-        // nav, and the scroll body below: all three share edges at every
-        // window width instead of pinning content to the left with the
-        // search stranded at the window edge.
+        // Master-detail: a section rail on the left, one roomy section on
+        // the right. Searching switches to flat results across sections.
         let narrow = self.window_size.0 < 820.0;
         let gutter = if narrow { 16.0 } else { 24.0 };
         let sidebar = if self.sidebar_collapsed || self.window_size.0 < 1080.0 {
@@ -43,21 +41,15 @@ impl crate::App {
         } else {
             SIDEBAR_EXPANDED_WIDTH
         };
-        // The scroll body centers itself with symmetric padding instead of
-        // a centering wrapper: the scrollable stays one exact column, so
-        // the scroll range always covers the last row (Diagnostics).
         let page_width = (self.window_size.0 - sidebar).max(1.0);
         let side_pad = ((page_width - SETTINGS_MAX_W) / 2.0).max(gutter);
+        let searching = !settings_query(self).is_empty();
+        let active = self
+            .settings_page
+            .active_section
+            .clone()
+            .unwrap_or_else(|| "interface".to_string());
         let empty_field = FieldState::default();
-        let mut title_row = div()
-            .w_full()
-            .flex()
-            .gap(px(if narrow { 12.0 } else { 16.0 }));
-        if narrow {
-            title_row = title_row.flex_col();
-        } else {
-            title_row = title_row.flex_row().items_end();
-        }
         let search_field = field_with_icon(
             "settings-search",
             "Search settings",
@@ -71,39 +63,39 @@ impl crate::App {
         let search_field = if narrow {
             search_field.w_full()
         } else {
-            search_field.w(px(280.0))
+            search_field.w(px(300.0))
         };
-        title_row = title_row
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .child("Settings")
-                            .text_size(px(20.0))
-                            .text_color(theme.text)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        div()
-                            .child("Appearance, folders, connections, and safe file behavior")
-                            .text_size(px(12.0))
-                            .text_color(theme.muted)
-                            .text_ellipsis(),
-                    ),
-            )
-            .child(search_field);
-        page = page.child(center_measure(
-            SETTINGS_MAX_W,
-            gutter,
-            px(if narrow { 16.0 } else { 24.0 }),
-            title_row,
-            section_nav(self, cx),
-        ));
+        let mut header_row = div()
+            .w_full()
+            .flex()
+            .gap(px(if narrow { 12.0 } else { 16.0 }));
+        if narrow {
+            header_row = header_row.flex_col();
+        } else {
+            header_row = header_row.flex_row().items_end();
+        }
+        page = page.child(
+            div()
+                .w_full()
+                .px(px(gutter))
+                .pt(px(if narrow { 16.0 } else { 24.0 }))
+                .pb(px(16.0))
+                .flex()
+                .flex_col()
+                .child(
+                    header_row
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child("Settings")
+                                .text_size(px(24.0))
+                                .text_color(theme.text)
+                                .font_weight(FontWeight::SEMIBOLD),
+                        )
+                        .child(search_field),
+                ),
+        );
 
         // Search + section nav narrow the visible blocks below. Every block
         // keeps its exact settings keys, persistence, and actions.
@@ -114,24 +106,10 @@ impl crate::App {
             .map(|field| field.text.trim().to_string())
             .unwrap_or_default();
 
-        let mut content = div()
-            .id("settings-scroll")
-            .overflow_scroll()
-            .scrollbar_width(px(10.0))
-            .track_scroll(&self.settings_scroll)
-            .flex_1()
-            .min_w(px(0.0))
-            .overflow_scroll()
-            .scrollbar_width(px(10.0));
-
-        // The inner column shares the header measure so section cards
-        // line up with the title and search at every window width.
-        let mut inner = div()
-            .w_full()
-            .px(px(side_pad))
-            .pb(px(40.0))
-            .flex()
-            .flex_col();
+        // Sections append here; the assembly below decides flat results
+        // versus the rail + detail split, so this column stays unsized.
+        let stacked = page_width < 900.0;
+        let mut inner = div().w_full().flex().flex_col().gap(px(20.0));
 
         // INTERFACE
         if section_open(
@@ -158,64 +136,54 @@ impl crate::App {
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Appearance and density"))
-            .child(
-                div()
-                    .w_full()
-                    .child("Color theme")
-                    .text_size(px(13.0))
-                    .text_color(theme.text)
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(theme_choices(self, cx, &theme))
-            .child(help_text(&theme, "Choose a palette for the whole app, then adjust how much of your workspace fits on screen."))
-            .child(help_text(&theme, "Theme changes apply immediately and are saved for the next launch."))
-            .child(setting_row(
-                cx,
-                &theme,
-                "Interface scale",
-                &["Compact · 80%", "Balanced · 90%", "Standard · 100%"],
-                self.scale_index(),
-                "scale-select",
-                self.open_combos.contains("scale-select"),
-                move |app, cx, index| {
-                    let value = match index {
-                        0 => 0.8,
-                        1 => 0.9,
-                        _ => 1.0,
-                    };
-                    app.set_setting(UI_SCALE, json!(value), cx);
-                },
-            ))
-            .child(help_text(&theme, "Standard preserves the current size. Compact provides the widest working view."))
-            .child(setting_row(
-                cx,
-                &theme,
-                "Library density",
-                &["Default", "Compact"],
-                if self.density == "compact" { 1 } else { 0 },
-                "density-select",
-                self.open_combos.contains("density-select"),
-                move |app, cx, index| {
-                    app.set_setting(LIBRARY_DENSITY, json!(if index == 1 { "compact" } else { "default" }), cx);
-                },
-            ))
-            .child(help_text(&theme, "Compact fits more videos without changing the rest of the interface."))
-            .child(checkbox(
-                "fit-library-thumbnails",
-                "Fit the whole video inside Library thumbnails",
-                self.settings_bool(FIT_LIBRARY_THUMBNAILS),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(value), cx);
-                },
-            ))
-            .child(help_text(
-                &theme,
-                "Keeps the complete frame visible. Extra space uses the media well instead of cropping the top, bottom, or sides.",
-            ));
-            inner = inner.child(section_label(&theme, "INTERFACE")).child(group);
+            group = group
+                .child(theme_choices(self, cx, &theme))
+                .child(setting_row(
+                    cx,
+                    &theme,
+                    "Interface scale",
+                    &["Compact · 80%", "Balanced · 90%", "Standard · 100%"],
+                    self.scale_index(),
+                    "scale-select",
+                    self.open_combos.contains("scale-select"),
+                    move |app, cx, index| {
+                        let value = match index {
+                            0 => 0.8,
+                            1 => 0.9,
+                            _ => 1.0,
+                        };
+                        app.set_setting(UI_SCALE, json!(value), cx);
+                    },
+                ))
+                .child(setting_row(
+                    cx,
+                    &theme,
+                    "Library density",
+                    &["Default", "Compact"],
+                    if self.density == "compact" { 1 } else { 0 },
+                    "density-select",
+                    self.open_combos.contains("density-select"),
+                    move |app, cx, index| {
+                        app.set_setting(
+                            LIBRARY_DENSITY,
+                            json!(if index == 1 { "compact" } else { "default" }),
+                            cx,
+                        );
+                    },
+                ))
+                .child(checkbox(
+                    "fit-library-thumbnails",
+                    "Fit the whole video inside Library thumbnails",
+                    self.settings_bool(FIT_LIBRARY_THUMBNAILS),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(value), cx);
+                    },
+                ));
+            inner = inner
+                .child(section_head(&theme, "Interface", searching))
+                .child(group);
             any_visible = true;
         }
 
@@ -246,110 +214,115 @@ impl crate::App {
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Rendering and media"))
-            .child(help_text(&theme, "VSync stays enabled. Maximum mode preloads adjacent media, allows a second preview encode, and prefers hardware export."))
-            .child(setting_row(
-                cx,
-                &theme,
-                "Performance mode",
-                &["Automatic", "Maximum performance"],
-                if self.settings_value(PERFORMANCE_MODE) == "maximum" { 1 } else { 0 },
-                "performance-select",
-                self.open_combos.contains("performance-select"),
-                move |app, cx, index| {
-                    app.set_setting(PERFORMANCE_MODE, json!(if index == 1 { "maximum" } else { "automatic" }), cx);
-                },
-            ))
-            .child(help_text(&theme, "Changes apply to new preview and export jobs immediately."))
-            .child(setting_row(
-                cx,
-                &theme,
-                "Export encoder",
-                &["Automatic", "Prefer hardware", "Software only"],
-                match self.settings_value(EXPORT_ENCODER).as_str() {
-                    "hardware" => 1,
-                    "software" => 2,
-                    _ => 0,
-                },
-                "encoder-select",
-                self.open_combos.contains("encoder-select"),
-                move |app, cx, index| {
-                    let value = match index {
-                        1 => "hardware",
-                        2 => "software",
-                        _ => "auto",
-                    };
-                    app.set_setting(EXPORT_ENCODER, json!(value), cx);
-                },
-            ))
-            .child(help_text(&theme, "Hardware always falls back to software if the device or upload limit requires it."))
-            .child(sub_label(&theme, "LIVE DIAGNOSTICS"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    .child(diagnostic_row(&theme, "Renderer", "GPUI"))
-                    .child(diagnostic_row(&theme, "GPU", "—"))
-                    .child(diagnostic_row(&theme, "Display", "—"))
-                    .child(diagnostic_row(
-                        &theme,
-                        "Video playback",
-                        if self.diagnostics.gstreamer.is_empty() {
-                            "GStreamer"
-                        } else {
-                            &self.diagnostics.gstreamer
-                        },
-                    ))
-                    .child(diagnostic_row(
-                        &theme,
-                        "Export",
-                        if self.diagnostics.export_encoder.is_empty() {
-                            "Not sampled"
-                        } else {
-                            &self.diagnostics.export_encoder
-                        },
-                    ))
-                    .child(diagnostic_row(&theme, "Frame pacing", "—"))
-                    .child(diagnostic_row(&theme, "Frame spikes", "—"))
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .child("Resources")
-                                    .text_size(px(13.0))
-                                    .text_color(theme.muted),
-                            )
-                            .child(
-                                div()
-                                    .child("Rendered on demand")
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text)
-                                    .text_right(),
-                            )
-                            .child(button(
-                                "diag-refresh",
-                                "Refresh",
-                                ButtonKind::Ghost,
-                                Some("↻"),
-                                true,
-                                cx,
-                                move |_app, cx| {
-                                    // Re-sample the renderer/encoder lines.
-                                    cx.notify();
-                                },
-                            )),
-                    ),
-            );
+            group = group
+                .child(setting_row(
+                    cx,
+                    &theme,
+                    "Performance mode",
+                    &["Automatic", "Maximum performance"],
+                    if self.settings_value(PERFORMANCE_MODE) == "maximum" {
+                        1
+                    } else {
+                        0
+                    },
+                    "performance-select",
+                    self.open_combos.contains("performance-select"),
+                    move |app, cx, index| {
+                        app.set_setting(
+                            PERFORMANCE_MODE,
+                            json!(if index == 1 { "maximum" } else { "automatic" }),
+                            cx,
+                        );
+                    },
+                ))
+                .child(setting_row(
+                    cx,
+                    &theme,
+                    "Export encoder",
+                    &["Automatic", "Prefer hardware", "Software only"],
+                    match self.settings_value(EXPORT_ENCODER).as_str() {
+                        "hardware" => 1,
+                        "software" => 2,
+                        _ => 0,
+                    },
+                    "encoder-select",
+                    self.open_combos.contains("encoder-select"),
+                    move |app, cx, index| {
+                        let value = match index {
+                            1 => "hardware",
+                            2 => "software",
+                            _ => "auto",
+                        };
+                        app.set_setting(EXPORT_ENCODER, json!(value), cx);
+                    },
+                ))
+                .child(sub_label(&theme, "LIVE DIAGNOSTICS"))
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(diagnostic_row(&theme, "Renderer", "GPUI"))
+                        .child(diagnostic_row(&theme, "GPU", "—"))
+                        .child(diagnostic_row(&theme, "Display", "—"))
+                        .child(diagnostic_row(
+                            &theme,
+                            "Video playback",
+                            if self.diagnostics.gstreamer.is_empty() {
+                                "GStreamer"
+                            } else {
+                                &self.diagnostics.gstreamer
+                            },
+                        ))
+                        .child(diagnostic_row(
+                            &theme,
+                            "Export",
+                            if self.diagnostics.export_encoder.is_empty() {
+                                "Not sampled"
+                            } else {
+                                &self.diagnostics.export_encoder
+                            },
+                        ))
+                        .child(diagnostic_row(&theme, "Frame pacing", "—"))
+                        .child(diagnostic_row(&theme, "Frame spikes", "—"))
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .child("Resources")
+                                        .text_size(px(13.0))
+                                        .text_color(theme.muted),
+                                )
+                                .child(
+                                    div()
+                                        .child("Rendered on demand")
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text)
+                                        .text_right(),
+                                )
+                                .child(button(
+                                    "diag-refresh",
+                                    "Refresh",
+                                    ButtonKind::Ghost,
+                                    Some("↻"),
+                                    true,
+                                    cx,
+                                    move |_app, cx| {
+                                        // Re-sample the renderer/encoder lines.
+                                        cx.notify();
+                                    },
+                                )),
+                        ),
+                );
             inner = inner
-                .child(section_label(&theme, "PERFORMANCE"))
+                .child(section_head(&theme, "Performance", searching))
                 .child(group);
             any_visible = true;
         }
@@ -378,128 +351,126 @@ impl crate::App {
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Library and generated media"))
-            .child(help_text(&theme, "Your original videos are never moved or modified."))
-            .child(sub_label(&theme, "ACTIVE WORKSPACE FOLDER"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(static_field("static-library-root", &theme, "No folder chosen", self.settings_value(LIBRARY_ROOT))),
-            )
-            .child(help_text(&theme, "ClipRelay searches this folder and every folder inside it. Replace it from the workspace ⋯ menu."))
-            .child(sub_label(&theme, "GENERATED VIDEO FOLDER"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(static_field("static-export-dir", &theme, "No folder chosen", self.settings_value(EXPORT_DIR)))
-                    .child(button(
-                        "choose-export",
-                        "Choose",
-                        ButtonKind::Secondary,
-                        Some("▸"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            app.choose_export_folder(cx);
-                        },
-                    ))
-                    .child(button(
-                        "reveal-export",
-                        "Reveal",
-                        ButtonKind::Ghost,
-                        Some("↗"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            let export_dir = app.settings_value(EXPORT_DIR);
-                            if !export_dir.is_empty() {
-                                let _ = cliprelay_core::x::XAssistant::reveal(std::path::Path::new(&export_dir));
-                            }
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(sub_label(&theme, "RANDOM"))
-            .child(help_text(&theme, "Random uses the lightweight filename list immediately, then checks only the clip it picks."))
-            .child(checkbox(
-                "avoid-repeats",
-                "Avoid repeats until every video has been picked",
-                self.settings_bool(AVOID_REPEATS),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(AVOID_REPEATS, json!(value), cx);
-                },
-            ))
-            .child(sub_label(&theme, "BACKGROUND LIBRARY INDEX"))
-            .child(checkbox(
-                "auto-index",
-                "Start indexing automatically after choosing a folder",
-                self.settings_bool(AUTO_INDEX),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(AUTO_INDEX, json!(value), cx);
-                },
-            ))
-            .child(help_text(&theme, "Off by default for large libraries. Rescan always starts it manually; reopening the app only refreshes the lightweight filename list."))
-            .child(checkbox(
-                "verify-index",
-                "Verify every file and read duration, resolution, and codec details",
-                self.settings_bool(VERIFY_DURING_INDEX),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(VERIFY_DURING_INDEX, json!(value), cx);
-                },
-            ))
-            .child(checkbox(
-                "deep-scan",
-                "Inspect files with uncommon or missing video extensions (slowest)",
-                self.settings_bool(DEEP_SCAN),
-                self.settings_bool(VERIFY_DURING_INDEX),
-                cx,
-                |app, cx, value| {
-                    app.set_setting(DEEP_SCAN, json!(value), cx);
-                },
-            ))
-            .child(checkbox(
-                "thumbs-index",
-                "Generate all missing thumbnails while indexing",
-                self.settings_bool(THUMBNAILS_DURING_INDEX),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(THUMBNAILS_DURING_INDEX, json!(value), cx);
-                },
-            ))
-            .child(checkbox(
-                "hover-previews",
-                "Generate and play muted previews when hovering",
-                self.settings_bool(HOVER_PREVIEWS),
-                true,
-                cx,
-                |app, cx, value| {
-                    app.set_setting(HOVER_PREVIEWS, json!(value), cx);
-                },
-            ))
-            .child(help_text(
-                &theme,
-                if self.settings_bool(VERIFY_DURING_INDEX) {
-                    "Turn off any optional step above to reduce background work. Random remains independent of this index."
-                } else {
-                    "With verification off, the library appears from filenames and sizes. A video is checked only when you select or publish it."
-                },
-            ));
-            inner = inner.child(section_label(&theme, "FILES")).child(group);
+            group = group
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(8.0))
+                        .child(static_field(
+                            "static-library-root",
+                            &theme,
+                            "No folder chosen",
+                            self.settings_value(LIBRARY_ROOT),
+                        )),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(8.0))
+                        .child(static_field(
+                            "static-export-dir",
+                            &theme,
+                            "No folder chosen",
+                            self.settings_value(EXPORT_DIR),
+                        ))
+                        .child(button(
+                            "choose-export",
+                            "Choose",
+                            ButtonKind::Secondary,
+                            Some("▸"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                app.choose_export_folder(cx);
+                            },
+                        ))
+                        .child(button(
+                            "reveal-export",
+                            "Reveal",
+                            ButtonKind::Ghost,
+                            Some("↗"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                let export_dir = app.settings_value(EXPORT_DIR);
+                                if !export_dir.is_empty() {
+                                    let _ = cliprelay_core::x::XAssistant::reveal(
+                                        std::path::Path::new(&export_dir),
+                                    );
+                                }
+                                cx.notify();
+                            },
+                        )),
+                )
+                .child(checkbox(
+                    "avoid-repeats",
+                    "Avoid repeats until every video has been picked",
+                    self.settings_bool(AVOID_REPEATS),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(AVOID_REPEATS, json!(value), cx);
+                    },
+                ))
+                .child(checkbox(
+                    "auto-index",
+                    "Start indexing automatically after choosing a folder",
+                    self.settings_bool(AUTO_INDEX),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(AUTO_INDEX, json!(value), cx);
+                    },
+                ))
+                .child(checkbox(
+                    "verify-index",
+                    "Verify every file and read duration, resolution, and codec details",
+                    self.settings_bool(VERIFY_DURING_INDEX),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(VERIFY_DURING_INDEX, json!(value), cx);
+                    },
+                ))
+                .child(checkbox(
+                    "deep-scan",
+                    "Inspect files with uncommon or missing video extensions (slowest)",
+                    self.settings_bool(DEEP_SCAN),
+                    self.settings_bool(VERIFY_DURING_INDEX),
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(DEEP_SCAN, json!(value), cx);
+                    },
+                ))
+                .child(checkbox(
+                    "thumbs-index",
+                    "Generate all missing thumbnails while indexing",
+                    self.settings_bool(THUMBNAILS_DURING_INDEX),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(THUMBNAILS_DURING_INDEX, json!(value), cx);
+                    },
+                ))
+                .child(checkbox(
+                    "hover-previews",
+                    "Generate and play muted previews when hovering",
+                    self.settings_bool(HOVER_PREVIEWS),
+                    true,
+                    cx,
+                    |app, cx, value| {
+                        app.set_setting(HOVER_PREVIEWS, json!(value), cx);
+                    },
+                ));
+            inner = inner
+                .child(section_head(&theme, "Files", searching))
+                .child(group);
             any_visible = true;
         }
 
@@ -543,211 +514,327 @@ impl crate::App {
             ],
         );
         if telegram_bot || telegram_personal {
-            inner = inner.child(section_label(&theme, "TELEGRAM"));
+            inner = inner.child(section_head(&theme, "Telegram", searching));
             any_visible = true;
         }
         if telegram_bot {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Bot connection"))
-            .child(help_text(&theme, "Best for a channel: simple setup, reliable sending, and no personal session stored. Add the bot as an administrator in the channel."))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(field("tg-bot-token", "Bot token from @BotFather",
-                            self.fields.get("tg-bot-token").unwrap_or(&FieldState::default()),
-                            self.focused_field.as_deref() == Some("tg-bot-token"), true, true, cx).flex_1().min_w(px(200.0)))
-                    .child(button(
-                        "tg-connect",
-                        if self.telegram.bot.starts_with('@') { "Replace bot" } else { "Connect bot" },
-                        ButtonKind::Primary,
-                        Some("➤"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            let token = app.field_text("tg-bot-token");
-                            app.command(Command::ValidateBotToken(token));
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(field("tg-destination", "@channelname or numeric chat ID",
-                            self.fields.get("tg-destination").unwrap_or(&FieldState::default()),
-                            self.focused_field.as_deref() == Some("tg-destination"), true, false, cx).flex_1().min_w(px(200.0)))
-                    .child(button(
-                        "tg-check-dest",
-                        "Check destination",
-                        ButtonKind::Secondary,
-                        Some("✓"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            let destination = app.field_text("tg-destination");
-                            app.command(Command::ValidateBotDestination(destination));
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(12.0))
-                    .child(status_pill(
-                        "tg-status-pill",
-                        if self.bot_connected() { "configured" } else { "not configured" },
-                        if self.bot_connected() { PillState::Success } else { PillState::Warning },
-                    ))
-                    .child(
-                        div()
+            group = group
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(group_title(&theme, "Bot"))
+                        .child(div().flex_1())
+                        .child(status_pill(
+                            "tg-status-pill",
+                            if self.bot_connected() {
+                                "configured"
+                            } else {
+                                "not configured"
+                            },
+                            if self.bot_connected() {
+                                PillState::Success
+                            } else {
+                                PillState::Warning
+                            },
+                        ))
+                        .child(if self.bot_connected() {
+                            button(
+                                "tg-disconnect",
+                                "Disconnect",
+                                ButtonKind::Ghost,
+                                Some("✕"),
+                                true,
+                                cx,
+                                |app, cx| {
+                                    app.command(Command::DisconnectBot);
+                                    cx.notify();
+                                },
+                            )
+                            .into_any()
+                        } else {
+                            div().into_any()
+                        }),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(8.0))
+                        .child(
+                            field(
+                                "tg-bot-token",
+                                "Bot token from @BotFather",
+                                self.fields
+                                    .get("tg-bot-token")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-bot-token"),
+                                true,
+                                true,
+                                cx,
+                            )
                             .flex_1()
-                            .child(self.telegram.message.clone())
-                            .text_size(px(12.0))
-                            .text_color(theme.muted)
-                            .text_ellipsis(),
-                    )
-                    .child(if self.bot_connected() {
-                        button(
-                            "tg-disconnect",
-                            "Disconnect",
-                            ButtonKind::Danger,
-                            Some("✕"),
+                            .min_w(px(200.0)),
+                        )
+                        .child(button(
+                            "tg-connect",
+                            if self.telegram.bot.starts_with('@') {
+                                "Replace bot"
+                            } else {
+                                "Connect bot"
+                            },
+                            ButtonKind::Primary,
+                            Some("➤"),
                             true,
                             cx,
                             |app, cx| {
-                                app.command(Command::DisconnectBot);
+                                let token = app.field_text("tg-bot-token");
+                                app.command(Command::ValidateBotToken(token));
                                 cx.notify();
                             },
+                        )),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(8.0))
+                        .child(
+                            field(
+                                "tg-destination",
+                                "@channelname or numeric chat ID",
+                                self.fields
+                                    .get("tg-destination")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-destination"),
+                                true,
+                                false,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(200.0)),
                         )
-                        .into_any()
-                    } else {
-                        div().into_any()
-                    }),
-            );
+                        .child(button(
+                            "tg-check-dest",
+                            "Check destination",
+                            ButtonKind::Secondary,
+                            Some("✓"),
+                            true,
+                            cx,
+                            |app, cx| {
+                                let destination = app.field_text("tg-destination");
+                                app.command(Command::ValidateBotDestination(destination));
+                                cx.notify();
+                            },
+                        )),
+                );
+            if !self.telegram.message.is_empty() {
+                group = group.child(
+                    div()
+                        .child(self.telegram.message.clone())
+                        .text_size(px(13.0))
+                        .text_color(theme.muted),
+                );
+            }
             inner = inner.child(group);
         }
         if telegram_personal {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Personal account"))
-            .child(help_text(&theme, "Use this when the sender must be your own account. Telegram requires an API ID and hash from my.telegram.org; the resulting session is stored in your OS keychain."))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(10.0))
-                    .child(field("tg-api-id", "API ID",
-                        self.fields.get("tg-api-id").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-api-id"), true, false, cx).flex_1().min_w(px(160.0)))
-                    .child(field("tg-api-hash", "API hash",
-                        self.fields.get("tg-api-hash").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-api-hash"), true, true, cx).flex_1().min_w(px(160.0))),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(10.0))
-                    .child(field("tg-phone", "+1 555 123 4567",
-                        self.fields.get("tg-phone").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-phone"), true, false, cx).flex_1().min_w(px(200.0)))
-                    .child(button(
-                        "tg-send-code",
-                        "Send login code",
-                        ButtonKind::Secondary,
-                        Some("➤"),
-                        !self.personal_configured(),
-                        cx,
-                        |app, cx| {
-                            let api_id: i32 = app.field_text("tg-api-id").parse().unwrap_or(0);
-                            let api_hash = app.field_text("tg-api-hash");
-                            let phone = app.field_text("tg-phone");
-                            app.command(Command::BeginPersonalLogin(api_id, api_hash, phone));
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(10.0))
-                    .child(field("tg-code", "Login code",
-                        self.fields.get("tg-code").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-code"), true, false, cx).flex_1().min_w(px(160.0)))
-                    .child(field("tg-password", "2-step password, if requested",
-                        self.fields.get("tg-password").unwrap_or(&FieldState::default()),
-                        self.focused_field.as_deref() == Some("tg-password"), true, true, cx).flex_1().min_w(px(160.0))),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(button(
-                        "tg-finish",
-                        "Finish sign-in",
-                        ButtonKind::Primary,
-                        Some("✓"),
-                        !self.personal_configured(),
-                        cx,
-                        |app, cx| {
-                            let code = app.field_text("tg-code");
-                            let password = app.field_text("tg-password");
-                            app.command(Command::CompletePersonalLogin(code, password));
-                            cx.notify();
-                        },
-                    ))
-                    .child(button(
-                        "tg-load-chats",
-                        "Load chats",
-                        ButtonKind::Ghost,
-                        Some("↻"),
-                        self.personal_configured(),
-                        cx,
-                        |app, cx| {
-                            app.command(Command::LoadTelegramDialogs);
-                            cx.notify();
-                        },
-                    ))
-                    .child(button(
-                        "tg-sign-out",
-                        "Sign out",
-                        ButtonKind::Danger,
-                        Some("✕"),
-                        self.personal_configured(),
-                        cx,
-                        |app, cx| {
-                            app.command(Command::SignOutPersonal);
-                            cx.notify();
-                        },
-                    ))
-                    .child(status_pill(
-                        "tg-personal-pill",
-                        if self.personal_configured() { "signed in" } else { "not signed in" },
-                        if self.personal_configured() { PillState::Success } else { PillState::Warning },
-                    )),
-            );
+            group = group
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(group_title(&theme, "Personal account"))
+                        .child(div().flex_1())
+                        .child(status_pill(
+                            "tg-personal-pill",
+                            if self.personal_configured() {
+                                "signed in"
+                            } else {
+                                "not signed in"
+                            },
+                            if self.personal_configured() {
+                                PillState::Success
+                            } else {
+                                PillState::Warning
+                            },
+                        ))
+                        .child(if self.personal_configured() {
+                            button(
+                                "tg-sign-out",
+                                "Sign out",
+                                ButtonKind::Ghost,
+                                Some("✕"),
+                                true,
+                                cx,
+                                |app, cx| {
+                                    app.command(Command::SignOutPersonal);
+                                    cx.notify();
+                                },
+                            )
+                            .into_any()
+                        } else {
+                            div().into_any()
+                        }),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(10.0))
+                        .child(
+                            field(
+                                "tg-api-id",
+                                "API ID",
+                                self.fields
+                                    .get("tg-api-id")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-api-id"),
+                                true,
+                                false,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(160.0)),
+                        )
+                        .child(
+                            field(
+                                "tg-api-hash",
+                                "API hash",
+                                self.fields
+                                    .get("tg-api-hash")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-api-hash"),
+                                true,
+                                true,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(160.0)),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(10.0))
+                        .child(
+                            field(
+                                "tg-phone",
+                                "+1 555 123 4567",
+                                self.fields
+                                    .get("tg-phone")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-phone"),
+                                true,
+                                false,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(200.0)),
+                        )
+                        .child(button(
+                            "tg-send-code",
+                            "Send login code",
+                            ButtonKind::Secondary,
+                            Some("➤"),
+                            !self.personal_configured(),
+                            cx,
+                            |app, cx| {
+                                let api_id: i32 = app.field_text("tg-api-id").parse().unwrap_or(0);
+                                let api_hash = app.field_text("tg-api-hash");
+                                let phone = app.field_text("tg-phone");
+                                app.command(Command::BeginPersonalLogin(api_id, api_hash, phone));
+                                cx.notify();
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(10.0))
+                        .child(
+                            field(
+                                "tg-code",
+                                "Login code",
+                                self.fields.get("tg-code").unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-code"),
+                                true,
+                                false,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(160.0)),
+                        )
+                        .child(
+                            field(
+                                "tg-password",
+                                "2-step password, if requested",
+                                self.fields
+                                    .get("tg-password")
+                                    .unwrap_or(&FieldState::default()),
+                                self.focused_field.as_deref() == Some("tg-password"),
+                                true,
+                                true,
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w(px(160.0)),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(8.0))
+                        .child(button(
+                            "tg-finish",
+                            "Finish sign-in",
+                            ButtonKind::Primary,
+                            Some("✓"),
+                            !self.personal_configured(),
+                            cx,
+                            |app, cx| {
+                                let code = app.field_text("tg-code");
+                                let password = app.field_text("tg-password");
+                                app.command(Command::CompletePersonalLogin(code, password));
+                                cx.notify();
+                            },
+                        ))
+                        .child(button(
+                            "tg-load-chats",
+                            "Load chats",
+                            ButtonKind::Ghost,
+                            Some("↻"),
+                            self.personal_configured(),
+                            cx,
+                            |app, cx| {
+                                app.command(Command::LoadTelegramDialogs);
+                                cx.notify();
+                            },
+                        )),
+                );
             // Chat picker stays with the personal account block.
             if !self.dialogs.is_empty() {
                 group = group.child(chat_picker(self, cx, &theme));
@@ -776,39 +863,41 @@ impl crate::App {
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group.child(group_title(&theme, "Manual browser posting"))
-            .child(help_text(&theme, "ClipRelay opens X’s official composer with your text prefilled, then places the prepared video on the clipboard and keeps drag-to-upload available. You review and press Post yourself. No paid X API is required."))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .child("Default file limit")
-                            .text_size(px(13.0))
-                            .text_color(theme.text_soft)
-                            .font_weight(FontWeight::MEDIUM),
-                    )
-                    .child(
-                        div()
-                            .w(px(110.0))
-                            .h(px(CONTROL_HEIGHT))
-                            .child(field("x-limit", "512",
-                                    self.fields.get("x-limit").unwrap_or(&FieldState::default()),
-                                    self.focused_field.as_deref() == Some("x-limit"), true, false, cx)),
-                    )
-                    .child(
-                        div()
-                            .child("MB")
-                            .text_size(px(13.0))
-                            .text_color(theme.muted),
-                    ),
-            )
-            .child(x_limit_feedback(self, &theme));
-            inner = inner.child(section_label(&theme, "X HANDOFF")).child(group);
+            group = group
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(
+                            div()
+                                .child("Default file limit")
+                                .text_size(px(15.0))
+                                .text_color(theme.text_soft)
+                                .font_weight(FontWeight::MEDIUM),
+                        )
+                        .child(div().w(px(110.0)).h(px(CONTROL_HEIGHT)).child(field(
+                            "x-limit",
+                            "512",
+                            self.fields.get("x-limit").unwrap_or(&FieldState::default()),
+                            self.focused_field.as_deref() == Some("x-limit"),
+                            true,
+                            false,
+                            cx,
+                        )))
+                        .child(
+                            div()
+                                .child("MB")
+                                .text_size(px(13.0))
+                                .text_color(theme.muted),
+                        ),
+                )
+                .child(x_limit_feedback(self, &theme));
+            inner = inner
+                .child(section_head(&theme, "X handoff", searching))
+                .child(group);
             any_visible = true;
         }
 
@@ -828,7 +917,31 @@ impl crate::App {
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group
+            group = group.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(16.0))
+                    .child(diagnostic_cell(&theme, "FFmpeg", &self.diagnostics.ffmpeg))
+                    .child(diagnostic_cell(
+                        &theme,
+                        "FFprobe",
+                        &self.diagnostics.ffprobe,
+                    ))
+                    .child(diagnostic_cell(
+                        &theme,
+                        "Database",
+                        &self.diagnostics.database,
+                    ))
+                    .child(diagnostic_cell(
+                        &theme,
+                        "Secrets",
+                        &self.diagnostics.secret_backend,
+                    )),
+            );
+            inner = inner
                 .child(
                     div()
                         .w_full()
@@ -836,7 +949,7 @@ impl crate::App {
                         .flex_row()
                         .items_center()
                         .gap(px(12.0))
-                        .child(group_title(&theme, "Local tools"))
+                        .child(section_head(&theme, "Diagnostics", searching))
                         .child(div().flex_1())
                         .child(button(
                             "diagnostics-refresh",
@@ -851,32 +964,6 @@ impl crate::App {
                             },
                         )),
                 )
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .gap(px(16.0))
-                        .child(diagnostic_cell(&theme, "FFmpeg", &self.diagnostics.ffmpeg))
-                        .child(diagnostic_cell(
-                            &theme,
-                            "FFprobe",
-                            &self.diagnostics.ffprobe,
-                        ))
-                        .child(diagnostic_cell(
-                            &theme,
-                            "Database",
-                            &self.diagnostics.database,
-                        ))
-                        .child(diagnostic_cell(
-                            &theme,
-                            "Secrets",
-                            &self.diagnostics.secret_backend,
-                        )),
-                );
-            inner = inner
-                .child(section_label(&theme, "DIAGNOSTICS"))
                 .child(group);
             any_visible = true;
         }
@@ -927,29 +1014,63 @@ impl crate::App {
             );
         }
 
-        content = content.child(inner);
-        let _ = &mut page;
-        page = page.child(content);
-        // Persistent filter status: a selected section or search query can
-        // hide Diagnostics and friends below the fold, so the stranded state
-        // must always name itself and offer the way out.
-        if self.settings_page.active_section.is_some() || !query_display.is_empty() {
-            let scope = match self.settings_page.active_section.as_deref() {
-                Some("interface") => "the Interface section",
-                Some("performance") => "the Performance section",
-                Some("files") => "the Files section",
-                Some("telegram") => "the Telegram section",
-                Some("x") => "the X Handoff section",
-                Some("diagnostics") => "the Diagnostics section",
-                _ => "matching sections",
-            };
-            let status = if query_display.is_empty() {
-                format!("Showing {scope}")
-            } else if self.settings_page.active_section.is_some() {
-                format!("Showing {scope} matching “{query_display}”")
+        if searching {
+            // Flat results: one exact column, same scroll-range guarantee
+            // as the detail pane below.
+            page = page.child(
+                div()
+                    .id("settings-scroll")
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_scroll()
+                    .scrollbar_width(px(10.0))
+                    .track_scroll(&self.settings_scroll)
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(side_pad))
+                            .pt(px(4.0))
+                            .pb(px(48.0))
+                            .flex()
+                            .flex_col()
+                            .child(inner),
+                    ),
+            );
+        } else {
+            let rail = section_rail(self, cx, &theme, &active, stacked, gutter);
+            let mut body = div().w_full().flex().flex_1().min_h(px(0.0));
+            if stacked {
+                body = body.flex_col().child(rail);
             } else {
-                format!("Showing sections matching “{query_display}”")
-            };
+                body = body.flex_row().child(rail);
+            }
+            page = page.child(
+                body.child(
+                    div()
+                        .id("settings-detail")
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .overflow_scroll()
+                        .scrollbar_width(px(10.0))
+                        .track_scroll(&self.settings_scroll)
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(SETTINGS_MAX_W))
+                                .px(px(if stacked { gutter } else { 32.0 }))
+                                .pt(px(4.0))
+                                .pb(px(48.0))
+                                .flex()
+                                .flex_col()
+                                .child(inner),
+                        ),
+                ),
+            );
+        }
+        // Persistent filter status while searching, so a query that hides
+        // sections always names itself and offers the way out.
+        if !query_display.is_empty() {
+            let status = format!("Filtering by “{query_display}”");
             page = page.child(
                 div()
                     .w_full()
@@ -1033,25 +1154,8 @@ fn group_title(theme: &crate::theme::Theme, title: &str) -> Div {
         .font_weight(FontWeight::MEDIUM)
 }
 
-/// Capped page width shared by the header, nav, and body of this page.
+/// Capped detail width for the settings page.
 const SETTINGS_MAX_W: f32 = 880.0;
-
-/// Centered measure: caps the column and splits leftover window space
-/// evenly instead of pinning content to the left.
-fn center_measure(max_width: f32, gutter: f32, top_pad: Pixels, first: Div, second: Div) -> Div {
-    div().w_full().flex().flex_col().items_center().child(
-        div()
-            .w_full()
-            .max_w(px(max_width))
-            .px(px(gutter))
-            .pt(top_pad)
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(first)
-            .child(second),
-    )
-}
 
 /// Workbench-aligned settings card: flat surface, hairline seam, 2px radius.
 fn seamed_group(theme: &crate::theme::Theme) -> Div {
@@ -1061,10 +1165,10 @@ fn seamed_group(theme: &crate::theme::Theme) -> Div {
         .bg(theme.surface)
         .border_1()
         .border_color(theme.border)
-        .p(px(SPACING_LG))
+        .p(px(20.0))
         .flex()
         .flex_col()
-        .gap(px(SPACING_SM))
+        .gap(px(12.0))
 }
 
 fn settings_query(app: &crate::App) -> String {
@@ -1077,113 +1181,212 @@ fn settings_query(app: &crate::App) -> String {
 /// A section stays visible when the section nav selects it (or selects all)
 /// and the search query matches one of its keywords.
 fn section_open(app: &crate::App, id: &str, keywords: &[&str]) -> bool {
-    if app
-        .settings_page
-        .active_section
-        .as_deref()
-        .is_some_and(|active| active != id)
-    {
-        return false;
-    }
     let query = settings_query(app);
     if query.is_empty() {
-        return true;
+        // Browsing shows the rail-selected section only.
+        return app
+            .settings_page
+            .active_section
+            .as_deref()
+            .unwrap_or("interface")
+            == id;
     }
-    // Every query word must match somewhere: "file limit" finds X HANDOFF
-    // even though no single keyword contains the whole phrase.
+    // Searching matches every query word across all sections and ignores
+    // the rail selection: "file limit" finds X HANDOFF even though no
+    // single keyword contains the whole phrase.
     query
         .split_whitespace()
         .all(|word| keywords.iter().any(|key| key.contains(word)))
 }
 
-fn section_nav(app: &mut crate::App, cx: &mut Context<crate::App>) -> Div {
-    const SECTIONS: &[(&str, &str)] = &[
+/// Big section title for the detail pane. Search results use the small
+/// tracked section_label instead so matches stay scannable.
+fn detail_title(theme: &crate::theme::Theme, title: &str) -> Div {
+    div()
+        .child(title.to_string())
+        .text_size(px(22.0))
+        .text_color(theme.text)
+        .font_weight(FontWeight::SEMIBOLD)
+}
+
+/// Section heading that adapts to the mode: the big title while
+/// browsing, the small tracked label inside search results.
+fn section_head(theme: &crate::theme::Theme, title: &str, searching: bool) -> Div {
+    if searching {
+        section_label(theme, &title.to_uppercase())
+    } else {
+        detail_title(theme, title)
+    }
+}
+
+/// One-line live summary for a rail row: what the user would find if
+/// they opened that section right now.
+fn rail_status(app: &crate::App, id: &str) -> String {
+    match id {
+        "interface" => match app.theme_mode.as_str() {
+            "pitch_black" => "Pitch black".to_string(),
+            "full_white" => "Full white".to_string(),
+            "frosted_glass" => "Frosted glass".to_string(),
+            "graphite_glass" => "Graphite glass".to_string(),
+            _ => "Relay".to_string(),
+        },
+        "performance" => {
+            if app.settings_value(PERFORMANCE_MODE) == "maximum" {
+                "Maximum".to_string()
+            } else {
+                "Automatic".to_string()
+            }
+        }
+        "files" => {
+            let root = app.settings_value(LIBRARY_ROOT);
+            if root.is_empty() {
+                "No folder".to_string()
+            } else {
+                std::path::Path::new(&root)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            }
+        }
+        "telegram" => {
+            let bot = app.bot_connected();
+            let personal = app.personal_configured();
+            match (bot, personal) {
+                (true, true) => "Bot + personal".to_string(),
+                (true, false) => "Bot only".to_string(),
+                (false, true) => "Personal only".to_string(),
+                (false, false) => "Not configured".to_string(),
+            }
+        }
+        "x" => {
+            let limit = app
+                .settings
+                .get(X_LIMIT_MB)
+                .and_then(|value| value.as_f64())
+                .unwrap_or(512.0);
+            if limit.fract() == 0.0 {
+                format!("{} MB cap", limit as i64)
+            } else {
+                format!("{limit} MB cap")
+            }
+        }
+        _ => {
+            let ready = !app.diagnostics.ffmpeg.is_empty()
+                && !app.diagnostics.ffprobe.is_empty()
+                && !app.diagnostics.database.is_empty()
+                && !app.diagnostics.secret_backend.is_empty();
+            if ready {
+                "Tools ready".to_string()
+            } else {
+                "Checking…".to_string()
+            }
+        }
+    }
+}
+
+/// The section rail: six big rows, each naming its section and its live
+/// state. Replaces the old filter chips; the rail is navigation, so it
+/// never hides content the way a filter does.
+fn section_rail(
+    app: &mut crate::App,
+    cx: &mut Context<crate::App>,
+    theme: &crate::theme::Theme,
+    active: &str,
+    stacked: bool,
+    gutter: f32,
+) -> Div {
+    let mut rail = div().flex().gap(px(4.0));
+    if stacked {
+        rail = rail
+            .w_full()
+            .px(px(gutter))
+            .pt(px(4.0))
+            .pb(px(12.0))
+            .flex_row()
+            .flex_wrap()
+            .border_b_1()
+            .border_color(theme.border);
+    } else {
+        rail = rail
+            .w(px(232.0))
+            .flex_none()
+            .flex_col()
+            .py(px(8.0))
+            .pl(px(12.0))
+            .pr(px(20.0))
+            .border_r_1()
+            .border_color(theme.border);
+    }
+    for (id, label) in [
         ("interface", "Interface"),
         ("performance", "Performance"),
         ("files", "Files"),
         ("telegram", "Telegram"),
-        ("x", "X Handoff"),
+        ("x", "X handoff"),
         ("diagnostics", "Diagnostics"),
-    ];
-    let theme = current_theme();
-    let active = app.settings_page.active_section.clone();
-    // Gutters come from the centered measure; this row only wraps chips.
-    let mut row = div()
-        .w_full()
-        .pb(px(4.0))
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .gap(px(SPACING_SM))
-        .child(nav_chip(cx, &theme, active.is_none(), None, "all", "All"));
-    for (id, label) in SECTIONS {
-        row = row.child(nav_chip(
-            cx,
-            &theme,
-            active.as_deref() == Some(id),
-            Some(id.to_string()),
-            id,
-            label,
-        ));
-    }
-    row
-}
-
-fn nav_chip(
-    cx: &mut Context<crate::App>,
-    theme: &crate::theme::Theme,
-    selected: bool,
-    section: Option<String>,
-    id: &str,
-    label: &str,
-) -> Stateful<Div> {
-    let label = label.to_string();
-    let click_section = section.clone();
-    let activate_section = section.clone();
-    let space_section = section;
-    div()
-        .id(SharedString::from(format!("settings-nav-{id}")))
-        .h(px(28.0))
-        .px(px(12.0))
-        .rounded(px(RADIUS_SM))
-        .bg(if selected {
-            theme.active
+    ] {
+        let selected = active == id;
+        let status = rail_status(app, id);
+        let id = id.to_string();
+        let click_id = id.clone();
+        let activate_id = id.clone();
+        let space_id = id;
+        let mut row = div()
+            .id(SharedString::from(format!("settings-rail-{click_id}")))
+            .px(px(12.0))
+            .py(px(10.0))
+            .rounded(px(RADIUS_SM))
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .bg(if selected {
+                theme.active
+            } else {
+                theme.transparent()
+            })
+            .hover(|style| style.bg(if selected { theme.active } else { theme.hover }))
+            .cursor_pointer()
+            .tab_index(0)
+            .child(
+                div()
+                    .child(label.to_string())
+                    .text_size(px(15.0))
+                    .text_color(if selected {
+                        theme.accent_text
+                    } else {
+                        theme.text_soft
+                    })
+                    .font_weight(FontWeight::MEDIUM),
+            )
+            .child(
+                div()
+                    .child(status)
+                    .text_size(px(12.0))
+                    .text_color(theme.muted)
+                    .text_ellipsis(),
+            )
+            .on_click(cx.listener(move |app, _event, _window, cx| {
+                app.settings_page.active_section = Some(click_id.clone());
+                cx.notify();
+            }))
+            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                app.settings_page.active_section = Some(activate_id.clone());
+                cx.notify();
+            }))
+            .on_action(
+                cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                    app.settings_page.active_section = Some(space_id.clone());
+                    cx.notify();
+                }),
+            );
+        if stacked {
+            row = row.flex_1().min_w(px(150.0));
         } else {
-            theme.transparent()
-        })
-        .border_1()
-        .border_color(if selected { theme.accent } else { theme.border })
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .tab_index(0)
-        .child(
-            div()
-                .child(label)
-                .text_size(px(12.0))
-                .text_color(if selected {
-                    theme.accent_text
-                } else {
-                    theme.muted
-                })
-                .font_weight(FontWeight::SEMIBOLD),
-        )
-        .on_click(cx.listener(move |app, _event, _window, cx| {
-            app.settings_page.active_section = click_section.clone();
-            cx.notify();
-        }))
-        .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-            app.settings_page.active_section = activate_section.clone();
-            cx.stop_propagation();
-        }))
-        .on_action(
-            cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                app.settings_page.active_section = space_section.clone();
-                cx.stop_propagation();
-            }),
-        )
+            row = row.w_full();
+        }
+        rail = rail.child(row);
+    }
+    rail
 }
 
 /// Live validation for the X handoff file limit: confirming a non-positive
@@ -1302,7 +1505,7 @@ fn theme_choices(
         .flex_wrap()
         .gap(px(12.0))
         .mt(px(12.0));
-    for (mode, title, subtitle) in choices {
+    for (mode, title, _subtitle) in choices {
         let selected = app.theme_mode.as_str() == mode;
         let palette = crate::theme::Theme::for_mode(crate::theme::ThemeMode::parse(mode));
         let mode = mode.to_string();
@@ -1405,24 +1608,13 @@ fn theme_choices(
                 ),
         );
         card = card.child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    div()
-                        .child(title)
-                        .text_size(px(13.0))
-                        .text_color(theme.text)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-                .child(
-                    div()
-                        .child(subtitle)
-                        .text_size(px(12.0))
-                        .text_color(theme.muted),
-                ),
+            div().flex_1().flex().flex_col().justify_center().child(
+                div()
+                    .child(title)
+                    .text_size(px(15.0))
+                    .text_color(theme.text)
+                    .font_weight(FontWeight::SEMIBOLD),
+            ),
         );
         if selected {
             card = card.child(
@@ -1456,7 +1648,8 @@ fn setting_row(
 ) -> impl Element {
     div()
         .w_full()
-        .h(px(CONTROL_HEIGHT + 8.0))
+        .min_h(px(52.0))
+        .py(px(6.0))
         .flex()
         .flex_row()
         .items_center()
@@ -1465,11 +1658,11 @@ fn setting_row(
             div()
                 .flex_1()
                 .child(label)
-                .text_size(px(13.0))
+                .text_size(px(15.0))
                 .text_color(theme.text_soft)
                 .font_weight(FontWeight::MEDIUM),
         )
-        .child(combo(cx, id, options, selected, 220.0, open, on_change))
+        .child(combo(cx, id, options, selected, 240.0, open, on_change))
 }
 
 fn combo(
@@ -1678,21 +1871,22 @@ fn diagnostic_row(theme: &crate::theme::Theme, label: &str, value: &str) -> Div 
 fn diagnostic_cell(theme: &crate::theme::Theme, label: &str, value: &str) -> Div {
     div()
         .flex_1()
-        .min_w(px(140.0))
+        .min_w(px(160.0))
         .flex()
         .flex_col()
         .gap(px(4.0))
         .child(
             div()
                 .child(label.to_string())
-                .text_size(px(13.0))
+                .text_size(px(12.0))
                 .text_color(theme.muted),
         )
         .child(
             div()
                 .child(value.to_string())
-                .text_size(px(12.0))
+                .text_size(px(15.0))
                 .text_color(theme.text)
+                .font_weight(FontWeight::MEDIUM)
                 .text_ellipsis(),
         )
 }
