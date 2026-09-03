@@ -1394,7 +1394,7 @@ impl crate::App {
                 .w(px(explorer_width))
                 .h_full()
                 .rounded_tl(px(3.0))
-                .bg(theme.section_background())
+                .bg(theme.explorer_background())
                 .border_t_1()
                 .border_l_1()
                 .border_r_1()
@@ -1593,14 +1593,41 @@ impl crate::App {
                         "Library view options",
                         cx,
                     ));
-                    let random_width = if narrow_actions {
-                        112.0
-                    } else if compact_actions {
-                        126.0
+                    let scanning = self.scan.active;
+                    let cancelling = self.scan.cancelling;
+                    let scanning_label = if cancelling {
+                        "Stopping…"
+                    } else if scanning {
+                        "Stop scan"
                     } else {
-                        168.0
+                        "Rescan"
                     };
-                    center = center.child(self.render_random_source_trigger(random_width, cx));
+                    center = center.child(workbench_button(
+                        "rescan",
+                        scanning_label,
+                        if cancelling || scanning {
+                            "square"
+                        } else {
+                            "refresh"
+                        },
+                        ButtonKind::Ghost,
+                        !(scanning && cancelling),
+                        false,
+                        if scanning {
+                            "Stop the active library scan"
+                        } else {
+                            "Rescan the active workspace"
+                        },
+                        cx,
+                        |app, cx| {
+                            if app.scan.active && !app.scan.cancelling {
+                                app.command(Command::CancelScan);
+                            } else {
+                                app.command(Command::ScanLibrary);
+                            }
+                            cx.notify();
+                        },
+                    ));
                 }
                 toolbar = toolbar.child(center);
             }
@@ -2883,7 +2910,7 @@ impl crate::App {
                 size(px(0.0), px(34.0)),
             )
             .flex_1()
-            .min_w(px(if very_compact { 230.0 } else { 280.0 }))
+            .min_w(px(if very_compact { 200.0 } else { 280.0 }))
             .max_w(px(680.0))
             .h(px(34.0)),
         );
@@ -2926,41 +2953,16 @@ impl crate::App {
         header = header.child(div().w(px(if compact { 2.0 } else { 7.0 })).flex_none());
 
         let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
-        let scanning = self.scan.active;
-        let cancelling = self.scan.cancelling;
-        let scanning_label = if cancelling {
-            "Stopping…"
-        } else if scanning {
-            "Stop scan"
-        } else {
-            "Rescan"
-        };
-        header = header.child(workbench_button(
-            "rescan",
-            scanning_label,
-            if cancelling || scanning {
-                "square"
+        if has_root {
+            let random_width = if very_compact {
+                126.0
+            } else if compact {
+                150.0
             } else {
-                "refresh"
-            },
-            ButtonKind::Secondary,
-            has_root && !(scanning && cancelling),
-            false,
-            if scanning {
-                "Stop the active library scan"
-            } else {
-                "Rescan the active workspace"
-            },
-            cx,
-            |app, cx| {
-                if app.scan.active && !app.scan.cancelling {
-                    app.command(Command::CancelScan);
-                } else {
-                    app.command(Command::ScanLibrary);
-                }
-                cx.notify();
-            },
-        ));
+                168.0
+            };
+            header = header.child(self.render_random_source_trigger(random_width, cx));
+        }
 
         let random_valid = self.random_all_selected || self.random_selected > 0;
         header = header.child(
