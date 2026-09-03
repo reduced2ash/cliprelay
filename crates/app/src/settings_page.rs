@@ -60,10 +60,15 @@ impl crate::App {
             Some("⌕"),
             cx,
         );
+        // The shared field widget sets flex-basis: 0, which overrides
+        // width, so pin the basis too for a true fixed width.
         let search_field = if narrow {
             search_field.w_full()
         } else {
-            search_field.w(px(300.0))
+            search_field
+                .w(px(300.0))
+                .flex_none()
+                .flex_basis(px(300.0))
         };
         let mut header_row = div()
             .w_full()
