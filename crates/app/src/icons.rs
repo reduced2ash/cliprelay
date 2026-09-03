@@ -83,11 +83,6 @@ impl AssetSource for ClipRelayAssets {
             "icons/chip-pulse.svg" => Some(icon_svg!(
                 r#"<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9.5 3.5V7M14.5 3.5V7M9.5 17v3.5M14.5 17v3.5M3.5 9.5H7M3.5 14.5H7M17 9.5h3.5M17 14.5h3.5"/><path d="M9.3 12h1.7l1-1.8 1.8 3.6 1-1.8h1"/>"#
             )),
-            // Themes rail mark: a contrast disc, half ink, half light — the
-            // light/dark duality the configurator edits.
-            "icons/contrast.svg" => Some(icon_svg!(
-                r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>"#
-            )),
             "icons/external-link.svg" => Some(icon_svg!(
                 r#"<path d="M15 3h6v6"/><path d="m10 14 11-11"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>"#
             )),
@@ -203,7 +198,6 @@ pub fn icon_path(name: &str) -> Option<&'static str> {
         "settings-telegram" | "chat-plane" => "icons/chat-plane.svg",
         "settings-x" | "composer-export" => "icons/composer-export.svg",
         "settings-diagnostics" | "chip-pulse" => "icons/chip-pulse.svg",
-        "settings-themes" | "contrast" => "icons/contrast.svg",
         "expand" => "icons/expand-horizontal.svg",
         "expand-horizontal" => "icons/expand-horizontal.svg",
         "external" => "icons/external-link.svg",
@@ -258,7 +252,6 @@ mod tests {
             "settings-telegram",
             "settings-x",
             "settings-diagnostics",
-            "settings-themes",
         ] {
             let path = icon_path(name).unwrap_or_else(|| panic!("missing icon mapping for {name}"));
             let bytes = assets

@@ -384,7 +384,6 @@ impl App {
             std::env::var("CLIPRELAY_SETTINGS_OPEN_COMBO").ok();
         let settings_section_boot: Option<String> =
             std::env::var("CLIPRELAY_SETTINGS_SECTION").ok();
-        let theme_edit_boot: Option<String> = std::env::var("CLIPRELAY_THEME_EDIT").ok();
         let global_shortcut_subscription = cx.observe_keystrokes(|app, event, window, cx| {
             app.on_unhandled_keystroke(event, window, cx)
         });
@@ -685,7 +684,6 @@ impl App {
             || settings_scroll_boot > 0.0
             || settings_combo_boot.is_some()
             || settings_section_boot.is_some()
-            || theme_edit_boot.is_some()
             || open_command_at_boot_2
         {
             let settings_scroll = app.settings_scroll.clone();
@@ -744,18 +742,6 @@ impl App {
                                 cx,
                                 |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
                                     app.settings_page.active_section = Some(section);
-                                    _cx.notify();
-                                },
-                            )
-                            .ok();
-                        }
-                    }
-                    if let Some(theme_id) = theme_edit_boot {
-                        if let Some(this) = this.upgrade() {
-                            this.update(
-                                cx,
-                                |app: &mut crate::App, _cx: &mut gpui::Context<crate::App>| {
-                                    app.settings_page.editing_theme = Some(theme_id);
                                     _cx.notify();
                                 },
                             )
@@ -3113,14 +3099,11 @@ impl App {
                 }
                 self.renaming_workspace = None;
             }
-            "theme-new-name" => {
-                self.create_custom_theme_from_new_field(cx);
+            "theme-active-name" => {
+                self.commit_active_theme_name(field_id, cx);
             }
             _ if field_id.starts_with("theme-hex-") => {
-                self.commit_theme_hex(field_id, cx);
-            }
-            _ if field_id.starts_with("theme-name-") => {
-                self.commit_theme_name(field_id, cx);
+                self.commit_active_theme_hex(field_id, cx);
             }
             "tg-bot-token" => {}
             "tg-destination" => {

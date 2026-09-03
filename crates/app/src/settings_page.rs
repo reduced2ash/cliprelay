@@ -20,15 +20,11 @@ pub struct SettingsUiState {
     pub login_password: String,
     /// Section nav filter (`None` shows every section).
     pub active_section: Option<String>,
-    /// Custom theme id open in the theme editor (`None` hides it).
-    pub editing_theme: Option<String>,
-    /// Base mode for the next created theme (`""` means Relay).
-    pub new_theme_base: String,
-    /// Last theme edit rejection, shown under the editor.
+    /// Last theme edit rejection, shown under the color editor.
     pub theme_error: Option<String>,
 }
 
-/// Pretty labels for [`BUILTIN_THEME_MODES`], shared by both base pickers.
+/// Pretty labels for [`BUILTIN_THEME_MODES`], used by the rebase picker.
 const THEME_BASE_LABELS: [&str; 5] = [
     "Relay",
     "Pitch black",
@@ -36,17 +32,6 @@ const THEME_BASE_LABELS: [&str; 5] = [
     "Frosted glass",
     "Graphite glass",
 ];
-
-/// Subtitles for the built-in theme rows (mirrors the Interface cards).
-fn builtin_theme_subtitle(mode: &str) -> &'static str {
-    match mode {
-        "pitch_black" => "Blue accent",
-        "full_white" => "Blue accent",
-        "frosted_glass" => "System backdrop",
-        "graphite_glass" => "Silver material",
-        _ => "Warm dark",
-    }
-}
 
 impl crate::App {
     pub fn render_settings(&mut self, cx: &mut Context<Self>) -> impl Element {
@@ -162,11 +147,32 @@ impl crate::App {
                 "standard",
                 "library thumbnails",
                 "fit",
+                "custom",
+                "duplicate",
+                "copy",
+                "colors",
+                "colour",
+                "background",
+                "swatch",
+                "rename",
+                "delete",
+                "editor",
+                "overrides",
+                "based",
+                "hex",
             ],
         ) {
             let mut group = seamed_group(&theme);
-            group = group
-                .child(theme_choices(self, cx, &theme))
+            group = group.child(theme_choices(self, cx, &theme));
+            inner = inner
+                .child(section_head(&theme, "Interface", searching))
+                .child(group);
+            if let Some(customs) = theme_custom_group(self, cx, &theme) {
+                inner = inner.child(customs);
+            }
+            inner = inner.child(theme_color_editor(self, cx, &theme));
+            let mut scale_group = seamed_group(&theme);
+            scale_group = scale_group
                 .child(setting_row(
                     cx,
                     &theme,
@@ -210,46 +216,7 @@ impl crate::App {
                         app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(value), cx);
                     },
                 ));
-            inner = inner
-                .child(section_head(&theme, "Interface", searching))
-                .child(group);
-            any_visible = true;
-        }
-
-        // THEMES
-        if section_open(
-            self,
-            "themes",
-            &[
-                "themes",
-                "theme",
-                "custom",
-                "palette",
-                "contrast",
-                "color",
-                "colors",
-                "colour",
-                "create",
-                "duplicate",
-                "copy",
-                "accent",
-                "background",
-                "swatch",
-                "rename",
-                "delete",
-                "editor",
-                "overrides",
-                "hex",
-            ],
-        ) {
-            inner = inner
-                .child(section_head(&theme, "Themes", searching))
-                .child(theme_builtin_group(self, cx, &theme))
-                .child(theme_custom_group(self, cx, &theme))
-                .child(theme_creator_group(self, cx, &theme));
-            if let Some(editor) = theme_editor_group(self, cx, &theme) {
-                inner = inner.child(editor);
-            }
+            inner = inner.child(scale_group);
             any_visible = true;
         }
 
@@ -1264,8 +1231,15 @@ impl crate::App {
         }
     }
 
-    /// Create a custom theme from a built-in base and open it in the editor.
-    pub fn create_custom_theme(&mut self, base: &str, name: String, cx: &mut Context<crate::App>) {
+    /// Create a custom theme from a built-in base and apply it, so the
+    /// editor below shows the new theme ready to edit. Returns the new
+    /// `(id, name)`.
+    pub fn create_custom_theme(
+        &mut self,
+        base: &str,
+        name: String,
+        cx: &mut Context<crate::App>,
+    ) -> (String, String) {
         let base = if BUILTIN_THEME_MODES.contains(&base) {
             base
         } else {
@@ -1281,33 +1255,14 @@ impl crate::App {
         let mut themes = self.custom_theme_list();
         themes.push(CustomTheme {
             id: id.clone(),
-            name,
+            name: name.clone(),
             base: base.to_string(),
             colors: HashMap::new(),
         });
-        self.settings_page.editing_theme = Some(id);
         self.settings_page.theme_error = None;
-        self.fields.remove("theme-new-name");
         self.save_custom_themes(themes, cx);
-    }
-
-    /// The `theme-new-name` field commits like a create button: Enter builds
-    /// the theme from the typed name and the picked base.
-    pub fn create_custom_theme_from_new_field(&mut self, cx: &mut Context<crate::App>) {
-        let name = self.field_text("theme-new-name");
-        let base = self.settings_page.new_theme_base.clone();
-        let base = if base.is_empty() {
-            "relay"
-        } else {
-            base.as_str()
-        };
-        self.create_custom_theme(base, name, cx);
-    }
-
-    /// Duplicate a built-in theme into a new editable custom theme.
-    pub fn duplicate_builtin_theme(&mut self, base: &str, cx: &mut Context<crate::App>) {
-        let name = format!("{} copy", ThemeMode::builtin_label(base));
-        self.create_custom_theme(base, name, cx);
+        self.set_setting(THEME_MODE, json!(format!("{CUSTOM_THEME_PREFIX}{id}")), cx);
+        (id, name)
     }
 
     /// Duplicate a custom theme, keeping its base and every override.
@@ -1325,9 +1280,13 @@ impl crate::App {
             base: source.base,
             colors: source.colors,
         });
-        self.settings_page.editing_theme = Some(new_id);
         self.settings_page.theme_error = None;
         self.save_custom_themes(themes, cx);
+        self.set_setting(
+            THEME_MODE,
+            json!(format!("{CUSTOM_THEME_PREFIX}{new_id}")),
+            cx,
+        );
     }
 
     /// Delete a custom theme. Deleting the active theme falls back to Relay
@@ -1338,9 +1297,6 @@ impl crate::App {
             .into_iter()
             .filter(|theme| theme.id != id)
             .collect();
-        if self.settings_page.editing_theme.as_deref() == Some(id) {
-            self.settings_page.editing_theme = None;
-        }
         self.settings_page.theme_error = None;
         let was_active = matches!(&self.theme_mode, ThemeMode::Custom(active) if active == id);
         self.save_custom_themes(themes, cx);
@@ -1380,9 +1336,13 @@ impl crate::App {
         });
     }
 
-    /// Commit a renamed custom theme; empty names are rejected with a note.
-    pub fn commit_theme_name(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
-        let Some(id) = field_id.strip_prefix("theme-name-") else {
+    /// Commit the active custom theme's name; empty names are rejected with
+    /// a note. Built-ins show no name field, so anything else is ignored.
+    pub fn commit_active_theme_name(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
+        if field_id != "theme-active-name" {
+            return;
+        }
+        let ThemeMode::Custom(id) = self.theme_mode.clone() else {
             return;
         };
         let name = self.field_text(field_id).trim().to_string();
@@ -1391,24 +1351,23 @@ impl crate::App {
                 Some("Give the theme a name — the empty name was ignored.".to_string());
             return;
         }
-        let id = id.to_string();
         self.fields.remove(field_id);
         self.update_custom_theme(&id, cx, |theme| {
             theme.name = name;
         });
     }
 
-    /// Commit one hex override; garbage keeps the old color and explains
-    /// itself under the editor instead of corrupting the theme.
-    pub fn commit_theme_hex(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
-        let Some(rest) = field_id.strip_prefix("theme-hex-") else {
+    /// Commit one hex override on the active theme. Garbage keeps the old
+    /// color and explains itself under the editor instead of corrupting
+    /// anything. Editing a built-in forks a personal copy first — customs
+    /// edit in place — so the editor never needs an explicit duplicate step.
+    pub fn commit_active_theme_hex(&mut self, field_id: &str, cx: &mut Context<crate::App>) {
+        let Some(role_key) = field_id.strip_prefix("theme-hex-") else {
             return;
         };
-        // Ids look like `custom-3`, roles never contain `-`, so the last
-        // dash separates the two.
-        let Some((id, role_key)) = rest.rsplit_once('-') else {
+        if THEME_ROLES.iter().all(|role| role.key != role_key) {
             return;
-        };
+        }
         let text = self.field_text(field_id);
         let Some(hex) = normalize_hex_color(&text) else {
             self.settings_page.theme_error = Some(format!(
@@ -1417,10 +1376,21 @@ impl crate::App {
             ));
             return;
         };
-        let id = id.to_string();
+        if !matches!(self.theme_mode, ThemeMode::Custom(_)) {
+            let base = self.theme_mode.as_str().to_string();
+            let name = format!("{} copy", self.theme_display_name());
+            let (_, new_name) = self.create_custom_theme(&base, name, cx);
+            self.toast(
+                ToastKind::Info,
+                format!("Created “{new_name}” — now editing your copy."),
+            );
+        }
+        let ThemeMode::Custom(active_id) = self.theme_mode.clone() else {
+            return;
+        };
         let role_key = role_key.to_string();
         self.fields.remove(field_id);
-        self.update_custom_theme(&id, cx, |theme| {
+        self.update_custom_theme(&active_id, cx, |theme| {
             theme.colors.insert(role_key, hex);
         });
     }
@@ -1516,11 +1486,6 @@ fn section_head(theme: &crate::theme::Theme, title: &str, searching: bool) -> Di
 fn rail_status(app: &crate::App, id: &str) -> String {
     match id {
         "interface" => app.theme_display_name(),
-        "themes" => match app.custom_theme_list().len() {
-            0 => "No custom themes".to_string(),
-            1 => "1 custom theme".to_string(),
-            count => format!("{count} custom themes"),
-        },
         "performance" => {
             if app.settings_value(PERFORMANCE_MODE) == "maximum" {
                 "Maximum".to_string()
@@ -1613,7 +1578,6 @@ fn section_rail(
     }
     for (id, label, glyph) in [
         ("interface", "Interface", "settings-interface"),
-        ("themes", "Themes", "settings-themes"),
         ("performance", "Performance", "settings-performance"),
         ("files", "Files", "settings-files"),
         ("telegram", "Telegram", "settings-telegram"),
@@ -1771,111 +1735,13 @@ fn theme_accent_tile(accent: Hsla, theme: &crate::theme::Theme, selected: bool) 
     tile
 }
 
-/// Built-in theme rows: apply straight away or duplicate into an editable
-/// custom theme.
-fn theme_builtin_group(
-    app: &mut crate::App,
-    cx: &mut Context<crate::App>,
-    theme: &crate::theme::Theme,
-) -> Div {
-    let mut group = seamed_group(theme);
-    group = group.child(
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.0))
-            .child(group_title(theme, "Built-in"))
-            .child(div().flex_1()),
-    );
-    let active_key = app.theme_mode.selection_key();
-    for mode in BUILTIN_THEME_MODES {
-        let palette = Theme::for_mode(ThemeMode::parse(mode));
-        let selected = active_key == mode;
-        let apply_mode = mode.to_string();
-        let duplicate_mode = mode.to_string();
-        let mut actions = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.0));
-        if selected {
-            actions = actions.child(
-                div()
-                    .child("Active")
-                    .text_size(px(13.0))
-                    .text_color(theme.muted)
-                    .font_weight(FontWeight::MEDIUM),
-            );
-        } else {
-            actions = actions.child(button(
-                format!("theme-apply-{mode}"),
-                "Apply",
-                ButtonKind::Secondary,
-                None,
-                true,
-                cx,
-                move |app, cx| {
-                    app.set_setting(THEME_MODE, json!(apply_mode.clone()), cx);
-                },
-            ));
-        }
-        actions = actions.child(button(
-            format!("theme-duplicate-{mode}"),
-            "Duplicate",
-            ButtonKind::Ghost,
-            Some("copy"),
-            true,
-            cx,
-            move |app, cx| {
-                app.duplicate_builtin_theme(&duplicate_mode, cx);
-            },
-        ));
-        group = group.child(
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(12.0))
-                .child(theme_accent_tile(palette.accent, theme, selected))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .child(
-                            div()
-                                .child(ThemeMode::builtin_label(mode))
-                                .text_size(px(14.0))
-                                .text_color(theme.text_soft)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_ellipsis(),
-                        )
-                        .child(
-                            div()
-                                .child(builtin_theme_subtitle(mode))
-                                .text_size(px(12.0))
-                                .text_color(theme.muted)
-                                .text_ellipsis(),
-                        ),
-                )
-                .child(actions),
-        );
-    }
-    group
-}
-
-/// Custom theme rows with apply/edit/duplicate/delete actions.
+/// Custom theme rows with apply/duplicate/delete actions. The editor below
+/// always follows the active theme, so rows never need their own Edit.
 fn theme_custom_group(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
-) -> Div {
+) -> Option<Div> {
     let mut group = seamed_group(theme);
     group = group.child(
         div()
@@ -1889,13 +1755,7 @@ fn theme_custom_group(
     );
     let customs = app.custom_theme_list();
     if customs.is_empty() {
-        group = group.child(
-            div()
-                .child("No custom themes yet — duplicate a built-in above or create one below.")
-                .text_size(px(13.0))
-                .text_color(theme.muted),
-        );
-        return group;
+        return None;
     }
     let active_key = app.theme_mode.selection_key();
     for custom in customs {
@@ -1913,7 +1773,6 @@ fn theme_custom_group(
             ),
         };
         let apply_id = custom.id.clone();
-        let edit_id = custom.id.clone();
         let duplicate_id = custom.id.clone();
         let delete_id = custom.id.clone();
         let mut actions = div()
@@ -1944,19 +1803,6 @@ fn theme_custom_group(
             ));
         }
         actions = actions
-            .child(button(
-                format!("theme-edit-{}", custom.id),
-                "Edit",
-                ButtonKind::Ghost,
-                None,
-                true,
-                cx,
-                move |app, cx| {
-                    app.settings_page.editing_theme = Some(edit_id.clone());
-                    app.settings_page.theme_error = None;
-                    cx.notify();
-                },
-            ))
             .child(button(
                 format!("theme-duplicate-{}", custom.id),
                 "Duplicate",
@@ -2013,100 +1859,40 @@ fn theme_custom_group(
                 .child(actions),
         );
     }
-    group
+    Some(group)
 }
 
-/// Name field, base picker, and create button for a brand-new theme.
-fn theme_creator_group(
+/// The color editor for the active theme: rename and rebase for custom
+/// themes, plus one hex row per color role with live swatches. Commits
+/// apply instantly; editing a built-in forks a personal copy first.
+fn theme_color_editor(
     app: &mut crate::App,
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
 ) -> Div {
-    let mut group = seamed_group(theme);
-    group = group.child(group_title(theme, "New theme"));
-    let empty_field = FieldState::default();
-    let base_index = BUILTIN_THEME_MODES
-        .iter()
-        .position(|mode| *mode == app.settings_page.new_theme_base)
-        .unwrap_or(0);
-    group = group.child(
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.0))
-            .child(
-                field(
-                    "theme-new-name",
-                    "Name, e.g. Midnight relay",
-                    app.fields.get("theme-new-name").unwrap_or(&empty_field),
-                    app.focused_field.as_deref() == Some("theme-new-name"),
-                    true,
-                    false,
-                    cx,
-                )
-                .flex_1()
-                .min_w(px(200.0)),
-            )
-            .child(combo(
-                cx,
-                "theme-new-base",
-                &THEME_BASE_LABELS,
-                base_index,
-                200.0,
-                app.open_combos.contains("theme-new-base"),
-                move |app, cx, index| {
-                    app.settings_page.new_theme_base = BUILTIN_THEME_MODES[index].to_string();
-                    app.settings_page.theme_error = None;
-                    cx.notify();
-                },
-            ))
-            .child(button(
-                "theme-create",
-                "Create theme",
-                ButtonKind::Primary,
-                Some("+"),
-                true,
-                cx,
-                move |app, cx| {
-                    let name = app.field_text("theme-new-name");
-                    let base = app.settings_page.new_theme_base.clone();
-                    let base = if base.is_empty() {
-                        "relay"
-                    } else {
-                        base.as_str()
-                    };
-                    app.create_custom_theme(base, name, cx);
-                },
-            )),
-    );
-    group = group.child(help_text(
-        theme,
-        "Creates an editable copy of the picked built-in and opens it in the editor below.",
-    ));
-    group
-}
-
-/// The full editor for the theme selected via Edit: rename, rebase, and one
-/// hex row per color role with live swatches. Commits apply instantly.
-fn theme_editor_group(
-    app: &mut crate::App,
-    cx: &mut Context<crate::App>,
-    theme: &crate::theme::Theme,
-) -> Option<Div> {
-    let editing = app.settings_page.editing_theme.clone()?;
-    let custom = app
-        .custom_theme_list()
-        .into_iter()
-        .find(|custom| custom.id == editing)?;
-    let resolved = custom.resolve();
-    let selected = app.theme_mode.selection_key() == format!("{CUSTOM_THEME_PREFIX}{}", custom.id);
+    // The editor always shows the active theme. Customs resolve to
+    // themselves; built-ins resolve to their palette wrapped in an empty
+    // transient theme, so every row below reads uniformly — and the first
+    // committed edit on a built-in forks a personal copy (see
+    // `commit_active_theme_hex`).
+    let active_custom: Option<CustomTheme> = match &app.theme_mode {
+        ThemeMode::Custom(id) => app
+            .custom_theme_list()
+            .into_iter()
+            .find(|custom| &custom.id == id),
+        _ => None,
+    };
+    let name = app.theme_display_name();
+    let view = active_custom.unwrap_or_else(|| CustomTheme {
+        id: String::new(),
+        name: name.clone(),
+        base: app.theme_mode.as_str().to_string(),
+        colors: HashMap::new(),
+    });
+    let resolved = view.resolve();
+    let is_custom = !view.id.is_empty();
     let empty_field = FieldState::default();
 
-    let apply_id = custom.id.clone();
-    let delete_id = custom.id.clone();
     let mut group = seamed_group(theme);
     let mut header = div()
         .w_full()
@@ -2114,108 +1900,76 @@ fn theme_editor_group(
         .flex_row()
         .items_center()
         .gap(px(12.0))
-        .child(group_title(theme, &custom.name))
+        .child(group_title(theme, &format!("Colors of {name}")))
         .child(div().flex_1());
-    if selected {
+    if !is_custom {
         header = header.child(
             div()
-                .child("Active")
+                .child("Built-in")
                 .text_size(px(13.0))
                 .text_color(theme.muted)
                 .font_weight(FontWeight::MEDIUM),
         );
-    } else {
-        header = header.child(button(
-            format!("theme-editor-apply-{}", custom.id),
-            "Apply",
-            ButtonKind::Secondary,
-            None,
-            true,
+    }
+    group = group.child(header);
+
+    if is_custom {
+        group = group.child(
+            div()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .flex_1()
+                        .child("Name")
+                        .text_size(px(15.0))
+                        .text_color(theme.text_soft)
+                        .font_weight(FontWeight::MEDIUM),
+                )
+                .child(
+                    field(
+                        "theme-active-name",
+                        view.name.as_str(),
+                        app.fields.get("theme-active-name").unwrap_or(&empty_field),
+                        app.focused_field.as_deref() == Some("theme-active-name"),
+                        true,
+                        false,
+                        cx,
+                    )
+                    .flex_1()
+                    .min_w(px(200.0)),
+                ),
+        );
+
+        let base_index = BUILTIN_THEME_MODES
+            .iter()
+            .position(|mode| *mode == view.base)
+            .unwrap_or(0);
+        let base_id = view.id.clone();
+        group = group.child(setting_row(
             cx,
-            move |app, cx| {
-                app.apply_custom_theme(&apply_id, cx);
+            theme,
+            "Based on",
+            &THEME_BASE_LABELS,
+            base_index,
+            "theme-base",
+            app.open_combos.contains("theme-base"),
+            move |app, cx, index| {
+                app.set_custom_theme_base(&base_id, BUILTIN_THEME_MODES[index], cx);
             },
         ));
     }
-    header = header
-        .child(button(
-            "theme-editor-done",
-            "Done",
-            ButtonKind::Ghost,
-            None,
-            true,
-            cx,
-            |app, cx| {
-                app.settings_page.editing_theme = None;
-                app.settings_page.theme_error = None;
-                cx.notify();
-            },
-        ))
-        .child(button(
-            format!("theme-editor-delete-{}", custom.id),
-            "Delete",
-            ButtonKind::Ghost,
-            Some("✕"),
-            true,
-            cx,
-            move |app, cx| {
-                app.delete_custom_theme(&delete_id, cx);
-            },
-        ));
-    group = group.child(header);
-
-    let name_field_id = format!("theme-name-{}", custom.id);
-    group = group.child(
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.0))
-            .child(
-                div()
-                    .flex_1()
-                    .child("Name")
-                    .text_size(px(15.0))
-                    .text_color(theme.text_soft)
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(
-                field(
-                    name_field_id.clone(),
-                    custom.name.as_str(),
-                    app.fields.get(&name_field_id).unwrap_or(&empty_field),
-                    app.focused_field.as_deref() == Some(name_field_id.as_str()),
-                    true,
-                    false,
-                    cx,
-                )
-                .flex_1()
-                .min_w(px(200.0)),
-            ),
-    );
-
-    let base_index = BUILTIN_THEME_MODES
-        .iter()
-        .position(|mode| *mode == custom.base)
-        .unwrap_or(0);
-    let base_id = custom.id.clone();
-    group = group.child(setting_row(
-        cx,
-        theme,
-        "Based on",
-        &THEME_BASE_LABELS,
-        base_index,
-        "theme-base",
-        app.open_combos.contains("theme-base"),
-        move |app, cx, index| {
-            app.set_custom_theme_base(&base_id, BUILTIN_THEME_MODES[index], cx);
-        },
-    ));
 
     group = group.child(help_text(
         theme,
-        "Edits apply instantly. Overrides store RGB only, so glass bases keep their translucency.",
+        if is_custom {
+            "Edits apply instantly. Overrides store RGB only, so glass bases keep their translucency."
+        } else {
+            "Editing any color creates a personal copy of this theme and applies your edit."
+        },
     ));
     if let Some(error) = app.settings_page.theme_error.clone() {
         group = group.child(
@@ -2246,14 +2000,14 @@ fn theme_editor_group(
                 app,
                 cx,
                 theme,
-                &custom,
+                &view,
                 &resolved,
                 role,
                 &empty_field,
             ));
         }
     }
-    Some(group)
+    group
 }
 
 /// One editable color: override dot, live swatch, label, hex field, reset.
@@ -2267,7 +2021,8 @@ fn theme_role_row(
     empty_field: &FieldState,
 ) -> Div {
     let overridden = custom.colors.contains_key(role.key);
-    let field_id = format!("theme-hex-{}-{}", custom.id, role.key);
+    // One editor is ever visible, so the role alone identifies the field.
+    let field_id = format!("theme-hex-{}", role.key);
     let reset_id = custom.id.clone();
     let reset_role = role.key.to_string();
     let reset_field = field_id.clone();
