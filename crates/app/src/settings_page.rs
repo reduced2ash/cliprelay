@@ -380,7 +380,7 @@ impl crate::App {
             let mut group = seamed_group(&theme);
             group = group.child(group_title(&theme, "Library and generated media"))
             .child(help_text(&theme, "Your original videos are never moved or modified."))
-            .child(sub_label(&theme, "VIDEO LIBRARY"))
+            .child(sub_label(&theme, "ACTIVE WORKSPACE FOLDER"))
             .child(
                 div()
                     .w_full()
@@ -388,20 +388,9 @@ impl crate::App {
                     .flex_row()
                     .flex_wrap()
                     .gap(px(8.0))
-                    .child(static_field("static-library-root", &theme, "No folder chosen", self.settings_value(LIBRARY_ROOT)))
-                    .child(button(
-                        "choose-library",
-                        "Choose",
-                        ButtonKind::Secondary,
-                        Some("▸"),
-                        true,
-                        cx,
-                        |app, cx| {
-                            app.choose_library_folder(cx);
-                        },
-                    )),
+                    .child(static_field("static-library-root", &theme, "No folder chosen", self.settings_value(LIBRARY_ROOT))),
             )
-            .child(help_text(&theme, "ClipRelay searches this folder and every folder inside it."))
+            .child(help_text(&theme, "ClipRelay searches this folder and every folder inside it. Replace it from the workspace ⋯ menu."))
             .child(sub_label(&theme, "GENERATED VIDEO FOLDER"))
             .child(
                 div()

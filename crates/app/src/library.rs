@@ -309,6 +309,7 @@ impl crate::App {
 
     pub fn explorer_visible(&self) -> bool {
         self.show_folders
+            && self.window_size.0 >= 820.0
             && !(self.selected.is_some() && !self.prepare.studio_mode && self.window_size.0 < 980.0)
     }
 
@@ -551,7 +552,11 @@ impl crate::App {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(icon("▤", 27.0, theme.accent)),
+                    .child(if !has_root {
+                        brand_mark(42.0).into_any()
+                    } else {
+                        icon("grid", 27.0, theme.accent).into_any()
+                    }),
             )
             .child(
                 div()
@@ -578,6 +583,42 @@ impl crate::App {
                 cx,
                 |app, cx| {
                     app.choose_library_folder(cx);
+                },
+            ));
+        } else if searching {
+            empty = empty.child(button(
+                "clear-library-search",
+                "Clear search",
+                ButtonKind::Secondary,
+                Some("x"),
+                true,
+                cx,
+                |app, cx| {
+                    app.search_text.clear();
+                    app.command_query.clear();
+                    if let Some(field) = app.fields.get_mut("command-center") {
+                        field.text.clear();
+                        field.caret = 0;
+                    }
+                    app.command(Command::SetSearch(String::new()));
+                    cx.notify();
+                },
+            ));
+        } else {
+            empty = empty.child(button(
+                "rescan-empty-library",
+                if self.scan.active {
+                    "Scanning…"
+                } else {
+                    "Rescan workspace"
+                },
+                ButtonKind::Secondary,
+                Some("refresh"),
+                !self.scan.active,
+                cx,
+                |app, cx| {
+                    app.command(Command::ScanLibrary);
+                    cx.notify();
                 },
             ));
         }
@@ -812,6 +853,46 @@ impl crate::App {
                     .items_center()
                     .justify_center()
                     .child(icon("✓", 13.0, theme.accent_content)),
+            );
+        }
+        if is_hovered || is_selected {
+            let more_tooltip: SharedString = format!("More actions for {name}").into();
+            poster = poster.child(
+                div()
+                    .id(SharedString::from(format!("tile-more-{media_id}")))
+                    .occlude()
+                    .absolute()
+                    .top(px(badge_margin))
+                    .left(px(badge_margin))
+                    .w(px(if compact { 24.0 } else { 26.0 }))
+                    .h(px(if compact { 24.0 } else { 26.0 }))
+                    .rounded(px(RADIUS_SM))
+                    .bg(theme.media_overlay)
+                    .border_1()
+                    .border_color(theme.media_text.opacity(0.24))
+                    .cursor_pointer()
+                    .tab_index(0)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .hover(|style| style.border_color(theme.media_text.opacity(0.68)))
+                    .focus(|style| style.border_2().border_color(theme.accent))
+                    .child(icon("ellipsis", 14.0, theme.media_text))
+                    .tooltip(move |_window, cx| crate::tooltip_view(cx, more_tooltip.clone()))
+                    .on_click(cx.listener(move |app, _event, window, cx| {
+                        app.open_video_context_menu(media_id, window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(cx.listener(move |app, _: &crate::Activate, window, cx| {
+                        app.open_video_context_menu(media_id, window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(
+                        cx.listener(move |app, _: &crate::ActivateSpace, window, cx| {
+                            app.open_video_context_menu(media_id, window, cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
             );
         }
         tile = tile.child(poster);
@@ -1268,6 +1349,7 @@ impl crate::App {
         // persistent selected-row surface.
         let selected = is_active;
         let folder_path = library_root.join(&folder);
+        let folder_tooltip: SharedString = folder_path.to_string_lossy().into_owned().into();
         let mut row = div()
             .id(SharedString::from(format!("folder-{folder}")))
             .ml(px(EXPLORER_ROW_INSET))
@@ -1315,7 +1397,8 @@ impl crate::App {
                 theme.tactile_shadow(TactileState::Rest, true)
             } else {
                 Vec::new()
-            });
+            })
+            .tooltip(move |_window, cx| crate::tooltip_view(cx, folder_tooltip.clone()));
         // Disclosure chevron (own hit target; toggles expansion).
         if has_children {
             let folder_for_toggle = folder.clone();
@@ -1520,85 +1603,7 @@ impl crate::App {
         .track_scroll(self.explorer_scroll.clone());
         items.style().scrollbar_width = Some(px(10.0).into());
 
-        let scanning = self.scan.active;
-        let explorer_workspace_popup = (self.workspace_menu_open
-            && self.workspace_menu_source == crate::WorkspaceMenuSource::ExplorerActions)
-            .then(|| self.render_workspace_menu(cx).into_any());
-        let explorer_workspace_button = workbench_button(
-            "explorer-workspace-actions",
-            "",
-            "ellipsis",
-            ButtonKind::Ghost,
-            true,
-            true,
-            "Workspace actions",
-            cx,
-            |app, cx| {
-                app.workspace_menu_target = app.active_workspace_index;
-                app.toggle_workspace_popup(crate::WorkspaceMenuSource::ExplorerActions);
-                cx.notify();
-            },
-        )
-        .when(
-            self.workspace_menu_source == crate::WorkspaceMenuSource::ExplorerActions,
-            |button| button.track_focus(&self.workspace_source_focus),
-        );
-        let explorer_actions = div()
-            .w_full()
-            .h(px(52.0))
-            .flex_none()
-            .px(px(18.0))
-            .border_t_1()
-            .border_color(theme.workbench_border.opacity(0.46))
-            .flex()
-            .items_center()
-            .gap(px(10.0))
-            .child(workbench_button(
-                "explorer-new-workspace",
-                "",
-                "plus",
-                ButtonKind::Ghost,
-                true,
-                true,
-                "Open a folder in a new workspace",
-                cx,
-                |app, cx| app.choose_new_workspace_folder(cx),
-            ))
-            .child(
-                anchored_overlay(
-                    explorer_workspace_button,
-                    explorer_workspace_popup,
-                    OverlayPlacement::AboveStart,
-                    size(px(WORKBENCH_CONTROL_HEIGHT), px(WORKBENCH_CONTROL_HEIGHT)),
-                )
-                .flex_none()
-                .w(px(WORKBENCH_CONTROL_HEIGHT))
-                .h(px(WORKBENCH_CONTROL_HEIGHT)),
-            )
-            .child(div().flex_1())
-            .child(workbench_button(
-                "explorer-rescan",
-                "",
-                if scanning { "square" } else { "refresh" },
-                ButtonKind::Ghost,
-                true,
-                true,
-                if scanning {
-                    "Stop scan"
-                } else {
-                    "Rescan library"
-                },
-                cx,
-                |app, cx| {
-                    if app.scan.active && !app.scan.cancelling {
-                        app.command(Command::CancelScan);
-                    } else {
-                        app.command(Command::ScanLibrary);
-                    }
-                    cx.notify();
-                },
-            ));
-        tree = tree.child(items).child(explorer_actions);
+        tree = tree.child(items);
         tree
     }
 }
@@ -1886,20 +1891,14 @@ mod explorer_projection_tests {
         // Every ancestor defaults to expanded.
         let expanded = HashMap::new();
         let projected = explorer_visible_nodes(&folders, &expanded);
-        let visible: Vec<_> = projected
-            .iter()
-            .map(|node| node.folder.as_str())
-            .collect();
+        let visible: Vec<_> = projected.iter().map(|node| node.folder.as_str()).collect();
         assert_eq!(visible, ["a", "a/b", "a/b/c", "a/b/c/d", "a/x"]);
 
         // Collapsing one ancestor hides its whole subtree, keeps siblings.
         let mut collapsed = HashMap::new();
         collapsed.insert("a/b".to_string(), false);
         let projected = explorer_visible_nodes(&folders, &collapsed);
-        let visible: Vec<_> = projected
-            .iter()
-            .map(|node| node.folder.as_str())
-            .collect();
+        let visible: Vec<_> = projected.iter().map(|node| node.folder.as_str()).collect();
         assert_eq!(visible, ["a", "a/b", "a/x"]);
     }
 
@@ -1911,10 +1910,7 @@ mod explorer_projection_tests {
             test_node("z", "", 0),
         ];
         let projected = explorer_visible_nodes(&folders, &HashMap::new());
-        let visible: Vec<_> = projected
-            .iter()
-            .map(|node| node.folder.as_str())
-            .collect();
+        let visible: Vec<_> = projected.iter().map(|node| node.folder.as_str()).collect();
         assert_eq!(visible, ["a", "a/b", "z"]);
     }
 }

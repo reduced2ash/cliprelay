@@ -1531,7 +1531,7 @@ impl Controller {
             .collect();
         let (random_mode, random_folders) = {
             let workspace = self.active_mut();
-            if all_selected {
+            if all_selected || tokens.is_empty() {
                 workspace.random_mode = "all".into();
                 workspace.random_folders.clear();
             } else {
@@ -2776,16 +2776,6 @@ impl Controller {
             }
             Command::SetRandomFolderEnabled(folder, enabled) => {
                 self.set_random_folder_enabled(&folder, enabled)
-            }
-            Command::ClearRandomFolders => {
-                let workspace = self.active_mut();
-                workspace.random_mode = "selected".into();
-                workspace.random_folders.clear();
-                let _ = self.settings.set(RANDOM_FOLDER_MODE, json!("selected"));
-                let _ = self.settings.set(RANDOM_FOLDERS, json!([]));
-                self.persist_workspaces();
-                self.settings_changed();
-                self.load_random_folder_options();
             }
             Command::SelectAllRandomFolders => {
                 let workspace = self.active_mut();

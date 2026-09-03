@@ -56,6 +56,46 @@ impl crate::App {
             .unwrap_or("name_asc")
             .to_string();
         let cut_active = self.prepare.media_id > 0 && self.prepare.cut_active();
+        let back_shortcut = if cfg!(target_os = "macos") {
+            "⌘["
+        } else {
+            "Alt Left"
+        };
+        let forward_shortcut = if cfg!(target_os = "macos") {
+            "⌘]"
+        } else {
+            "Alt Right"
+        };
+        let new_workspace_shortcut = if cfg!(target_os = "macos") {
+            "⌘T"
+        } else {
+            "Ctrl T"
+        };
+        let close_workspace_shortcut = if cfg!(target_os = "macos") {
+            "⌘W"
+        } else {
+            "Ctrl W"
+        };
+        let reopen_workspace_shortcut = if cfg!(target_os = "macos") {
+            "⇧⌘T"
+        } else {
+            "Ctrl Shift T"
+        };
+        let library_shortcut = if cfg!(target_os = "macos") {
+            "⌘1"
+        } else {
+            "Ctrl 1"
+        };
+        let history_shortcut = if cfg!(target_os = "macos") {
+            "⌘2"
+        } else {
+            "Ctrl 2"
+        };
+        let settings_shortcut = if cfg!(target_os = "macos") {
+            "⌘,"
+        } else {
+            "Ctrl ,"
+        };
         vec![
             CommandAction {
                 id: 0,
@@ -65,7 +105,10 @@ impl crate::App {
                 glyph: "shuffle",
                 keywords: "random shuffle choose video",
                 shortcut: "R",
-                enabled: has_root && !self.random_picking,
+                enabled: has_root
+                    && !self.random_picking
+                    && (self.counts.0 > 0 || self.scan.active)
+                    && (self.random_all_selected || self.random_selected > 0),
             },
             CommandAction {
                 id: 1,
@@ -104,7 +147,7 @@ impl crate::App {
                 category: "Navigation",
                 glyph: "‹",
                 keywords: "back undo previous video folder navigation",
-                shortcut: "⌘[",
+                shortcut: back_shortcut,
                 enabled: self
                     .workspaces
                     .get(self.active_workspace_index)
@@ -118,7 +161,7 @@ impl crate::App {
                 category: "Navigation",
                 glyph: "›",
                 keywords: "forward redo next video folder navigation",
-                shortcut: "⌘]",
+                shortcut: forward_shortcut,
                 enabled: self
                     .workspaces
                     .get(self.active_workspace_index)
@@ -296,7 +339,7 @@ impl crate::App {
                 category: "Workspaces",
                 glyph: "+",
                 keywords: "new tab workspace root folder",
-                shortcut: "⌘T",
+                shortcut: new_workspace_shortcut,
                 enabled: true,
             },
             CommandAction {
@@ -306,7 +349,7 @@ impl crate::App {
                 category: "Workspaces",
                 glyph: "close",
                 keywords: "close tab workspace",
-                shortcut: "⌘W",
+                shortcut: close_workspace_shortcut,
                 enabled: !self.workspaces.is_empty(),
             },
             CommandAction {
@@ -316,7 +359,7 @@ impl crate::App {
                 category: "Workspaces",
                 glyph: "↩",
                 keywords: "reopen restore closed tab workspace",
-                shortcut: "⇧⌘T",
+                shortcut: reopen_workspace_shortcut,
                 enabled: self.closed_count > 0,
             },
             CommandAction {
@@ -391,8 +434,16 @@ impl crate::App {
             },
             CommandAction {
                 id: 30,
-                label: "Choose library root",
-                detail: "Open a different top-level video folder",
+                label: if has_root {
+                    "Replace workspace folder"
+                } else {
+                    "Choose library folder"
+                },
+                detail: if has_root {
+                    "Replace the active workspace's top-level folder"
+                } else {
+                    "Choose the active workspace's top-level video folder"
+                },
                 category: "Library",
                 glyph: "▤",
                 keywords: "choose open root directory library",
@@ -406,7 +457,7 @@ impl crate::App {
                 category: "Navigation",
                 glyph: "▦",
                 keywords: "navigate page library",
-                shortcut: "⌘1",
+                shortcut: library_shortcut,
                 enabled: self.page != Page::Library,
             },
             CommandAction {
@@ -416,7 +467,7 @@ impl crate::App {
                 category: "Navigation",
                 glyph: "◷",
                 keywords: "navigate page history posts",
-                shortcut: "⌘2",
+                shortcut: history_shortcut,
                 enabled: self.page != Page::History,
             },
             CommandAction {
@@ -426,7 +477,7 @@ impl crate::App {
                 category: "Navigation",
                 glyph: "⚙",
                 keywords: "navigate page preferences settings",
-                shortcut: "⌘,",
+                shortcut: settings_shortcut,
                 enabled: self.page != Page::Settings,
             },
             CommandAction {
@@ -1118,6 +1169,7 @@ impl crate::App {
                         });
                     row = row.on_click(cx.listener(move |app, _event, _window, cx| {
                         app.close_command_center();
+                        app.navigate_to(Page::Library, cx);
                         if kind == "media" {
                             app.command(Command::SelectMedia(media_id));
                         } else {
@@ -1176,7 +1228,7 @@ impl crate::App {
                 "No results match".to_string()
             };
             let detail = if !has_root && scope != "commands" {
-                "Use “Choose library root” in Commands."
+                "Use “Choose library folder” in Commands."
             } else if has_query {
                 "Try a shorter filename, folder, or command."
             } else {
@@ -1308,43 +1360,10 @@ impl crate::App {
             .items_center()
             .overflow_hidden();
 
-        // The first context cell is also the first activity-rail slot. This
-        // keeps the navigation rhythm continuous instead of rendering Library
-        // once above the rail and again immediately below it.
-        let library_selected = page == Page::Library && !studio_mode;
-        let can_expand_navigation = nav_collapsed && width >= 1080.0;
-        let activity_item_width = if nav_collapsed {
-            40.0
-        } else {
-            activity_width - 16.0
-        };
-        let library_rest_face: Background = if library_selected {
-            theme.selection_face(TactileState::Rest, true)
-        } else {
-            theme.transparent().into()
-        };
-        let library_hover_face = if library_selected {
-            theme.selection_face(TactileState::Hover, true)
-        } else {
-            theme.control_face(TactileState::Hover)
-        };
-        let library_pressed_face = theme.selection_face(TactileState::Pressed, true);
-        let library_rest_edge = if library_selected {
-            theme.tactile_edge(TactileState::Rest, true)
-        } else {
-            theme.transparent()
-        };
-        let library_hover_edge = theme.tactile_edge(TactileState::Hover, library_selected);
-        let library_pressed_edge = theme.tactile_edge(TactileState::Pressed, true);
-        let library_focus_edge = theme.accent;
-        let library_rest_shadow = if library_selected {
-            theme.tactile_shadow(TactileState::Rest, true)
-        } else {
-            Vec::new()
-        };
-        let library_hover_shadow = theme.tactile_shadow(TactileState::Hover, true);
-        let library_pressed_shadow = theme.tactile_shadow(TactileState::Pressed, true);
-        let activity = div()
+        // Keep the rail header non-interactive. All destinations now live in
+        // one navigation stack below instead of splitting Library into a
+        // special toolbar-only slot.
+        let rail_header = div()
             .flex_none()
             .w(px(activity_width))
             .h_full()
@@ -1352,112 +1371,49 @@ impl crate::App {
             .flex()
             .items_center()
             .justify_center()
-            .child(
-                div()
-                    .id("nav-library-header")
-                    .w(px(activity_item_width))
-                    .h(px(40.0))
-                    .px(if nav_collapsed { px(0.0) } else { px(10.0) })
-                    .rounded(px(3.0))
-                    .relative()
-                    .top(px(0.0))
-                    .border_1()
-                    .border_color(library_rest_edge)
-                    .bg(library_rest_face)
-                    .shadow(library_rest_shadow)
-                    .cursor_pointer()
-                    .tab_index(0)
-                    .focus({
-                        let hover_shadow = library_hover_shadow.clone();
-                        move |style| {
-                            style
-                                .bg(library_hover_face)
-                                .shadow(hover_shadow.clone())
-                                .border_2()
-                                .border_color(library_focus_edge)
-                        }
-                    })
-                    .active({
-                        let pressed_shadow = library_pressed_shadow.clone();
-                        move |style| {
-                            style
-                                .top(px(1.0))
-                                .bg(library_pressed_face)
-                                .border_color(library_pressed_edge)
-                                .shadow(pressed_shadow.clone())
-                        }
-                    })
-                    .hover(move |style| {
-                        style
-                            .bg(library_hover_face)
-                            .border_color(library_hover_edge)
-                            .shadow(library_hover_shadow.clone())
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(9.0))
-                    .child(icon(
-                        "library",
-                        18.0,
-                        if library_selected {
-                            theme.accent_text
-                        } else {
-                            theme.muted
-                        },
-                    ))
-                    .when(!nav_collapsed, |this| {
-                        this.child(
-                            div()
-                                .flex_1()
-                                .child("Library")
-                                .text_size(px(13.0))
-                                .text_color(if library_selected {
-                                    theme.text
-                                } else {
-                                    theme.text_soft
-                                })
-                                .font_weight(if library_selected {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::MEDIUM
-                                }),
-                        )
-                    })
-                    .tooltip(move |_window, cx| {
-                        crate::tooltip_view(
-                            cx,
-                            if can_expand_navigation {
-                                "Open Library  ·  Double-click to expand navigation"
-                            } else {
-                                "Open Library"
-                            }
-                            .into(),
-                        )
-                    })
-                    .on_click(cx.listener(move |app, event: &ClickEvent, window, cx| {
-                        window.blur();
-                        if can_expand_navigation && event.click_count() >= 2 {
-                            app.set_setting(SIDEBAR_COLLAPSED, json!(false), cx);
-                        } else {
-                            app.navigate_to(Page::Library, cx);
-                        }
-                    }))
-                    .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                        app.navigate_to(Page::Library, cx);
-                        cx.stop_propagation();
-                    }))
-                    .on_action(
-                        cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
-                            app.navigate_to(Page::Library, cx);
-                            cx.stop_propagation();
-                        }),
-                    ),
-            );
-        toolbar = toolbar.child(activity);
+            .when(!nav_collapsed, |header| {
+                header.child(
+                    div()
+                        .w_full()
+                        .px(px(12.0))
+                        .child(tracked("NAVIGATION"))
+                        .text_size(px(10.0))
+                        .text_color(theme.muted_soft)
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+            });
+        toolbar = toolbar.child(rail_header);
 
         // Explorer header
         if show_explorer {
+            let folder_sort_label = match self
+                .settings
+                .get(FOLDER_SORT_MODE)
+                .and_then(|value| value.as_str())
+                .unwrap_or("name_asc")
+            {
+                "name_asc" => "A–Z",
+                "name_desc" => "Z–A",
+                "added_recent" => "Added",
+                "added_old" => "Oldest added",
+                "recent" => "Updated",
+                "stale" => "Least updated",
+                "count_desc" => "Most videos",
+                "count_asc" => "Fewest videos",
+                _ => "A–Z",
+            }
+            .to_string();
+            let explorer_sort = self.render_library_menu_trigger(
+                "folder-sort-trigger",
+                folder_sort_label,
+                "chevron-down",
+                crate::LibraryMenuScope::Folders,
+                66.0,
+                false,
+                OverlayPlacement::BelowStart,
+                "Sort Explorer folders",
+                cx,
+            );
             let explorer = div()
                 .flex_none()
                 .w(px(explorer_width))
@@ -1471,8 +1427,9 @@ impl crate::App {
                 .flex()
                 .flex_row()
                 .items_center()
-                .pl(px(28.0))
-                .pr(px(18.0))
+                .pl(px(18.0))
+                .pr(px(8.0))
+                .gap(px(4.0))
                 .child(
                     div()
                         .flex_1()
@@ -1483,7 +1440,22 @@ impl crate::App {
                         .text_size(px(12.5))
                         .text_color(theme.text_soft)
                         .font_weight(FontWeight::SEMIBOLD),
-                );
+                )
+                .child(explorer_sort)
+                .child(workbench_button(
+                    "hide-explorer",
+                    "",
+                    "panel-left",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Hide Explorer",
+                    cx,
+                    |app, cx| {
+                        app.show_folders = false;
+                        cx.notify();
+                    },
+                ));
             toolbar = toolbar.child(explorer);
         } else {
             toolbar = toolbar.child(
@@ -1513,6 +1485,26 @@ impl crate::App {
 
         match page {
             Page::Library => {
+                let can_back = self
+                    .workspaces
+                    .get(self.active_workspace_index)
+                    .map(|workspace| workspace.has_back)
+                    .unwrap_or(false);
+                let can_forward = self
+                    .workspaces
+                    .get(self.active_workspace_index)
+                    .map(|workspace| workspace.has_forward)
+                    .unwrap_or(false);
+                let back_tip = if cfg!(target_os = "macos") {
+                    "Go back  ·  ⌘["
+                } else {
+                    "Go back  ·  Alt Left"
+                };
+                let forward_tip = if cfg!(target_os = "macos") {
+                    "Go forward  ·  ⌘]"
+                } else {
+                    "Go forward  ·  Alt Right"
+                };
                 let location = if studio_mode {
                     self.selected
                         .as_ref()
@@ -1537,7 +1529,53 @@ impl crate::App {
                 } else {
                     location
                 };
-                center = center.child(div().w(px(7.0)).flex_none());
+                if !studio_mode {
+                    center = center
+                        .child(workbench_button(
+                            "nav-back",
+                            "",
+                            "chevron-left",
+                            ButtonKind::Ghost,
+                            can_back,
+                            true,
+                            back_tip,
+                            cx,
+                            |app, cx| {
+                                app.command(Command::NavigateBack);
+                                cx.notify();
+                            },
+                        ))
+                        .child(workbench_button(
+                            "nav-forward",
+                            "",
+                            "chevron-right",
+                            ButtonKind::Ghost,
+                            can_forward,
+                            true,
+                            forward_tip,
+                            cx,
+                            |app, cx| {
+                                app.command(Command::NavigateForward);
+                                cx.notify();
+                            },
+                        ));
+                }
+                if has_root && !show_explorer && !studio_mode && width >= 820.0 {
+                    center = center.child(workbench_button(
+                        "show-explorer",
+                        "",
+                        "panel-left",
+                        ButtonKind::Ghost,
+                        true,
+                        true,
+                        "Show Explorer",
+                        cx,
+                        |app, cx| {
+                            app.show_folders = true;
+                            cx.notify();
+                        },
+                    ));
+                }
                 if studio_mode {
                     center = center.child(icon(
                         "edit",
@@ -1582,44 +1620,6 @@ impl crate::App {
                         })
                         .text_ellipsis(),
                 );
-
-                if has_root && !studio_mode {
-                    center = center.child(workbench_button(
-                        "toggle-folders",
-                        if self.show_folders {
-                            "Hide folders"
-                        } else {
-                            "Show folders"
-                        },
-                        "panel",
-                        ButtonKind::Ghost,
-                        true,
-                        compact_actions,
-                        "Toggle the hierarchical folder column",
-                        cx,
-                        |app, cx| {
-                            app.show_folders = !app.show_folders;
-                            cx.notify();
-                        },
-                    ));
-                    center = center.child(workbench_button(
-                        "choose-root",
-                        "Choose root",
-                        "folder",
-                        ButtonKind::Ghost,
-                        true,
-                        compact_actions,
-                        "Choose library root",
-                        cx,
-                        |app, cx| app.choose_library_folder(cx),
-                    ));
-                }
-
-                if !narrow_actions && !studio_mode {
-                    center =
-                        center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
-                }
-
                 if has_root && !studio_mode {
                     let sort_label = match self
                         .settings
@@ -1633,85 +1633,42 @@ impl crate::App {
                         "duration" => "Duration",
                         "size" => "Size",
                         _ => "Newest",
+                    }
+                    .to_string();
+                    let sort_width = if narrow_actions {
+                        30.0
+                    } else if compact_actions {
+                        74.0
+                    } else {
+                        104.0
                     };
-                    let sort_width = if narrow_actions { 96.0 } else { 112.0 };
-                    let sort_popup = self
-                        .sort_menu_open
-                        .then(|| self.render_sort_menu(cx).into_any());
-                    let sort_trigger = div()
-                        .id("sort-trigger")
-                        .track_focus(&self.sort_source_focus)
-                        .size_full()
-                        .px(px(9.0))
-                        .rounded(px(RADIUS_SM))
-                        .bg(if self.sort_menu_open {
-                            theme.active
+                    center = center.child(self.render_library_menu_trigger(
+                        "sort-trigger",
+                        if narrow_actions {
+                            String::new()
                         } else {
-                            theme.raised
-                        })
-                        .border_1()
-                        .border_color(if self.sort_menu_open {
-                            theme.accent
-                        } else {
-                            theme.border
-                        })
-                        .hover(|style| style.bg(theme.hover))
-                        .focus(|style| style.border_2().border_color(theme.accent))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .cursor_pointer()
-                        .tab_index(0)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(sort_label)
-                                .text_size(px(12.0))
-                                .text_color(theme.text)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_ellipsis(),
-                        )
-                        .child(icon(
-                            if self.sort_menu_open {
-                                "chevron-up"
-                            } else {
-                                "chevron-down"
-                            },
-                            13.0,
-                            if self.sort_menu_open {
-                                theme.accent_text
-                            } else {
-                                theme.muted
-                            },
-                        ))
-                        .tooltip(move |_window, cx| {
-                            crate::tooltip_view(cx, "Sort library and Explorer".into())
-                        })
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.toggle_sort_popup();
-                            cx.notify();
-                        }));
-                    center = center.child(
-                        anchored_overlay(
-                            sort_trigger,
-                            sort_popup,
-                            OverlayPlacement::BelowEnd,
-                            size(px(sort_width), px(30.0)),
-                        )
-                        .flex_none()
-                        .w(px(sort_width))
-                        .h(px(30.0)),
-                    );
-                }
-
-                if !narrow_actions && has_root && !studio_mode {
-                    center =
-                        center.child(div().w(px(1.0)).h(px(22.0)).bg(theme.border).flex_none());
-                }
-
-                if has_root && !studio_mode {
+                            sort_label
+                        },
+                        "arrow-down",
+                        crate::LibraryMenuScope::Videos,
+                        sort_width,
+                        narrow_actions,
+                        OverlayPlacement::BelowEnd,
+                        "Sort videos",
+                        cx,
+                    ));
+                    let view_width = 30.0;
+                    center = center.child(self.render_library_menu_trigger(
+                        "view-trigger",
+                        String::new(),
+                        "grid",
+                        crate::LibraryMenuScope::View,
+                        view_width,
+                        true,
+                        OverlayPlacement::BelowEnd,
+                        "Library view options",
+                        cx,
+                    ));
                     let scanning = self.scan.active;
                     let cancelling = self.scan.cancelling;
                     let scanning_label = if cancelling {
@@ -1731,8 +1688,12 @@ impl crate::App {
                         },
                         ButtonKind::Ghost,
                         !(scanning && cancelling),
-                        compact_actions,
-                        "Rescan library",
+                        true,
+                        if scanning {
+                            "Stop the active library scan"
+                        } else {
+                            "Rescan the active workspace"
+                        },
                         cx,
                         |app, cx| {
                             if app.scan.active && !app.scan.cancelling {
@@ -1743,6 +1704,52 @@ impl crate::App {
                             cx.notify();
                         },
                     ));
+                    let random_width = if narrow_actions {
+                        112.0
+                    } else if compact_actions {
+                        126.0
+                    } else {
+                        168.0
+                    };
+                    center = center.child(self.render_random_source_trigger(random_width, cx));
+                    let random_valid = self.random_all_selected || self.random_selected > 0;
+                    let pick_width = if narrow_actions {
+                        70.0
+                    } else if compact_actions {
+                        76.0
+                    } else {
+                        116.0
+                    };
+                    center = center.child(
+                        workbench_button(
+                            "pick-random",
+                            if self.random_picking {
+                                if compact_actions {
+                                    "…"
+                                } else {
+                                    "Picking…"
+                                }
+                            } else if compact_actions {
+                                "Pick"
+                            } else {
+                                "Pick random"
+                            },
+                            "shuffle",
+                            ButtonKind::Primary,
+                            random_valid
+                                && !self.random_picking
+                                && (self.counts.0 > 0 || self.scan.active),
+                            false,
+                            "Pick a random video from the selected folders  ·  R",
+                            cx,
+                            |app, cx| {
+                                app.command(Command::PickRandom);
+                                cx.notify();
+                            },
+                        )
+                        .w(px(pick_width))
+                        .h(px(32.0)),
+                    );
                 }
                 toolbar = toolbar.child(center);
             }
@@ -1852,12 +1859,16 @@ impl crate::App {
                 .child(
                     workbench_button(
                         "reveal-in-library",
-                        if compact_reveal { "" } else { "Reveal" },
+                        if compact_reveal {
+                            ""
+                        } else {
+                            "Show in Library"
+                        },
                         "folder",
                         ButtonKind::Secondary,
                         true,
                         compact_reveal,
-                        "Reveal in library",
+                        "Show selected video in Library",
                         cx,
                         |app, cx| {
                             app.command(Command::RevealSelectedInLibrary);
@@ -1874,7 +1885,7 @@ impl crate::App {
                     ButtonKind::Ghost,
                     true,
                     true,
-                    "Close selected video",
+                    "Close Prepare",
                     cx,
                     |app, cx| {
                         app.command(Command::ClearSelection);
@@ -1887,8 +1898,144 @@ impl crate::App {
         toolbar
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn render_library_menu_trigger(
+        &mut self,
+        id: &'static str,
+        label: String,
+        glyph: &'static str,
+        scope: crate::LibraryMenuScope,
+        width: f32,
+        icon_only: bool,
+        placement: OverlayPlacement,
+        tooltip: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl Element {
+        let open = self.sort_menu_open && self.sort_menu_scope == scope;
+        let focus = match scope {
+            crate::LibraryMenuScope::Videos => self.sort_source_focus.clone(),
+            crate::LibraryMenuScope::Folders => self.folder_sort_source_focus.clone(),
+            crate::LibraryMenuScope::View => self.view_source_focus.clone(),
+        };
+        let popup = open.then(|| self.render_sort_menu(cx).into_any());
+        let trigger = workbench_button(
+            id,
+            label,
+            glyph,
+            if open {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Ghost
+            },
+            true,
+            icon_only,
+            tooltip,
+            cx,
+            move |app, cx| {
+                app.toggle_sort_popup(scope);
+                cx.notify();
+            },
+        )
+        .track_focus(&focus);
+        anchored_overlay(
+            trigger,
+            popup,
+            placement,
+            size(px(width), px(WORKBENCH_CONTROL_HEIGHT)),
+        )
+        .flex_none()
+        .w(px(width))
+        .h(px(WORKBENCH_CONTROL_HEIGHT))
+    }
+
+    fn render_random_source_trigger(&mut self, width: f32, cx: &mut Context<Self>) -> impl Element {
+        let theme = self.theme.clone();
+        let summary = self.random_summary.clone();
+        let label = format!("From: {summary}");
+        let tooltip: SharedString = format!("Choose folders for random picks · {summary}").into();
+        let open = self.random_popup_open;
+        let mut trigger = div()
+            .id("random-sources")
+            .track_focus(&self.random_source_focus)
+            .w(px(width))
+            .h(px(WORKBENCH_CONTROL_HEIGHT))
+            .flex_none()
+            .px(px(9.0))
+            .rounded(px(RADIUS_SM))
+            .relative()
+            .top(px(0.0))
+            .border_1()
+            .border_color(if open {
+                theme.accent
+            } else {
+                theme.transparent()
+            })
+            .bg(if open {
+                theme.selection_face(TactileState::Rest, false)
+            } else {
+                theme.transparent().into()
+            })
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .cursor_pointer()
+            .tab_index(0)
+            .hover(|style| {
+                style
+                    .bg(theme.control_face(TactileState::Hover))
+                    .border_color(theme.tactile_edge(TactileState::Hover, false))
+            })
+            .active(|style| {
+                style
+                    .top(px(1.0))
+                    .bg(theme.control_face(TactileState::Pressed))
+            })
+            .focus(|style| style.border_2().border_color(theme.accent))
+            .child(icon("folders", 14.0, theme.muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(label)
+                    .text_size(px(12.0))
+                    .text_color(theme.text_soft)
+                    .text_ellipsis(),
+            )
+            .child(icon(
+                if open { "chevron-up" } else { "chevron-down" },
+                12.0,
+                theme.muted,
+            ))
+            .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
+            .on_click(cx.listener(|app, _event, window, cx| {
+                app.toggle_random_popup(window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &crate::Activate, window, cx| {
+                app.toggle_random_popup(window, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(|app, _: &crate::ActivateSpace, window, cx| {
+                app.toggle_random_popup(window, cx);
+                cx.stop_propagation();
+            }));
+        if self.random_picking {
+            trigger = trigger.opacity(0.7);
+        }
+        let popup = open.then(|| self.render_random_popup(cx).into_any());
+        anchored_overlay(
+            trigger,
+            popup,
+            OverlayPlacement::BelowEnd,
+            size(px(width), px(WORKBENCH_CONTROL_HEIGHT)),
+        )
+        .flex_none()
+        .w(px(width))
+        .h(px(WORKBENCH_CONTROL_HEIGHT))
+    }
+
     pub fn render_sort_menu(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
+        let scope = self.sort_menu_scope;
         let sort_mode = self
             .settings
             .get(SORT_MODE)
@@ -1901,6 +2048,17 @@ impl crate::App {
             .and_then(|v| v.as_str())
             .unwrap_or("name_asc")
             .to_string();
+        let density_mode = self
+            .settings
+            .get(LIBRARY_DENSITY)
+            .and_then(|value| value.as_str())
+            .unwrap_or("default")
+            .to_string();
+        let thumbnail_mode = if self.settings_bool(FIT_LIBRARY_THUMBNAILS) {
+            "fit".to_string()
+        } else {
+            "fill".to_string()
+        };
         let mut menu = div()
             .id("sort-menu")
             .occlude()
@@ -2055,18 +2213,26 @@ impl crate::App {
                     );
                 item = item.on_click(cx.listener(move |app, _event, _window, cx| {
                     app.sort_menu_open = false;
-                    if value == "name_asc"
-                        || value == "name_desc"
-                        || value == "added_recent"
-                        || value == "added_old"
-                        || value == "recent"
-                        || value == "stale"
-                        || value == "count_desc"
-                        || value == "count_asc"
-                    {
-                        app.command(Command::SetFolderSortMode(value.to_string()));
-                    } else {
-                        app.command(Command::SetSortMode(value.to_string()));
+                    app.mark_menu_closed();
+                    match scope {
+                        crate::LibraryMenuScope::Videos => {
+                            app.command(Command::SetSortMode(value.to_string()));
+                        }
+                        crate::LibraryMenuScope::Folders => {
+                            app.command(Command::SetFolderSortMode(value.to_string()));
+                        }
+                        crate::LibraryMenuScope::View => match value {
+                            "default" | "compact" => {
+                                app.set_setting(LIBRARY_DENSITY, json!(value), cx);
+                            }
+                            "fit" => {
+                                app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(true), cx);
+                            }
+                            "fill" => {
+                                app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(false), cx);
+                            }
+                            _ => {}
+                        },
                     }
                     cx.notify();
                 }));
@@ -2074,16 +2240,43 @@ impl crate::App {
             }
             section
         };
-        menu = menu
-            .child(add_section(self, "VIDEOS", &video_options, &sort_mode, cx))
-            .child(divider())
-            .child(add_section(
+        menu = match scope {
+            crate::LibraryMenuScope::Videos => menu.child(add_section(
                 self,
-                "EXPLORER FOLDERS",
+                "SORT VIDEOS",
+                &video_options,
+                &sort_mode,
+                cx,
+            )),
+            crate::LibraryMenuScope::Folders => menu.child(add_section(
+                self,
+                "SORT EXPLORER",
                 &folder_options,
                 &folder_sort_mode,
                 cx,
-            ));
+            )),
+            crate::LibraryMenuScope::View => {
+                let density_options: [(&str, &str); 2] =
+                    [("Comfortable", "default"), ("Compact", "compact")];
+                let thumbnail_options: [(&str, &str); 2] =
+                    [("Fill thumbnail", "fill"), ("Fit entire frame", "fit")];
+                menu.child(add_section(
+                    self,
+                    "DENSITY",
+                    &density_options,
+                    &density_mode,
+                    cx,
+                ))
+                .child(divider())
+                .child(add_section(
+                    self,
+                    "THUMBNAILS",
+                    &thumbnail_options,
+                    &thumbnail_mode,
+                    cx,
+                ))
+            }
+        };
         popup_fade(menu, "sort-menu-fade")
     }
 
@@ -2095,10 +2288,16 @@ impl crate::App {
         let checking = self.checking;
         let timeline_loading = self.timeline_loading;
         let publish = self.publish.clone();
-        let active_count = [scanning, checking, timeline_loading, publish.active]
-            .iter()
-            .filter(|active| **active)
-            .count();
+        let active_count = [
+            scanning,
+            checking,
+            self.random_picking,
+            timeline_loading,
+            publish.active,
+        ]
+        .iter()
+        .filter(|active| **active)
+        .count();
         let mut popup = div()
             .id("activity-popup")
             .occlude()
@@ -2339,7 +2538,7 @@ impl crate::App {
         let index = self.workspace_menu_target;
         let target = self.workspaces.get(index).cloned();
         let workspace_count = self.workspaces.len();
-        let closed_available = self.closed_count_known();
+        let closed_available = self.closed_count > 0;
         let mut menu = div()
             .id("workspace-menu")
             .occlude()
@@ -2501,6 +2700,33 @@ impl crate::App {
                     Some(Command::RevealWorkspaceRoot(id.clone())),
                     cx,
                 ))
+                .child(
+                    add_item(
+                        self,
+                        "ws-replace-root",
+                        "Replace workspace folder…",
+                        "folder",
+                        true,
+                        None,
+                        cx,
+                    )
+                    .on_click(cx.listener(|app, _event, _window, cx| {
+                        app.workspace_menu_open = false;
+                        app.choose_library_folder(cx);
+                    }))
+                    .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                        app.workspace_menu_open = false;
+                        app.choose_library_folder(cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(cx.listener(
+                        |app, _: &crate::ActivateSpace, _window, cx| {
+                            app.workspace_menu_open = false;
+                            app.choose_library_folder(cx);
+                            cx.stop_propagation();
+                        },
+                    )),
+                )
                 .child(if scanning {
                     add_item(
                         self,
@@ -2548,23 +2774,6 @@ impl crate::App {
                     cx,
                 ))
                 .child(divider())
-                .child(
-                    add_item(self, "ws-new", "New workspace…", "+", true, None, cx)
-                        .on_click(cx.listener(|app, _event, _window, cx| {
-                            app.workspace_menu_open = false;
-                            app.choose_new_workspace_folder(cx);
-                        }))
-                        .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
-                            app.workspace_menu_open = false;
-                            app.choose_new_workspace_folder(cx);
-                            cx.stop_propagation();
-                        }))
-                        .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
-                            app.workspace_menu_open = false;
-                            app.choose_new_workspace_folder(cx);
-                            cx.stop_propagation();
-                        })),
-                )
                 .child(add_item(
                     self,
                     "ws-reopen",
@@ -2592,12 +2801,6 @@ impl crate::App {
         self.focused_field = Some("workspace-rename".to_string());
     }
 
-    /// Whether the controller reported closed workspaces (best-effort from
-    /// the last WorkspacesChanged payload).
-    fn closed_count_known(&self) -> bool {
-        true
-    }
-
     /// Folder picker for creating a new workspace tab.
     pub fn choose_new_workspace_folder(&mut self, cx: &mut Context<Self>) {
         let controller = self.controller.clone();
@@ -2623,8 +2826,6 @@ impl crate::App {
 
     pub fn render_header(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = self.theme.clone();
-        let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
-        let picking = self.random_picking;
         let width = self.window_size.0;
         let compact = width < 1120.0;
         let very_compact = width < 1000.0;
@@ -2680,81 +2881,54 @@ impl crate::App {
             );
         }
 
+        let command_shortcut = if cfg!(target_os = "macos") {
+            "Command palette  ·  ⌘⇧P"
+        } else {
+            "Command palette  ·  Ctrl Shift P"
+        };
         header = header.child(
-            workbench_button(
-                "command-palette",
-                "",
-                "terminal",
-                ButtonKind::Primary,
-                true,
-                true,
-                "Command palette  ·  ⌘⇧P",
-                cx,
-                |app, cx| {
-                    if app.command_open {
-                        app.close_command_center();
-                    } else {
-                        app.command_scope = "commands".to_string();
-                        app.command_query.clear();
-                        let state = app.field_state_mut("command-center");
-                        state.text.clear();
-                        state.caret = 0;
-                        app.open_command_center(cx);
-                    }
-                    cx.notify();
-                },
-            )
-            .w(px(34.0))
-            .h(px(34.0)),
-        );
-
-        header = header.child(div().w(px(12.0)).flex_none());
-
-        let can_back = self
-            .workspaces
-            .get(self.active_workspace_index)
-            .map(|workspace| workspace.has_back)
-            .unwrap_or(false);
-        let can_forward = self
-            .workspaces
-            .get(self.active_workspace_index)
-            .map(|workspace| workspace.has_forward)
-            .unwrap_or(false);
-        header = header.child(
-            workbench_button(
-                "nav-back",
-                "",
-                "chevron-left",
-                ButtonKind::Ghost,
-                can_back,
-                true,
-                "Go back  ·  ⌘[",
-                cx,
-                |app, cx| {
-                    app.command(Command::NavigateBack);
-                    cx.notify();
-                },
-            )
-            .w(px(32.0))
-            .h(px(32.0)),
-        );
-        header = header.child(
-            workbench_button(
-                "nav-forward",
-                "",
-                "chevron-right",
-                ButtonKind::Ghost,
-                can_forward,
-                true,
-                "Go forward  ·  ⌘]",
-                cx,
-                |app, cx| {
-                    app.command(Command::NavigateForward);
-                    cx.notify();
-                },
-            )
-            .w(px(32.0))
-            .h(px(32.0)),
+            div()
+                .id("command-palette")
+                .w(px(34.0))
+                .h(px(34.0))
+                .flex_none()
+                .rounded(px(RADIUS_SM))
+                .relative()
+                .top(px(0.0))
+                .border_1()
+                .border_color(theme.transparent())
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .tab_index(0)
+                .hover(|style| {
+                    style
+                        .bg(theme.control_face(TactileState::Hover))
+                        .border_color(theme.tactile_edge(TactileState::Hover, false))
+                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
+                })
+                .active(|style| {
+                    style
+                        .top(px(1.0))
+                        .bg(theme.control_face(TactileState::Pressed))
+                        .border_color(theme.tactile_edge(TactileState::Pressed, false))
+                })
+                .focus(|style| style.border_2().border_color(theme.accent))
+                .child(brand_mark(24.0))
+                .tooltip(move |_window, cx| crate::tooltip_view(cx, command_shortcut.into()))
+                .on_click(cx.listener(|app, _event, window, cx| {
+                    window.blur();
+                    app.toggle_command_palette(cx);
+                }))
+                .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                    app.toggle_command_palette(cx);
+                    cx.stop_propagation();
+                }))
+                .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                    app.toggle_command_palette(cx);
+                    cx.stop_propagation();
+                })),
         );
 
         header = header.child(div().w(px(if compact { 6.0 } else { 12.0 })).flex_none());
@@ -2850,8 +3024,11 @@ impl crate::App {
 
         header = header.child(div().w(px(if compact { 2.0 } else { 7.0 })).flex_none());
 
-        let activity_active =
-            self.scan.active || self.checking || self.timeline_loading || self.publish.active;
+        let activity_active = self.scan.active
+            || self.checking
+            || self.random_picking
+            || self.timeline_loading
+            || self.publish.active;
         let activity_popup = self
             .activity_open
             .then(|| self.render_activity_popup(cx).into_any());
@@ -2925,6 +3102,16 @@ impl crate::App {
             .on_click(cx.listener(|app, _event, _window, cx| {
                 app.toggle_activity_popup();
                 cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
+                app.toggle_activity_popup();
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
+                app.toggle_activity_popup();
+                cx.notify();
+                cx.stop_propagation();
             }));
         header = header.child(
             anchored_overlay(
@@ -2936,175 +3123,6 @@ impl crate::App {
             .flex_none()
             .w(px(30.0))
             .h(px(30.0)),
-        );
-
-        let summary = self.random_summary.clone();
-        {
-            let tooltip: SharedString = format!("Random sources: {summary}").into();
-            let width_px = if very_compact {
-                116.0
-            } else if compact {
-                132.0
-            } else {
-                150.0
-            };
-            let source_selected = self.random_has_selection || self.random_popup_open;
-            let source_rest_face: Background = if source_selected {
-                theme.selection_face(TactileState::Rest, false)
-            } else {
-                theme.transparent().into()
-            };
-            let source_hover_face = if source_selected {
-                theme.selection_face(TactileState::Hover, false)
-            } else {
-                theme.control_face(TactileState::Hover)
-            };
-            let mut sources = div()
-                .id("random-sources")
-                .track_focus(&self.random_source_focus)
-                .flex_none()
-                .h(px(32.0))
-                .px(px(9.0))
-                .w(px(width_px))
-                .rounded(px(RADIUS_SM))
-                .relative()
-                .top(px(0.0))
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .cursor_pointer()
-                .tab_index(0)
-                .bg(source_rest_face)
-                .shadow(if source_selected {
-                    theme.tactile_shadow(TactileState::Rest, true)
-                } else {
-                    Vec::new()
-                })
-                .border_1()
-                .border_color(if self.random_popup_open {
-                    theme.accent
-                } else if source_selected {
-                    theme.tactile_edge(TactileState::Rest, false)
-                } else {
-                    theme.transparent()
-                })
-                .hover(|style| {
-                    style
-                        .bg(source_hover_face)
-                        .border_color(theme.tactile_edge(TactileState::Hover, false))
-                        .shadow(theme.tactile_shadow(TactileState::Hover, true))
-                })
-                .active(|style| {
-                    style
-                        .top(px(1.0))
-                        .bg(theme.selection_face(TactileState::Pressed, false))
-                        .border_color(theme.tactile_edge(TactileState::Pressed, false))
-                        .shadow(theme.tactile_shadow(TactileState::Pressed, true))
-                })
-                .focus(|style| style.border_2().border_color(theme.accent))
-                .tooltip(move |_window, cx| crate::tooltip_view(cx, tooltip.clone()))
-                .when(!has_root, |this| this.opacity(0.42).cursor_default())
-                .child(icon("folders", 14.0, theme.muted))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child(summary)
-                        .text_size(px(12.0))
-                        .text_color(theme.text_soft)
-                        .text_ellipsis(),
-                )
-                .child(icon(
-                    if self.random_popup_open {
-                        "chevron-up"
-                    } else {
-                        "chevron-down"
-                    },
-                    12.0,
-                    theme.muted,
-                ));
-            if has_root {
-                sources = sources
-                    .on_click(cx.listener(|app, _event, window, cx| {
-                        app.toggle_random_popup(window, cx);
-                    }))
-                    .on_action(cx.listener(|app, _: &crate::Activate, window, cx| {
-                        app.toggle_random_popup(window, cx);
-                        cx.stop_propagation();
-                    }))
-                    .on_action(cx.listener(|app, _: &crate::ActivateSpace, window, cx| {
-                        app.toggle_random_popup(window, cx);
-                        cx.stop_propagation();
-                    }));
-            }
-            let random_popup = self
-                .random_popup_open
-                .then(|| self.render_random_popup(cx).into_any());
-            header = header.child(
-                anchored_overlay(
-                    sources,
-                    random_popup,
-                    OverlayPlacement::BelowEnd,
-                    size(px(width_px), px(32.0)),
-                )
-                .flex_none()
-                .w(px(width_px))
-                .h(px(32.0)),
-            );
-        }
-
-        if !compact {
-            header = header.child(
-                workbench_button(
-                    "reset-shuffle",
-                    "",
-                    "refresh",
-                    ButtonKind::Ghost,
-                    has_root,
-                    true,
-                    "Reset shuffle history",
-                    cx,
-                    |app, cx| {
-                        app.command(Command::ResetShuffle);
-                        cx.notify();
-                    },
-                )
-                .w(px(28.0))
-                .h(px(28.0)),
-            );
-        }
-
-        let pick_label = if picking {
-            "Picking…"
-        } else if very_compact {
-            "Random"
-        } else {
-            "Pick random"
-        };
-        let pick_width = if very_compact {
-            96.0
-        } else if compact {
-            112.0
-        } else {
-            136.0
-        };
-        header = header.child(
-            workbench_button(
-                "pick-random",
-                pick_label,
-                "shuffle",
-                ButtonKind::Primary,
-                has_root,
-                false,
-                "Pick random video  ·  R",
-                cx,
-                |app, cx| {
-                    app.command(Command::PickRandom);
-                    cx.notify();
-                },
-            )
-            .w(px(pick_width))
-            .h(px(34.0)),
         );
 
         header
@@ -3160,6 +3178,8 @@ impl crate::App {
                 .px(px(11.0))
                 .relative()
                 .cursor_pointer()
+                .tab_index(0)
+                .focus(|style| style.border_2().border_color(theme.accent))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -3234,6 +3254,9 @@ impl crate::App {
                     .px(px(6.0)),
                 );
             } else {
+                let close_click_id = id.clone();
+                let close_enter_id = id.clone();
+                let close_space_id = id.clone();
                 tab = tab
                     .child(
                         div()
@@ -3256,16 +3279,36 @@ impl crate::App {
                             .w(px(24.0))
                             .h(px(24.0))
                             .rounded(px(RADIUS_SM))
+                            .cursor_pointer()
+                            .tab_index(0)
                             .flex()
                             .items_center()
                             .justify_center()
                             .hover(|style| style.bg(theme.active).text_color(theme.text))
+                            .focus(|style| style.border_2().border_color(theme.accent))
                             .child(icon("x", 12.5, theme.muted_soft))
+                            .tooltip(move |_window, cx| {
+                                crate::tooltip_view(cx, "Close workspace".into())
+                            })
                             .on_click(cx.listener(move |app, _event, _window, cx| {
                                 app.pending_close_workspace = Some(index);
-                                app.command(Command::CloseWorkspace(id.clone()));
+                                app.command(Command::CloseWorkspace(close_click_id.clone()));
                                 cx.notify();
-                            })),
+                            }))
+                            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                                app.pending_close_workspace = Some(index);
+                                app.command(Command::CloseWorkspace(close_enter_id.clone()));
+                                cx.notify();
+                                cx.stop_propagation();
+                            }))
+                            .on_action(cx.listener(
+                                move |app, _: &crate::ActivateSpace, _window, cx| {
+                                    app.pending_close_workspace = Some(index);
+                                    app.command(Command::CloseWorkspace(close_space_id.clone()));
+                                    cx.notify();
+                                    cx.stop_propagation();
+                                },
+                            )),
                     );
             }
             tab = tab
@@ -3299,7 +3342,21 @@ impl crate::App {
                         return;
                     }
                     app.activate_workspace_at(index, cx);
-                }));
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
+                    if app.renaming_workspace != Some(index) {
+                        app.activate_workspace_at(index, cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        if app.renaming_workspace != Some(index) {
+                            app.activate_workspace_at(index, cx);
+                        }
+                        cx.stop_propagation();
+                    }),
+                );
             tab.interactivity().on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |app, _event: &MouseDownEvent, _window, cx| {
@@ -3858,30 +3915,40 @@ impl crate::App {
                         .text_ellipsis(),
                 );
             }
-            item.on_click(cx.listener(move |app, _event, window, cx| {
-                window.blur();
-                app.navigate_to(target, cx);
-            }))
-            .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                app.navigate_to(target, cx);
-                cx.stop_propagation();
-            }))
-            .on_action(cx.listener(
-                move |app, _: &crate::ActivateSpace, _window, cx| {
+            item.tooltip(move |_window, cx| crate::tooltip_view(cx, format!("Open {label}").into()))
+                .on_click(cx.listener(move |app, _event, window, cx| {
+                    window.blur();
+                    app.navigate_to(target, cx);
+                }))
+                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
                     app.navigate_to(target, cx);
                     cx.stop_propagation();
-                },
-            ))
+                }))
+                .on_action(
+                    cx.listener(move |app, _: &crate::ActivateSpace, _window, cx| {
+                        app.navigate_to(target, cx);
+                        cx.stop_propagation();
+                    }),
+                )
         };
 
-        sidebar = sidebar.child(nav_item(
-            self,
-            "nav-history",
-            "History",
-            "history",
-            Page::History,
-            cx,
-        ));
+        sidebar = sidebar
+            .child(nav_item(
+                self,
+                "nav-library",
+                "Library",
+                "library",
+                Page::Library,
+                cx,
+            ))
+            .child(nav_item(
+                self,
+                "nav-history",
+                "History",
+                "history",
+                Page::History,
+                cx,
+            ));
         if self.prepare.studio_mode {
             sidebar = sidebar.child(
                 div()
@@ -4006,6 +4073,26 @@ impl crate::App {
             Page::Settings,
             cx,
         ));
+        if collapsed && !narrow {
+            sidebar = sidebar.child(
+                workbench_button(
+                    "expand-sidebar",
+                    "",
+                    "chevron-right",
+                    ButtonKind::Ghost,
+                    true,
+                    true,
+                    "Expand navigation",
+                    cx,
+                    |app, cx| {
+                        app.set_setting(SIDEBAR_COLLAPSED, json!(false), cx);
+                    },
+                )
+                .mx(px(10.0))
+                .w(px(40.0))
+                .h(px(40.0)),
+            );
+        }
         if !collapsed && !narrow {
             sidebar = sidebar.child(
                 div()
@@ -4950,7 +5037,7 @@ impl crate::App {
                         .gap(px(2.0))
                         .child(
                             div()
-                                .child("All Folders")
+                                .child("All folders")
                                 .text_size(px(13.0))
                                 .text_color(theme.text)
                                 .font_weight(FontWeight::SEMIBOLD),
@@ -4994,32 +5081,20 @@ impl crate::App {
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     app.random_selected_only = false;
                     app.refresh_random_tree();
-                    if app.random_all_selected {
-                        app.command(Command::ClearRandomFolders);
-                    } else {
-                        app.command(Command::SelectAllRandomFolders);
-                    }
+                    app.command(Command::SelectAllRandomFolders);
                     cx.notify();
                 }))
                 .on_action(cx.listener(|app, _: &crate::Activate, _window, cx| {
                     app.random_selected_only = false;
                     app.refresh_random_tree();
-                    if app.random_all_selected {
-                        app.command(Command::ClearRandomFolders);
-                    } else {
-                        app.command(Command::SelectAllRandomFolders);
-                    }
+                    app.command(Command::SelectAllRandomFolders);
                     cx.stop_propagation();
                     cx.notify();
                 }))
                 .on_action(cx.listener(|app, _: &crate::ActivateSpace, _window, cx| {
                     app.random_selected_only = false;
                     app.refresh_random_tree();
-                    if app.random_all_selected {
-                        app.command(Command::ClearRandomFolders);
-                    } else {
-                        app.command(Command::SelectAllRandomFolders);
-                    }
+                    app.command(Command::SelectAllRandomFolders);
                     cx.stop_propagation();
                     cx.notify();
                 })),
@@ -5089,6 +5164,11 @@ impl crate::App {
 
         // The list toolbar keeps secondary tree controls quiet and predictable.
         let has_branches = self.random_list.has_branches;
+        let any_branch_expanded = self
+            .random_options
+            .iter()
+            .filter(|option| option.has_children)
+            .any(|option| self.random_expanded.contains(&option.folder));
         popup = popup.child(
             div()
                 .w_full()
@@ -5185,41 +5265,43 @@ impl crate::App {
                     )
                 })
                 .when(has_branches, |toolbar| {
-                    toolbar
-                        .child(workbench_button(
-                            "random-collapse",
-                            if compact { "" } else { "Collapse" },
-                            "chevron-up",
-                            ButtonKind::Ghost,
-                            true,
-                            compact,
-                            "Collapse all source branches",
-                            cx,
-                            |app, cx| {
+                    toolbar.child(workbench_button(
+                        "random-toggle-branches",
+                        if compact {
+                            ""
+                        } else if any_branch_expanded {
+                            "Collapse all"
+                        } else {
+                            "Expand all"
+                        },
+                        if any_branch_expanded {
+                            "chevron-up"
+                        } else {
+                            "chevron-down"
+                        },
+                        ButtonKind::Ghost,
+                        true,
+                        compact,
+                        if any_branch_expanded {
+                            "Collapse all source branches"
+                        } else {
+                            "Expand all source branches"
+                        },
+                        cx,
+                        move |app, cx| {
+                            if any_branch_expanded {
                                 app.random_expanded.clear();
-                                app.refresh_random_tree();
-                                cx.notify();
-                            },
-                        ))
-                        .child(workbench_button(
-                            "random-expand",
-                            if compact { "" } else { "Expand" },
-                            "chevron-down",
-                            ButtonKind::Ghost,
-                            true,
-                            compact,
-                            "Expand all source branches",
-                            cx,
-                            |app, cx| {
+                            } else {
                                 for option in &app.random_options {
                                     if option.has_children {
                                         app.random_expanded.insert(option.folder.clone());
                                     }
                                 }
-                                app.refresh_random_tree();
-                                cx.notify();
-                            },
-                        ))
+                            }
+                            app.refresh_random_tree();
+                            cx.notify();
+                        },
+                    ))
                 })
                 .when(options_empty, |toolbar| {
                     toolbar.child(
@@ -5339,7 +5421,19 @@ impl crate::App {
                             .child(crate::widgets::progress_bar(0.0, true))
                             .into_any()
                     } else {
-                        div().into_any()
+                        button(
+                            "random-empty-rescan",
+                            "Rescan now",
+                            ButtonKind::Secondary,
+                            Some("refresh"),
+                            !self.scan.active,
+                            cx,
+                            |app, cx| {
+                                app.command(Command::ScanLibrary);
+                                cx.notify();
+                            },
+                        )
+                        .into_any()
                     }),
             );
         } else if visible_count == 0 && !options_empty {
@@ -5382,19 +5476,21 @@ impl crate::App {
         } else if selected_count == 0 {
             "Choose at least one folder".to_string()
         } else {
-            format!(
-                "{selected_count} source {} selected",
-                if selected_count == 1 {
-                    "folder"
-                } else {
-                    "folders"
-                }
-            )
+            "Auto-saved".to_string()
+        };
+        let pick_enabled =
+            (all_selected || selected_count > 0) && total_video_count > 0 && !self.random_picking;
+        let pick_label = if self.random_picking {
+            "Picking…".to_string()
+        } else if all_selected && total_video_count > 0 {
+            format!("Pick from {total_video_count}")
+        } else {
+            "Pick random".to_string()
         };
         popup = popup.child(
             div()
                 .w_full()
-                .h(px(54.0))
+                .h(px(62.0))
                 .px(px(12.0))
                 .border_t_1()
                 .border_color(theme.border)
@@ -5417,7 +5513,8 @@ impl crate::App {
                             theme.text_soft
                         })
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(
+                        .when(all_selected, |status| {
+                            status.child(
                             div()
                                 .child(
                                     "Saved automatically · parent choices include nested folders",
@@ -5425,35 +5522,54 @@ impl crate::App {
                                 .text_size(px(10.0))
                                 .text_color(theme.muted_soft)
                                 .text_ellipsis(),
-                        ),
+                        )
+                        }),
                 )
-                .when(all_selected || has_explicit_selection, |footer| {
+                .child(workbench_button(
+                    "reset-shuffle-history",
+                    if compact { "" } else { "Reset history" },
+                    "refresh",
+                    ButtonKind::Ghost,
+                    total_video_count > 0,
+                    compact,
+                    "Reset random pick history",
+                    cx,
+                    |app, cx| {
+                        app.command(Command::ResetShuffle);
+                        cx.notify();
+                    },
+                ))
+                .when(!all_selected, |footer| {
                     footer.child(workbench_button(
-                        "random-clear",
-                        if compact { "" } else { "Clear" },
-                        "close",
+                        "random-use-all",
+                        if compact { "" } else { "Use all" },
+                        "folders",
                         ButtonKind::Ghost,
                         true,
                         compact,
-                        "Clear random source selection",
+                        "Use all folders for random picks",
                         cx,
                         |app, cx| {
                             app.random_selected_only = false;
                             app.refresh_random_tree();
-                            app.command(Command::ClearRandomFolders);
+                            app.command(Command::SelectAllRandomFolders);
                             cx.notify();
                         },
                     ))
                 })
                 .child(
                     button(
-                        "random-done",
-                        "Done",
-                        ButtonKind::Secondary,
-                        Some("check"),
-                        true,
+                        "random-pick",
+                        &pick_label,
+                        ButtonKind::Primary,
+                        Some("shuffle"),
+                        pick_enabled,
                         cx,
-                        |app, cx| app.close_random_popup(cx),
+                        |app, cx| {
+                            app.close_random_popup(cx);
+                            app.command(Command::PickRandom);
+                            cx.notify();
+                        },
                     )
                     .h(px(32.0)),
                 ),

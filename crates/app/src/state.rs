@@ -290,7 +290,7 @@ pub enum ContextMenuAction {
     OpenContainingFolder,
     OpenInStudio,
     CopyPath,
-    UseAsActiveSource,
+    OpenAsWorkspace,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -317,12 +317,6 @@ pub fn context_menu_items(target: &ContextMenuTarget) -> Vec<ContextMenuItem> {
                 separator_before: false,
             },
             ContextMenuItem {
-                action: ContextMenuAction::OpenContainingFolder,
-                label: "Open containing folder",
-                glyph: "external",
-                separator_before: false,
-            },
-            ContextMenuItem {
                 action: ContextMenuAction::OpenInStudio,
                 label: "Open in Studio",
                 glyph: "maximize",
@@ -338,7 +332,7 @@ pub fn context_menu_items(target: &ContextMenuTarget) -> Vec<ContextMenuItem> {
         ContextMenuTarget::Folder { .. } => vec![
             ContextMenuItem {
                 action: ContextMenuAction::OpenContainingFolder,
-                label: "Open folder",
+                label: "Show in file manager",
                 glyph: "external",
                 separator_before: false,
             },
@@ -349,8 +343,8 @@ pub fn context_menu_items(target: &ContextMenuTarget) -> Vec<ContextMenuItem> {
                 separator_before: false,
             },
             ContextMenuItem {
-                action: ContextMenuAction::UseAsActiveSource,
-                label: "Use as active source",
+                action: ContextMenuAction::OpenAsWorkspace,
+                label: "Open as new workspace",
                 glyph: "folder",
                 separator_before: true,
             },
@@ -397,7 +391,6 @@ mod context_menu_tests {
             vec![
                 ContextMenuAction::OpenDefault,
                 ContextMenuAction::RevealInFileManager,
-                ContextMenuAction::OpenContainingFolder,
                 ContextMenuAction::OpenInStudio,
                 ContextMenuAction::CopyPath,
             ]
@@ -420,7 +413,7 @@ mod context_menu_tests {
             vec![
                 ContextMenuAction::OpenContainingFolder,
                 ContextMenuAction::CopyPath,
-                ContextMenuAction::UseAsActiveSource,
+                ContextMenuAction::OpenAsWorkspace,
             ]
         );
     }
@@ -524,7 +517,6 @@ pub enum Command {
     PickRandom,
     RandomPicked(i64),
     SetRandomFolderEnabled(String, bool),
-    ClearRandomFolders,
     SelectAllRandomFolders,
     LoadRandomFolderOptions,
     ResetShuffle,

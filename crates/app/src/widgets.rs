@@ -100,6 +100,25 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
     }
 }
 
+/// The supplied Relay Splice silhouette, rendered in the active signal coral
+/// so it stays legible across opaque and translucent title bars.
+pub fn brand_mark(size: f32) -> Div {
+    div()
+        .w(px(size))
+        .h(px(size))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            svg()
+                .path("brand/cliprelay-mark-color.svg")
+                .w(px(size))
+                .h(px(size))
+                .text_color(current_theme().accent),
+        )
+}
+
 #[derive(Clone)]
 struct ButtonVisual {
     rest: Background,

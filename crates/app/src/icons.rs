@@ -23,6 +23,9 @@ macro_rules! icon_svg {
 impl AssetSource for ClipRelayAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         let bytes: Option<&'static [u8]> = match path {
+            "brand/cliprelay-mark-color.svg" => {
+                Some(include_bytes!("../assets/cliprelay-mark-color.svg"))
+            }
             "icons/activity.svg" => Some(icon_svg!(r#"<path d="M3 12h4l2-5 3 10 3-7 2 2h4"/>"#)),
             "icons/arrow-down.svg" => Some(icon_svg!(
                 r#"<path d="M12 4v16"/><path d="m6 14 6 6 6-6"/>"#

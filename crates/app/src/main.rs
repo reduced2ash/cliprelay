@@ -74,9 +74,16 @@ pub struct Toast {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceMenuSource {
-    ExplorerActions,
     Tab(usize),
     TabActions,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LibraryMenuScope {
+    #[default]
+    Videos,
+    Folders,
+    View,
 }
 
 pub struct App {
@@ -187,6 +194,8 @@ pub struct App {
     root_focus_pending: bool,
     library_item_focus: FocusHandle,
     sort_source_focus: FocusHandle,
+    folder_sort_source_focus: FocusHandle,
+    view_source_focus: FocusHandle,
     activity_source_focus: FocusHandle,
     command_source_focus: FocusHandle,
     command_popup_focus: FocusHandle,
@@ -209,6 +218,7 @@ pub struct App {
     pub workspace_menu_source: WorkspaceMenuSource,
     pub renaming_workspace: Option<usize>,
     pub sort_menu_open: bool,
+    pub sort_menu_scope: LibraryMenuScope,
     pub pending_close_workspace: Option<usize>,
     pub activity_open: bool,
     pub shortcut_guide_open: bool,
@@ -375,6 +385,7 @@ impl App {
             page: initial_page,
             random_popup_open: open_random_at_boot,
             sort_menu_open: open_sort_at_boot,
+            sort_menu_scope: LibraryMenuScope::Videos,
             activity_open: open_activity_at_boot,
             shortcut_guide_open: open_shortcut_guide_at_boot,
             workspace_menu_open: open_workspace_menu_at_boot,
@@ -388,6 +399,8 @@ impl App {
             root_focus_pending: false,
             library_item_focus: cx.focus_handle(),
             sort_source_focus: cx.focus_handle(),
+            folder_sort_source_focus: cx.focus_handle(),
+            view_source_focus: cx.focus_handle(),
             activity_source_focus: cx.focus_handle(),
             command_source_focus: cx.focus_handle().tab_stop(true),
             command_popup_focus: cx.focus_handle().tab_stop(false),
@@ -1459,7 +1472,11 @@ impl App {
         } else if self.sort_menu_open {
             self.sort_menu_open = false;
             self.mark_menu_closed();
-            window.focus(&self.sort_source_focus);
+            window.focus(match self.sort_menu_scope {
+                LibraryMenuScope::Videos => &self.sort_source_focus,
+                LibraryMenuScope::Folders => &self.folder_sort_source_focus,
+                LibraryMenuScope::View => &self.view_source_focus,
+            });
             true
         } else if self.workspace_menu_open {
             self.workspace_menu_open = false;
@@ -1922,11 +1939,10 @@ impl App {
                 self.toast(ToastKind::Success, "Path copied to the clipboard.");
                 cx.notify();
             }
-            (
-                ContextMenuAction::UseAsActiveSource,
-                ContextMenuTarget::Folder { relative_path, .. },
-            ) => {
-                self.command(Command::SetFolder(relative_path));
+            (ContextMenuAction::OpenAsWorkspace, ContextMenuTarget::Folder { .. }) => {
+                self.command(Command::CreateWorkspace(
+                    path.to_string_lossy().into_owned(),
+                ));
                 cx.notify();
             }
             _ => {}
@@ -2145,6 +2161,7 @@ impl App {
                 }
             }
             crate::render_impls::CommandEntry::Result(item) => {
+                self.navigate_to(Page::Library, cx);
                 if item.kind == "media" {
                     self.command(Command::SelectMedia(item.media_id));
                     // Scroll the grid to the tile when it is already loaded;
@@ -2229,12 +2246,13 @@ impl App {
         }
     }
 
-    pub fn toggle_sort_popup(&mut self) {
-        if self.sort_menu_open {
+    pub fn toggle_sort_popup(&mut self, scope: LibraryMenuScope) {
+        if self.sort_menu_open && self.sort_menu_scope == scope {
             self.sort_menu_open = false;
             self.mark_menu_closed();
         } else if self.menu_reopen_allowed() {
             self.dismiss_root_popovers();
+            self.sort_menu_scope = scope;
             self.sort_menu_open = true;
         }
     }
@@ -2263,6 +2281,22 @@ impl App {
     pub fn toggle_combo(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.open_combos.remove(id) {
             self.open_combos.insert(id.to_string());
+        }
+        cx.notify();
+    }
+
+    /// The branded title-bar mark is the compact entry point for command mode;
+    /// the search field remains the direct entry point for mixed search.
+    pub fn toggle_command_palette(&mut self, cx: &mut Context<Self>) {
+        if self.command_open {
+            self.close_command_center();
+        } else {
+            self.command_scope = "commands".to_string();
+            self.command_query.clear();
+            let state = self.field_state_mut("command-center");
+            state.text.clear();
+            state.caret = 0;
+            self.open_command_center(cx);
         }
         cx.notify();
     }
@@ -3343,7 +3377,7 @@ impl App {
             let toast_x = ((self.window_size.0 - 460.0) / 2.0).max(0.0);
             let mut toast_column = div()
                 .absolute()
-                .bottom(px(24.0))
+                .bottom(px(WORKSPACE_TAB_HEIGHT + 12.0))
                 .left(px(toast_x))
                 .flex()
                 .flex_col()
@@ -3386,6 +3420,9 @@ impl App {
                                 .h(px(28.0))
                                 .px(px(10.0))
                                 .cursor_pointer()
+                                .tab_index(0)
+                                .rounded(px(RADIUS_SM))
+                                .focus(|style| style.border_2().border_color(theme.accent))
                                 .flex()
                                 .items_center()
                                 .gap(px(6.0))
@@ -3396,7 +3433,21 @@ impl App {
                                 .on_click(cx.listener(move |app, _event, _window, cx| {
                                     app.toasts.retain(|toast| toast.id != toast_id);
                                     cx.notify();
-                                })),
+                                }))
+                                .on_action(cx.listener(
+                                    move |app, _: &crate::Activate, _window, cx| {
+                                        app.toasts.retain(|toast| toast.id != toast_id);
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    },
+                                ))
+                                .on_action(cx.listener(
+                                    move |app, _: &crate::ActivateSpace, _window, cx| {
+                                        app.toasts.retain(|toast| toast.id != toast_id);
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    },
+                                )),
                         ),
                 );
             }
