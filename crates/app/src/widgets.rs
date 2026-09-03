@@ -272,6 +272,20 @@ impl FieldState {
         let byte = Self::char_to_byte(&self.text, self.caret);
         format!("{}▏{}", &self.text[..byte], &self.text[byte..])
     }
+
+    /// Visible text split at the caret for the blinking caret row. Mirrors
+    /// `rendered()` without the static glyph so the caret can blink as its
+    /// own element; splits always land on char boundaries.
+    pub fn rendered_parts(&self, password: bool) -> (String, String) {
+        let shown = if password && !self.text.is_empty() {
+            "•".repeat(self.text.chars().count())
+        } else {
+            self.text.clone()
+        };
+        let caret = self.caret.min(shown.chars().count());
+        let byte = Self::char_to_byte(&shown, caret);
+        (shown[..byte].to_string(), shown[byte..].to_string())
+    }
 }
 
 /// Transparent element that registers the focused App field with GPUI's
@@ -658,10 +672,12 @@ pub fn workbench_button(
         })
 }
 
-/// Text input field (44px, raised, 2px accent focus ring). Keyboard input is
-/// handled by the view's key dispatch (see `App::on_key_down`). The id
-/// accepts any string so generated editors (e.g. per-color theme fields)
-/// can own stable identities; it must simply be stable across renders.
+/// Text input field (44px, raised). Focus shows a blinking caret and never
+/// a ring or border flip, so clicking a field never shifts layout.
+/// Keyboard input is handled by the view's key dispatch (see
+/// `App::on_key_down`). The id accepts any string so generated editors
+/// (e.g. per-color theme fields) can own stable identities; it must simply
+/// be stable across renders.
 pub fn field(
     id: impl Into<SharedString>,
     placeholder: &str,
@@ -745,7 +761,7 @@ pub fn field_with_icon_hint(
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
-        .border_color(if focused { theme.accent } else { theme.border })
+        .border_color(theme.border)
         .hover(|style| style.border_color(theme.border_strong))
         .flex()
         .items_center()
@@ -761,31 +777,72 @@ pub fn field_with_icon_hint(
                 .child(PlatformInputElement { app: cx.entity() }),
         );
     }
-    if focused {
-        element = element.border_2().border_color(theme.accent);
-    }
     if let Some(glyph) = icon_glyph {
         element = element.child(icon(glyph, 14.0, theme.muted));
     }
-    let display = if password && !state.text.is_empty() {
-        "•".repeat(state.text.chars().count())
-    } else if state.text.is_empty() {
-        placeholder.to_string()
-    } else if focused {
-        state.rendered()
+    // Focused text gets a blinking caret bar between its before/after runs
+    // instead of the old static glyph: the caret is the typing indicator.
+    if focused {
+        let (before, after) = state.rendered_parts(password);
+        let mut row = div().flex().flex_row().items_center().overflow_hidden();
+        if !before.is_empty() {
+            row = row.child(
+                div()
+                    .min_w(px(0.0))
+                    .child(before)
+                    .text_color(theme.text)
+                    .text_ellipsis(),
+            );
+        }
+        row = row.child(
+            div()
+                .flex_none()
+                .w(px(2.0))
+                .h(px(15.0))
+                .rounded(px(1.0))
+                .bg(theme.text)
+                .with_animation(
+                    SharedString::from(format!("caret-{key}")),
+                    Animation::new(Duration::from_millis(1000)).repeat(),
+                    |this, delta| this.opacity(if delta < 0.55 { 1.0 } else { 0.0 }),
+                ),
+        );
+        if state.text.is_empty() {
+            row = row.child(
+                div()
+                    .child(placeholder.to_string())
+                    .text_color(theme.muted)
+                    .text_ellipsis(),
+            );
+        } else if !after.is_empty() {
+            row = row.child(
+                div()
+                    .min_w(px(0.0))
+                    .child(after)
+                    .text_color(theme.text)
+                    .text_ellipsis(),
+            );
+        }
+        element = element.child(row);
     } else {
-        state.text.clone()
-    };
-    element = element.child(
-        div()
-            .child(display)
-            .text_color(if state.text.is_empty() {
-                theme.muted
-            } else {
-                theme.text
-            })
-            .text_ellipsis(),
-    );
+        let display = if password && !state.text.is_empty() {
+            "•".repeat(state.text.chars().count())
+        } else if state.text.is_empty() {
+            placeholder.to_string()
+        } else {
+            state.text.clone()
+        };
+        element = element.child(
+            div()
+                .child(display)
+                .text_color(if state.text.is_empty() {
+                    theme.muted
+                } else {
+                    theme.text
+                })
+                .text_ellipsis(),
+        );
+    }
     if let Some(hint) = hint {
         element = element.child(
             div()
@@ -809,7 +866,9 @@ pub fn field_with_icon_hint(
             let enter_key = key.clone();
             let space_key = key.clone();
             this.tab_index(0)
-                .focus(|style| style.border_2().border_color(current_theme().accent))
+                // Keyboard focus only strengthens the hairline: same width,
+                // no accent, no motion. The caret marks the typing field.
+                .focus(|style| style.border_color(current_theme().border_strong))
                 .on_click(cx.listener(move |app, _event, _window, cx| {
                     app.focus_field(&click_key, cx);
                 }))
@@ -871,7 +930,7 @@ pub fn text_area(
         .rounded(px(RADIUS_SM))
         .bg(theme.raised)
         .border_1()
-        .border_color(if focused { focus_border } else { theme.border })
+        .border_color(theme.border)
         .text_size(px(13.0))
         .text_color(theme.text)
         .cursor_text();
@@ -883,15 +942,15 @@ pub fn text_area(
                 .child(PlatformInputElement { app: cx.entity() }),
         );
     }
-    if focused {
-        element = if subtle_focus {
-            element
-                .bg(theme.hover)
-                .border_1()
-                .border_color(focus_border)
-        } else {
-            element.border_2().border_color(focus_border)
-        };
+    // The subtle variant keeps its stronger hairline; the default variant
+    // stays flat like single-line fields (no ring, no border flip). The
+    // caption keeps its static glyph caret: it wraps, so the caret must
+    // flow inside the text run instead of splitting it into a row.
+    if focused && subtle_focus {
+        element = element
+            .bg(theme.hover)
+            .border_1()
+            .border_color(focus_border);
     }
     let display = if state.text.is_empty() {
         placeholder.to_string()
@@ -919,7 +978,7 @@ pub fn text_area(
                     .border_1()
                     .border_color(current_theme().border_strong)
             } else {
-                style.border_2().border_color(current_theme().accent)
+                style.border_color(current_theme().border_strong)
             }
         })
         .on_click(cx.listener(move |app, _event, _window, cx| {
@@ -1203,6 +1262,29 @@ mod tests {
         state.move_right();
         state.backspace();
         assert_renders(&state);
+    }
+
+    #[test]
+    fn caret_parts_match_the_static_glyph_render() {
+        let mut state = FieldState::default();
+        for ch in "héllo 😀 world".chars() {
+            state.insert(ch);
+        }
+        // Start, middle (after "hé"), and end splits never slice mid-char.
+        for caret in [0, 2, 7, state.text.chars().count(), 99] {
+            state.caret = caret;
+            let (before, after) = state.rendered_parts(false);
+            assert_eq!(format!("{before}▏{after}"), state.rendered());
+        }
+        // Password masks before splitting; positions still line up 1:1.
+        state.caret = 2;
+        let (before, after) = state.rendered_parts(true);
+        assert_eq!(before, "••");
+        assert_eq!(before.chars().count() + after.chars().count(), 13);
+        assert!(after.chars().all(|c| c == '•'));
+        // Empty text splits cleanly for the placeholder row.
+        let empty = FieldState::default();
+        assert_eq!(empty.rendered_parts(false), (String::new(), String::new()));
     }
 
     #[test]
