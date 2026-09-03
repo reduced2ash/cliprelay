@@ -1319,8 +1319,7 @@ impl crate::App {
         let theme = self.theme.clone();
         let page = self.page;
         let width = self.window_size.0;
-        let nav_collapsed = width < 1080.0 || self.sidebar_collapsed;
-        let activity_width = if nav_collapsed {
+        let sidebar_width = if width < 1080.0 || self.sidebar_collapsed {
             SIDEBAR_COLLAPSED_WIDTH
         } else {
             SIDEBAR_EXPANDED_WIDTH
@@ -1338,14 +1337,14 @@ impl crate::App {
             };
         let show_prepare = prepare_width > 1.0;
         // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
-        let slot_reserved = activity_width
-            + if show_explorer { explorer_width } else { 1.0 }
+        let toolbar_width = (width - sidebar_width).max(0.0);
+        let slot_reserved = if show_explorer { explorer_width } else { 1.0 }
             + if show_prepare {
                 prepare_width + 1.0
             } else {
                 0.0
             };
-        let slot_width = (width - slot_reserved).max(0.0);
+        let slot_width = (toolbar_width - slot_reserved).max(0.0);
         let compact_actions = slot_width < 680.0;
         let narrow_actions = slot_width < 500.0;
 
@@ -1359,30 +1358,6 @@ impl crate::App {
             .flex_row()
             .items_center()
             .overflow_hidden();
-
-        // Keep the rail header non-interactive. All destinations now live in
-        // one navigation stack below instead of splitting Library into a
-        // special toolbar-only slot.
-        let rail_header = div()
-            .flex_none()
-            .w(px(activity_width))
-            .h_full()
-            .bg(theme.rail_background())
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(!nav_collapsed, |header| {
-                header.child(
-                    div()
-                        .w_full()
-                        .px(px(12.0))
-                        .child(tracked("NAVIGATION"))
-                        .text_size(px(10.0))
-                        .text_color(theme.muted_soft)
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
-            });
-        toolbar = toolbar.child(rail_header);
 
         // Explorer header
         if show_explorer {
@@ -1485,26 +1460,6 @@ impl crate::App {
 
         match page {
             Page::Library => {
-                let can_back = self
-                    .workspaces
-                    .get(self.active_workspace_index)
-                    .map(|workspace| workspace.has_back)
-                    .unwrap_or(false);
-                let can_forward = self
-                    .workspaces
-                    .get(self.active_workspace_index)
-                    .map(|workspace| workspace.has_forward)
-                    .unwrap_or(false);
-                let back_tip = if cfg!(target_os = "macos") {
-                    "Go back  ·  ⌘["
-                } else {
-                    "Go back  ·  Alt Left"
-                };
-                let forward_tip = if cfg!(target_os = "macos") {
-                    "Go forward  ·  ⌘]"
-                } else {
-                    "Go forward  ·  Alt Right"
-                };
                 let location = if studio_mode {
                     self.selected
                         .as_ref()
@@ -1529,37 +1484,6 @@ impl crate::App {
                 } else {
                     location
                 };
-                if !studio_mode {
-                    center = center
-                        .child(workbench_button(
-                            "nav-back",
-                            "",
-                            "chevron-left",
-                            ButtonKind::Ghost,
-                            can_back,
-                            true,
-                            back_tip,
-                            cx,
-                            |app, cx| {
-                                app.command(Command::NavigateBack);
-                                cx.notify();
-                            },
-                        ))
-                        .child(workbench_button(
-                            "nav-forward",
-                            "",
-                            "chevron-right",
-                            ButtonKind::Ghost,
-                            can_forward,
-                            true,
-                            forward_tip,
-                            cx,
-                            |app, cx| {
-                                app.command(Command::NavigateForward);
-                                cx.notify();
-                            },
-                        ));
-                }
                 if has_root && !show_explorer && !studio_mode && width >= 820.0 {
                     center = center.child(workbench_button(
                         "show-explorer",
@@ -1669,41 +1593,6 @@ impl crate::App {
                         "Library view options",
                         cx,
                     ));
-                    let scanning = self.scan.active;
-                    let cancelling = self.scan.cancelling;
-                    let scanning_label = if cancelling {
-                        "Stopping…"
-                    } else if scanning {
-                        "Stop scan"
-                    } else {
-                        "Rescan"
-                    };
-                    center = center.child(workbench_button(
-                        "rescan",
-                        scanning_label,
-                        if cancelling || scanning {
-                            "square"
-                        } else {
-                            "refresh"
-                        },
-                        ButtonKind::Ghost,
-                        !(scanning && cancelling),
-                        true,
-                        if scanning {
-                            "Stop the active library scan"
-                        } else {
-                            "Rescan the active workspace"
-                        },
-                        cx,
-                        |app, cx| {
-                            if app.scan.active && !app.scan.cancelling {
-                                app.command(Command::CancelScan);
-                            } else {
-                                app.command(Command::ScanLibrary);
-                            }
-                            cx.notify();
-                        },
-                    ));
                     let random_width = if narrow_actions {
                         112.0
                     } else if compact_actions {
@@ -1712,44 +1601,6 @@ impl crate::App {
                         168.0
                     };
                     center = center.child(self.render_random_source_trigger(random_width, cx));
-                    let random_valid = self.random_all_selected || self.random_selected > 0;
-                    let pick_width = if narrow_actions {
-                        70.0
-                    } else if compact_actions {
-                        76.0
-                    } else {
-                        116.0
-                    };
-                    center = center.child(
-                        workbench_button(
-                            "pick-random",
-                            if self.random_picking {
-                                if compact_actions {
-                                    "…"
-                                } else {
-                                    "Picking…"
-                                }
-                            } else if compact_actions {
-                                "Pick"
-                            } else {
-                                "Pick random"
-                            },
-                            "shuffle",
-                            ButtonKind::Primary,
-                            random_valid
-                                && !self.random_picking
-                                && (self.counts.0 > 0 || self.scan.active),
-                            false,
-                            "Pick a random video from the selected folders  ·  R",
-                            cx,
-                            |app, cx| {
-                                app.command(Command::PickRandom);
-                                cx.notify();
-                            },
-                        )
-                        .w(px(pick_width))
-                        .h(px(32.0)),
-                    );
                 }
                 toolbar = toolbar.child(center);
             }
@@ -2915,7 +2766,7 @@ impl crate::App {
                         .border_color(theme.tactile_edge(TactileState::Pressed, false))
                 })
                 .focus(|style| style.border_2().border_color(theme.accent))
-                .child(brand_mark(24.0))
+                .child(brand_mark(30.0))
                 .tooltip(move |_window, cx| crate::tooltip_view(cx, command_shortcut.into()))
                 .on_click(cx.listener(|app, _event, window, cx| {
                     window.blur();
@@ -2932,6 +2783,56 @@ impl crate::App {
         );
 
         header = header.child(div().w(px(if compact { 6.0 } else { 12.0 })).flex_none());
+
+        let can_back = self
+            .workspaces
+            .get(self.active_workspace_index)
+            .map(|workspace| workspace.has_back)
+            .unwrap_or(false);
+        let can_forward = self
+            .workspaces
+            .get(self.active_workspace_index)
+            .map(|workspace| workspace.has_forward)
+            .unwrap_or(false);
+        let back_tip = if cfg!(target_os = "macos") {
+            "Go back  ·  ⌘["
+        } else {
+            "Go back  ·  Alt Left"
+        };
+        let forward_tip = if cfg!(target_os = "macos") {
+            "Go forward  ·  ⌘]"
+        } else {
+            "Go forward  ·  Alt Right"
+        };
+        header = header
+            .child(workbench_button(
+                "nav-back",
+                "",
+                "chevron-left",
+                ButtonKind::Ghost,
+                can_back,
+                true,
+                back_tip,
+                cx,
+                |app, cx| {
+                    app.navigate_to(Page::Library, cx);
+                    app.command(Command::NavigateBack);
+                },
+            ))
+            .child(workbench_button(
+                "nav-forward",
+                "",
+                "chevron-right",
+                ButtonKind::Ghost,
+                can_forward,
+                true,
+                forward_tip,
+                cx,
+                |app, cx| {
+                    app.navigate_to(Page::Library, cx);
+                    app.command(Command::NavigateForward);
+                },
+            ));
 
         let empty_field = FieldState::default();
         let search_hint = if cfg!(target_os = "macos") {
@@ -3023,6 +2924,75 @@ impl crate::App {
         }
 
         header = header.child(div().w(px(if compact { 2.0 } else { 7.0 })).flex_none());
+
+        let has_root = !self.settings_value(LIBRARY_ROOT).is_empty();
+        let scanning = self.scan.active;
+        let cancelling = self.scan.cancelling;
+        let scanning_label = if cancelling {
+            "Stopping…"
+        } else if scanning {
+            "Stop scan"
+        } else {
+            "Rescan"
+        };
+        header = header.child(workbench_button(
+            "rescan",
+            scanning_label,
+            if cancelling || scanning {
+                "square"
+            } else {
+                "refresh"
+            },
+            ButtonKind::Secondary,
+            has_root && !(scanning && cancelling),
+            false,
+            if scanning {
+                "Stop the active library scan"
+            } else {
+                "Rescan the active workspace"
+            },
+            cx,
+            |app, cx| {
+                if app.scan.active && !app.scan.cancelling {
+                    app.command(Command::CancelScan);
+                } else {
+                    app.command(Command::ScanLibrary);
+                }
+                cx.notify();
+            },
+        ));
+
+        let random_valid = self.random_all_selected || self.random_selected > 0;
+        header = header.child(
+            workbench_button(
+                "pick-random",
+                if self.random_picking {
+                    if very_compact {
+                        "…"
+                    } else {
+                        "Picking…"
+                    }
+                } else if very_compact {
+                    "Pick"
+                } else {
+                    "Pick random"
+                },
+                "shuffle",
+                ButtonKind::Primary,
+                has_root
+                    && random_valid
+                    && !self.random_picking
+                    && (self.counts.0 > 0 || self.scan.active),
+                false,
+                "Pick a random video from the selected folders  ·  R",
+                cx,
+                |app, cx| {
+                    app.navigate_to(Page::Library, cx);
+                    app.command(Command::PickRandom);
+                },
+            )
+            .h(px(32.0)),
+        );
 
         let activity_active = self.scan.active
             || self.checking

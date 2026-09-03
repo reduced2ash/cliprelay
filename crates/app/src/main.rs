@@ -3262,30 +3262,10 @@ impl App {
         // returning to another open workspace is always one click away.
         if !focused_studio {
             root = root.child(self.render_header(cx));
-            root = root.child(self.render_context_toolbar(cx));
         }
 
-        let mut body = div()
-            .id("body")
-            .flex_1()
-            .min_w(px(0.0))
-            .flex()
-            .flex_row()
-            .min_h(px(0.0));
-        if !focused_studio {
-            body = body.child(self.render_sidebar(cx));
-            if !explorer_owns_rail_seam {
-                body = body.child(
-                    div()
-                        .w(px(1.0))
-                        .h_full()
-                        .bg(self.theme.workbench_border.opacity(0.62))
-                        .flex_none(),
-                );
-            }
-        }
         let page = self.page;
-        body = body.child(match page {
+        let page_content = match page {
             Page::Library => {
                 if self.selected.is_some() && !self.prepare.studio_mode {
                     let mut row = div()
@@ -3305,7 +3285,48 @@ impl App {
             }
             Page::History => self.render_history(cx).into_any(),
             Page::Settings => self.render_settings(cx).into_any(),
-        });
+        };
+
+        let mut body = div()
+            .id("body")
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .min_h(px(0.0));
+        if focused_studio {
+            body = body.child(page_content);
+        } else {
+            body = body.child(self.render_sidebar(cx));
+            let mut page_row = div()
+                .id("page-body")
+                .flex_1()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .flex()
+                .flex_row();
+            if !explorer_owns_rail_seam {
+                page_row = page_row.child(
+                    div()
+                        .w(px(1.0))
+                        .h_full()
+                        .bg(self.theme.workbench_border.opacity(0.62))
+                        .flex_none(),
+                );
+            }
+            page_row = page_row.child(page_content);
+            body = body.child(
+                div()
+                    .id("workbench")
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .child(self.render_context_toolbar(cx))
+                    .child(page_row),
+            );
+        }
 
         root = root.child(body);
         if self.transient_surface_owns_global_shortcuts() {
