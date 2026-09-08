@@ -22,8 +22,9 @@ pub struct SettingsUiState {
     pub active_section: Option<String>,
     /// Last theme edit rejection, shown under the color editor.
     pub theme_error: Option<String>,
-    /// Whether the editor shows every color role (`false` shows basics).
+    /// Whether the editor shows the additional status and media groups.
     pub advanced_colors: bool,
+    pub expanded_color_groups: std::collections::HashSet<String>,
     /// Role key whose color picker panel is open (`None` closes it).
     pub color_picker_role: Option<String>,
     /// Uncommitted color, scoped to the active theme and role.
@@ -1278,6 +1279,7 @@ impl crate::App {
             name: name.clone(),
             base: base.to_string(),
             colors: HashMap::new(),
+            groups: HashMap::new(),
         });
         self.settings_page.theme_error = None;
         self.save_custom_themes(themes, cx);
@@ -1299,6 +1301,7 @@ impl crate::App {
             name,
             base: source.base,
             colors: source.colors,
+            groups: source.groups,
         });
         self.settings_page.theme_error = None;
         self.save_custom_themes(themes, cx);
@@ -1386,6 +1389,11 @@ impl crate::App {
         hex: &str,
         cx: &mut Context<crate::App>,
     ) -> bool {
+        let grouped = role_key.starts_with("group:");
+        let role_key = role_key.strip_prefix("group:").unwrap_or(role_key);
+        if grouped && !THEME_COLOR_GROUPS.iter().any(|f| f.key == role_key) {
+            return false;
+        }
         if THEME_ROLES.iter().all(|role| role.key != role_key) {
             return false;
         }
@@ -1398,9 +1406,10 @@ impl crate::App {
         };
         // Focusing and leaving an unchanged field must not fork a built-in
         // or add redundant overrides to a custom theme.
-        if THEME_ROLES
-            .iter()
-            .any(|role| role.key == role_key && hsla_to_hex((role.get)(&self.theme)) == normalized)
+        if (!grouped || !matches!(self.theme_mode, ThemeMode::Custom(_)))
+            && THEME_ROLES.iter().any(|role| {
+                role.key == role_key && hsla_to_hex((role.get)(&self.theme)) == normalized
+            })
         {
             self.settings_page.theme_error = None;
             return true;
@@ -1419,7 +1428,12 @@ impl crate::App {
         };
         let role_key = role_key.to_string();
         self.update_custom_theme(&active_id, cx, |theme| {
-            theme.colors.insert(role_key, normalized);
+            if grouped {
+                theme.colors.remove(&role_key);
+                theme.groups.insert(role_key, normalized);
+            } else {
+                theme.colors.insert(role_key, normalized);
+            }
         });
         true
     }
@@ -1801,7 +1815,7 @@ fn theme_custom_group(
     for custom in customs {
         let resolved = custom.resolve();
         let selected = active_key == format!("{CUSTOM_THEME_PREFIX}{}", custom.id);
-        let subtitle = match custom.colors.len() {
+        let subtitle = match custom.colors.len() + custom.groups.len() {
             0 => format!("Based on {}", ThemeMode::builtin_label(&custom.base)),
             1 => format!(
                 "Based on {} · 1 override",
@@ -1929,6 +1943,7 @@ fn theme_color_editor(
         name: name.clone(),
         base: app.theme_mode.as_str().to_string(),
         colors: HashMap::new(),
+        groups: HashMap::new(),
     });
     let resolved = view.resolve();
     let is_custom = !view.id.is_empty();
@@ -2027,92 +2042,110 @@ fn theme_color_editor(
         );
     }
 
-    // Basics first: the handful of roles that restyle the app on their own.
-    for key in BASIC_THEME_ROLE_KEYS {
-        if let Some(role) = THEME_ROLES.iter().find(|role| role.key == key) {
-            group = group.child(theme_role_row(
-                app,
-                cx,
-                theme,
-                &view,
-                &resolved,
-                role,
-                &empty_field,
-            ));
-        }
+    group = group.child(help_text(theme, "Main colors update related shades. Expand a group to override a shade; Reset makes it follow the group again."));
+    for family in &THEME_COLOR_GROUPS[..MAIN_COLOR_GROUP_COUNT] {
+        group = group.child(theme_color_family(app, cx, theme, &view, &resolved, family));
     }
-    let advanced_open = app.settings_page.advanced_colors;
-    let mut toggle = div()
-        .w_full()
+    group = group.child(button(
+        "theme-other-colors",
+        "Status & media colors",
+        ButtonKind::Ghost,
+        Some(if app.settings_page.advanced_colors {
+            "chevron-up"
+        } else {
+            "chevron-down"
+        }),
+        true,
+        cx,
+        |app, cx| {
+            app.close_theme_picker();
+            app.settings_page.advanced_colors = !app.settings_page.advanced_colors;
+            cx.notify();
+        },
+    ));
+    if app.settings_page.advanced_colors {
+        for family in &THEME_COLOR_GROUPS[MAIN_COLOR_GROUP_COUNT..] {
+            group = group.child(theme_color_family(app, cx, theme, &view, &resolved, family));
+        }
+        let role = THEME_ROLES
+            .iter()
+            .find(|role| role.key == "media_overlay")
+            .unwrap();
+        group = group.child(theme_role_row(
+            app, cx, theme, &view, &resolved, role, false,
+        ));
+    }
+
+    group
+}
+
+fn theme_color_family(
+    app: &crate::App,
+    cx: &mut Context<crate::App>,
+    theme: &Theme,
+    custom: &CustomTheme,
+    resolved: &Theme,
+    family: &'static ThemeColorGroup,
+) -> Div {
+    let role = THEME_ROLES
+        .iter()
+        .find(|role| role.key == family.key)
+        .unwrap();
+    let open = app.settings_page.expanded_color_groups.contains(family.key);
+    let overrides = family
+        .roles
+        .iter()
+        .skip(1)
+        .filter(|key| custom.colors.contains_key(**key))
+        .count();
+    let mut section = div()
         .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.0))
-        .child(button(
-            "theme-advanced",
-            if advanced_open {
-                "Hide advanced colors"
-            } else {
-                "Show advanced colors"
-            },
+        .flex_col()
+        .gap(px(4.0))
+        .child(theme_role_row(app, cx, theme, custom, resolved, role, true))
+        .child(div().flex().pl(px(42.0)).child(button(
+            format!("theme-expand-{}", family.key),
+            &format!(
+                "{} shades{}",
+                if open { "Hide" } else { "Advanced" },
+                if overrides > 0 {
+                    format!(" · {overrides} overridden")
+                } else {
+                    String::new()
+                }
+            ),
             ButtonKind::Ghost,
-            Some(if advanced_open {
-                "chevron-up"
-            } else {
-                "chevron-down"
-            }),
+            Some(if open { "chevron-up" } else { "chevron-down" }),
             true,
             cx,
-            |app, cx| {
-                app.settings_page.advanced_colors = !app.settings_page.advanced_colors;
+            move |app, cx| {
+                app.close_theme_picker();
+                if !app.settings_page.expanded_color_groups.remove(family.key) {
+                    app.settings_page
+                        .expanded_color_groups
+                        .insert(family.key.to_string());
+                }
                 cx.notify();
             },
-        ));
-    if !advanced_open {
-        toggle = toggle.child(
-            div()
-                .child(format!(
-                    "{} more colors",
-                    THEME_ROLES.len() - BASIC_THEME_ROLE_KEYS.len()
-                ))
-                .text_size(px(12.0))
-                .text_color(theme.muted),
-        );
-    }
-    group = group.child(toggle);
-    if advanced_open {
-        for group_name in [
-            "Chrome",
-            "Surfaces",
-            "Text & hairlines",
-            "Accent",
-            "Status",
-            "Media",
-        ] {
-            let rest: Vec<&ThemeRole> = THEME_ROLES
-                .iter()
-                .filter(|role| {
-                    role.group == group_name && !BASIC_THEME_ROLE_KEYS.contains(&role.key)
-                })
-                .collect();
-            if rest.is_empty() {
-                continue;
-            }
-            group = group.child(sub_label(theme, &group_name.to_uppercase()));
-            for role in rest {
-                group = group.child(theme_role_row(
-                    app,
-                    cx,
-                    theme,
-                    &view,
-                    &resolved,
-                    role,
-                    &empty_field,
-                ));
-            }
+        )));
+    if open {
+        let mut children = div()
+            .ml(px(42.0))
+            .pl(px(12.0))
+            .border_l_1()
+            .border_color(theme.border)
+            .flex()
+            .flex_col()
+            .gap(px(8.0));
+        for key in family.roles.iter().skip(1) {
+            let role = THEME_ROLES.iter().find(|role| role.key == *key).unwrap();
+            children = children.child(theme_role_row(
+                app, cx, theme, custom, resolved, role, false,
+            ));
         }
+        section = section.child(children);
     }
-    group
+    section
 }
 
 fn theme_picker_panel(
@@ -2120,6 +2153,7 @@ fn theme_picker_panel(
     cx: &mut Context<crate::App>,
     theme: &Theme,
     role: &ThemeRole,
+    grouped: bool,
 ) -> Stateful<Div> {
     let picker = app
         .settings_page
@@ -2127,7 +2161,11 @@ fn theme_picker_panel(
         .clone()
         .expect("open picker has a draft");
     let apply_picker = picker.clone();
-    let key = role.key.to_string();
+    let key = if grouped {
+        format!("group:{}", role.key)
+    } else {
+        role.key.to_string()
+    };
     let live_hex = hsla_to_hex(picker.read(cx).color());
     let empty = FieldState::default();
     let hex_state = app.fields.get("theme-picker-hex").unwrap_or(&empty);
@@ -2236,7 +2274,10 @@ impl crate::App {
         }
         if self.settings_page.color_picker_role.as_deref() == Some(key) {
             self.close_theme_picker();
-        } else if let Some(role) = THEME_ROLES.iter().find(|role| role.key == key) {
+        } else if let Some(role) = THEME_ROLES
+            .iter()
+            .find(|role| role.key == key.strip_prefix("group:").unwrap_or(key))
+        {
             self.close_theme_picker();
             let color = (role.get)(&self.theme);
             let picker = cx.new(|cx| crate::color_picker::ColorPicker::new(color, cx));
@@ -2262,16 +2303,37 @@ fn theme_role_row(
     custom: &CustomTheme,
     resolved: &Theme,
     role: &ThemeRole,
-    _empty_field: &FieldState,
+    grouped: bool,
 ) -> Div {
-    let overridden = custom.colors.contains_key(role.key);
+    let family = THEME_COLOR_GROUPS
+        .iter()
+        .find(|family| family.key == role.key);
+    let overridden = if grouped {
+        custom.groups.contains_key(role.key)
+            || family.is_some_and(|f| f.roles.iter().any(|k| custom.colors.contains_key(*k)))
+    } else {
+        custom.colors.contains_key(role.key)
+    };
     // One editor is ever visible, so the role alone identifies the field.
     let field_id = format!("theme-hex-{}", role.key);
     let reset_id = custom.id.clone();
     let reset_role = role.key.to_string();
     let reset_field = field_id.clone();
-    let picker_open = app.settings_page.color_picker_role.as_deref() == Some(role.key);
-    let toggle_key = role.key.to_string();
+    let toggle_key = if grouped {
+        format!("group:{}", role.key)
+    } else {
+        role.key.to_string()
+    };
+    let picker_open = app.settings_page.color_picker_role.as_deref() == Some(toggle_key.as_str());
+    let display_hex = if grouped {
+        custom
+            .groups
+            .get(role.key)
+            .cloned()
+            .unwrap_or_else(|| custom.role_hex(role))
+    } else {
+        custom.role_hex(role)
+    };
     div()
         .w_full()
         .flex()
@@ -2304,7 +2366,11 @@ fn theme_role_row(
             div()
                 .flex_1()
                 .min_w(px(0.0))
-                .child(role.label)
+                .child(if grouped {
+                    family.unwrap().label
+                } else {
+                    role.label
+                })
                 .text_size(px(13.0))
                 .text_color(theme.text_soft)
                 .font_weight(FontWeight::MEDIUM)
@@ -2314,7 +2380,7 @@ fn theme_role_row(
             anchored_overlay(
                 button(
                     format!("theme-color-{}", role.key),
-                    &custom.role_hex(role),
+                    &display_hex,
                     ButtonKind::Ghost,
                     Some("chevron-down"),
                     true,
@@ -2322,7 +2388,7 @@ fn theme_role_row(
                     move |app, cx| app.toggle_theme_picker(&toggle_key, cx),
                 ),
                 if picker_open && app.settings_page.picker_draft.is_some() {
-                    Some(theme_picker_panel(app, cx, theme, role))
+                    Some(theme_picker_panel(app, cx, theme, role, grouped))
                 } else {
                     None
                 },
@@ -2334,13 +2400,26 @@ fn theme_role_row(
         )
         .child(button(
             format!("theme-reset-{}-{}", custom.id, role.key),
-            "Reset",
+            if grouped { "Reset group" } else { "Reset" },
             ButtonKind::Ghost,
             Some("↻"),
             overridden,
             cx,
             move |app, cx| {
-                app.clear_theme_override(&reset_id, &reset_role, &reset_field, cx);
+                if grouped {
+                    app.update_custom_theme(&reset_id, cx, |custom| {
+                        custom.groups.remove(&reset_role);
+                        if let Some(family) =
+                            THEME_COLOR_GROUPS.iter().find(|f| f.key == reset_role)
+                        {
+                            for key in family.roles {
+                                custom.colors.remove(*key);
+                            }
+                        }
+                    });
+                } else {
+                    app.clear_theme_override(&reset_id, &reset_role, &reset_field, cx);
+                }
             },
         ))
 }

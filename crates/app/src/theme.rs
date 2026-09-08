@@ -1,7 +1,7 @@
 //! Theme palettes for Relay, Pitch Black, Full White, and glass materials.
 #![allow(dead_code)]
 
-use gpui::{linear_color_stop, linear_gradient, point, px, Background, BoxShadow, Hsla, Rgba};
+use gpui::{Background, BoxShadow, Hsla, Rgba, linear_color_stop, linear_gradient, point, px};
 use std::collections::HashMap;
 
 fn color(hex: &str) -> Hsla {
@@ -108,6 +108,9 @@ pub struct CustomTheme {
     pub base: String,
     #[serde(default)]
     pub colors: HashMap<String, String>,
+    /// Linked color seeds; individual colors above take precedence.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, String>,
 }
 
 impl CustomTheme {
@@ -118,6 +121,21 @@ impl CustomTheme {
     /// The fully resolved palette: base plus overrides.
     pub fn resolve(&self) -> Theme {
         let mut theme = self.base_theme();
+        let base = theme.clone();
+        for group in THEME_COLOR_GROUPS {
+            if let Some((r, g, b)) = self
+                .groups
+                .get(group.key)
+                .and_then(|hex| parse_hex_color(hex))
+            {
+                apply_color_group(
+                    &mut theme,
+                    &base,
+                    group,
+                    Hsla::from(Rgba { r, g, b, a: 1.0 }),
+                );
+            }
+        }
         for (key, hex) in &self.colors {
             let Some(role) = THEME_ROLES.iter().find(|role| role.key == key.as_str()) else {
                 continue;
@@ -143,7 +161,7 @@ impl CustomTheme {
         self.colors
             .get(role.key)
             .cloned()
-            .unwrap_or_else(|| hsla_to_hex((role.get)(&self.base_theme())))
+            .unwrap_or_else(|| hsla_to_hex(self.effective(role)))
     }
 }
 
@@ -244,18 +262,131 @@ theme_role!(
     media_overlay
 );
 
-/// Roles shown without opening Advanced: the handful that restyle the app
-/// on their own (backgrounds, text, hairlines, accent).
-pub const BASIC_THEME_ROLE_KEYS: [&str; 8] = [
-    "accent",
-    "ink",
-    "surface",
-    "raised",
-    "text",
-    "text_soft",
-    "muted",
-    "border",
+/// A simple control and its independent advanced overrides. Membership is
+/// disjoint, so resolving seeds never depends on HashMap iteration order.
+pub struct ThemeColorGroup {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub roles: &'static [&'static str],
+}
+pub const THEME_COLOR_GROUPS: &[ThemeColorGroup] = &[
+    ThemeColorGroup {
+        key: "accent",
+        label: "Accent",
+        roles: &[
+            "accent",
+            "accent_pressed",
+            "accent_soft",
+            "accent_text",
+            "accent_content",
+            "workbench_selection",
+        ],
+    },
+    ThemeColorGroup {
+        key: "ink",
+        label: "Background",
+        roles: &[
+            "ink",
+            "workbench_chrome",
+            "workbench_rail",
+            "workbench_explorer",
+            "workbench_canvas",
+            "workbench_header",
+        ],
+    },
+    ThemeColorGroup {
+        key: "surface",
+        label: "Surfaces",
+        roles: &["surface", "surface_soft", "raised", "active", "hover"],
+    },
+    ThemeColorGroup {
+        key: "text",
+        label: "Text",
+        roles: &["text", "text_soft", "muted", "muted_soft"],
+    },
+    ThemeColorGroup {
+        key: "border",
+        label: "Borders",
+        roles: &["border", "border_strong", "workbench_border"],
+    },
+    ThemeColorGroup {
+        key: "success",
+        label: "Success",
+        roles: &["success", "success_soft"],
+    },
+    ThemeColorGroup {
+        key: "warning",
+        label: "Warning",
+        roles: &["warning", "warning_soft"],
+    },
+    ThemeColorGroup {
+        key: "error",
+        label: "Error",
+        roles: &["error", "error_soft"],
+    },
 ];
+pub const MAIN_COLOR_GROUP_COUNT: usize = 5;
+
+fn luminance(color: Hsla) -> f32 {
+    let rgb = Rgba::from(color);
+    let linear = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+}
+fn contrast(a: Hsla, b: Hsla) -> f32 {
+    let a = luminance(a);
+    let b = luminance(b);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+fn apply_color_group(theme: &mut Theme, base: &Theme, group: &ThemeColorGroup, seed: Hsla) {
+    let root = THEME_ROLES.iter().find(|r| r.key == group.key).unwrap();
+    let source = (root.get)(base);
+    for key in group.roles {
+        let role = THEME_ROLES.iter().find(|r| r.key == *key).unwrap();
+        let original = (role.get)(base);
+        let mut next = seed;
+        // Preserve the base palette's light/dark hierarchy and all glass alpha.
+        next.l = if original.l <= source.l && source.l > 0.0 {
+            seed.l * original.l / source.l
+        } else if source.l < 1.0 {
+            seed.l + (1.0 - seed.l) * (original.l - source.l) / (1.0 - source.l)
+        } else {
+            seed.l
+        };
+        if key.ends_with("_soft") && matches!(group.key, "accent" | "success" | "warning" | "error")
+        {
+            next.l = original.l;
+        }
+        if *key == "accent_content" {
+            next = if contrast(gpui::black(), seed) >= contrast(gpui::white(), seed) {
+                gpui::black()
+            } else {
+                gpui::white()
+            };
+        }
+        if *key == "accent_text" {
+            let target = if contrast(gpui::white(), base.ink) >= contrast(gpui::black(), base.ink) {
+                1.0
+            } else {
+                0.0
+            };
+            for _ in 0..100 {
+                if contrast(next, base.ink) >= 4.5 {
+                    break;
+                }
+                next.l += (target - next.l).signum() * 0.01;
+                next.l = next.l.clamp(0.0, 1.0);
+            }
+        }
+        next.a = original.a;
+        (role.set)(theme, next);
+    }
+}
 
 /// Every color a custom theme may override, grouped for the configurator.
 pub const THEME_ROLES: &[ThemeRole] = &[
@@ -1295,6 +1426,7 @@ mod tests {
         let glass = Theme::frosted_glass();
         assert!(glass.surface.a < 1.0);
         let custom = CustomTheme {
+            groups: HashMap::new(),
             id: "custom-1".to_string(),
             name: "Test".to_string(),
             base: "frosted_glass".to_string(),
@@ -1325,6 +1457,7 @@ mod tests {
         let missing = ThemeMode::parse("custom:gone");
         assert_eq!(Theme::resolve(&missing, &[]), Theme::relay());
         let stored = CustomTheme {
+            groups: HashMap::new(),
             id: "custom-1".to_string(),
             name: "Test".to_string(),
             base: "pitch_black".to_string(),
@@ -1338,16 +1471,88 @@ mod tests {
 
     #[test]
     fn basic_roles_name_real_unique_roles() {
-        assert!(!BASIC_THEME_ROLE_KEYS.is_empty());
+        let main_keys: Vec<_> = THEME_COLOR_GROUPS
+            .iter()
+            .take(MAIN_COLOR_GROUP_COUNT)
+            .map(|g| g.key)
+            .collect();
+        assert!(!main_keys.is_empty());
         let mut seen = std::collections::HashSet::new();
-        for key in BASIC_THEME_ROLE_KEYS {
+        for &key in &main_keys {
             assert!(seen.insert(key), "duplicate basic role {key}");
             assert!(
                 THEME_ROLES.iter().any(|role| role.key == key),
                 "unknown basic role {key}"
             );
         }
-        assert!(BASIC_THEME_ROLE_KEYS.len() < THEME_ROLES.len());
+        assert!(main_keys.len() < THEME_ROLES.len());
+    }
+
+    #[test]
+    fn linked_groups_cover_roles_and_keep_individual_overrides() {
+        let mut seen = std::collections::HashSet::new();
+        for group in THEME_COLOR_GROUPS {
+            assert_eq!(group.roles[0], group.key);
+            for key in group.roles {
+                assert!(seen.insert(*key), "duplicate membership {key}");
+                assert!(THEME_ROLES.iter().any(|r| r.key == *key));
+            }
+        }
+        assert_eq!(seen.len() + 1, THEME_ROLES.len()); // media dim is independent
+        for base in BUILTIN_THEME_MODES {
+            let mut custom = CustomTheme {
+                base: base.to_string(),
+                ..Default::default()
+            };
+            let original = custom.resolve();
+            custom.groups.insert("accent".into(), "#2255CC".into());
+            let linked = custom.resolve();
+            assert_eq!(hsla_to_hex(linked.accent), "#2255CC");
+            for key in THEME_COLOR_GROUPS[0].roles {
+                let role = THEME_ROLES.iter().find(|r| r.key == *key).unwrap();
+                assert_eq!((role.get)(&linked).a, (role.get)(&original).a);
+            }
+            assert_ne!(linked.accent_soft, original.accent_soft);
+            assert_ne!(linked.accent_pressed, original.accent_pressed);
+            assert!(contrast(linked.accent_content, linked.accent) >= 4.5);
+            assert!(contrast(linked.accent_text, original.ink) >= 4.5);
+            assert_eq!(linked.surface, original.surface);
+            custom
+                .colors
+                .insert("accent_pressed".into(), "#ABCDEF".into());
+            custom.groups.insert("accent".into(), "#CC3366".into());
+            assert_eq!(hsla_to_hex(custom.resolve().accent_pressed), "#ABCDEF");
+            custom.colors.remove("accent_pressed");
+            assert_ne!(hsla_to_hex(custom.resolve().accent_pressed), "#ABCDEF");
+            let restored: CustomTheme =
+                serde_json::from_str(&serde_json::to_string(&custom).unwrap()).unwrap();
+            assert_eq!(restored.resolve(), custom.resolve());
+        }
+    }
+
+    #[test]
+    fn legacy_themes_stay_exact_and_group_shades_keep_glass_alpha() {
+        let legacy: CustomTheme = serde_json::from_value(serde_json::json!({
+            "id":"old", "name":"Old", "base":"graphite_glass", "colors":{"accent":"#123456"}
+        }))
+        .unwrap();
+        assert!(legacy.groups.is_empty());
+        assert_eq!(
+            legacy.resolve().accent_soft,
+            legacy.base_theme().accent_soft
+        );
+        for family in THEME_COLOR_GROUPS {
+            let mut custom = legacy.clone();
+            custom.colors.clear();
+            custom.groups.insert(family.key.into(), "#397A91".into());
+            let resolved = custom.resolve();
+            let base = custom.base_theme();
+            for key in family.roles {
+                let role = THEME_ROLES.iter().find(|r| r.key == *key).unwrap();
+                assert_eq!((role.get)(&resolved).a, (role.get)(&base).a);
+                assert_eq!(custom.role_hex(role), hsla_to_hex((role.get)(&resolved)));
+            }
+        }
     }
 
     #[test]
