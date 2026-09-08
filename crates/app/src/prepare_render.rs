@@ -658,8 +658,8 @@ fn edit_crop_switch(
         theme.control_face(TactileState::Hover)
     };
     let mut track = div()
-        .w(px(if is_studio { 42.0 } else { 36.0 }))
-        .h(px(if is_studio { 22.0 } else { 20.0 }))
+        .w(px(if is_studio { 42.0 } else { 32.0 }))
+        .h(px(if is_studio { 22.0 } else { 18.0 }))
         .px(px(3.0))
         .rounded(px(if is_studio { 11.0 } else { 10.0 }))
         .bg(if enabled {
@@ -697,7 +697,7 @@ fn edit_crop_switch(
     div()
         .id("edit-crop-switch")
         .w_full()
-        .h(px(if is_studio { 68.0 } else { 50.0 }))
+        .h(px(if is_studio { 68.0 } else { 44.0 }))
         .px(px(if is_studio { 14.0 } else { 10.0 }))
         .rounded(px(2.0))
         .relative()
@@ -2442,8 +2442,8 @@ impl crate::App {
         let shape_count = self.prepare.shapes.len();
         let selected_shape = self.prepare.selected_shape;
         let has_edits = self.prepare.has_edits();
-        let tile_height = if is_studio { 66.0 } else { 50.0 };
-        let compact_control = if is_studio { 36.0 } else { 30.0 };
+        let tile_height = if is_studio { 66.0 } else { 44.0 };
+        let compact_control = if is_studio { 36.0 } else { 28.0 };
         let crop = self.prepare.crop;
         let crop_position = if crop_enabled {
             format!(
@@ -2468,7 +2468,7 @@ impl crate::App {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(if is_studio { 14.0 } else { 8.0 }))
+            .gap(px(if is_studio { 14.0 } else { 6.0 }))
             .when(is_studio, |column| column.child(
                 div()
                     .w_full()
@@ -2553,7 +2553,7 @@ impl crate::App {
                 div()
                     .w_full()
                     .flex()
-                    .gap(px(6.0))
+                    .gap(px(if is_studio { 6.0 } else { 5.0 }))
                     .child(edit_choice_tile(
                         theme,
                         "crop-preset-free",
@@ -2631,25 +2631,25 @@ impl crate::App {
                     )),
             )
             .child(
-                div().w_full().flex().gap(px(6.0))
+                div().w_full().flex().gap(px(if is_studio { 6.0 } else { 5.0 }))
                     .child(workbench_button("rotate-left", "Rotate left", "↶", ButtonKind::Secondary,
                         !self.checking, false, "Rotate video 90° left", cx,
                         |app, cx| app.rotate_prepare(-1, cx))
-                        .flex_1().h(px(36.0)))
+                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 })))
                     .child(workbench_button("rotate-right", "Rotate right", "↻", ButtonKind::Secondary,
                         !self.checking, false, "Rotate video 90° right", cx,
                         |app, cx| app.rotate_prepare(1, cx))
-                        .flex_1().h(px(36.0)))
+                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 })))
                     .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
                         "refresh", ButtonKind::Secondary, !self.checking && self.prepare.rotation != 0,
                         false, "Reset video rotation", cx,
                         |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
-                        .w(px(68.0)).h(px(36.0)))
+                        .w(px(68.0)).h(px(if is_studio { 36.0 } else { 32.0 })))
             )
             .child(
                 div()
                     .w_full()
-                    .min_h(px(if is_studio { 62.0 } else { 46.0 }))
+                    .min_h(px(if is_studio { 62.0 } else { 40.0 }))
                     .px(px(if is_studio { 10.0 } else { 8.0 }))
                     .rounded(px(2.0))
                     .bg(theme.surface_soft)
@@ -2822,7 +2822,7 @@ impl crate::App {
                 div()
                     .w_full()
                     .flex()
-                    .gap(px(6.0))
+                    .gap(px(if is_studio { 6.0 } else { 5.0 }))
                     .child(edit_choice_tile(
                         theme,
                         "guide-none",
@@ -2921,7 +2921,7 @@ impl crate::App {
                 div()
                     .w_full()
                     .flex()
-                    .gap(px(6.0))
+                    .gap(px(if is_studio { 6.0 } else { 5.0 }))
                     .child(edit_choice_tile(
                         theme,
                         "mask-preset-box",
@@ -2973,7 +2973,7 @@ impl crate::App {
             column = column.child(
                 div()
                     .w_full()
-                    .min_h(px(if is_studio { 64.0 } else { 52.0 }))
+                    .min_h(px(if is_studio { 64.0 } else { 46.0 }))
                     .px(px(if is_studio { 12.0 } else { 9.0 }))
                     .rounded(px(2.0))
                     .bg(if is_studio {
@@ -3052,7 +3052,7 @@ impl crate::App {
                     div()
                         .id(SharedString::from(format!("mask-console-row-{}", shape.id)))
                         .w_full()
-                        .h(px(if is_studio { 58.0 } else { 46.0 }))
+                        .h(px(if is_studio { 58.0 } else { 40.0 }))
                         .px(px(if is_studio { 10.0 } else { 8.0 }))
                         .cursor_pointer()
                         .tab_index(0)
@@ -3137,7 +3137,7 @@ impl crate::App {
                         div()
                             .w_full()
                             .flex()
-                            .gap(px(6.0))
+                            .gap(px(if is_studio { 6.0 } else { 5.0 }))
                             .child(
                                 button(
                                     "nudge-selected-mask-left",
@@ -3215,7 +3215,7 @@ impl crate::App {
                         div()
                             .w_full()
                             .flex()
-                            .gap(px(6.0))
+                            .gap(px(if is_studio { 6.0 } else { 5.0 }))
                             .child(
                                 button(
                                     "shrink-selected-mask",
@@ -3275,7 +3275,7 @@ impl crate::App {
                         div()
                             .w_full()
                             .flex()
-                            .gap(px(6.0))
+                            .gap(px(if is_studio { 6.0 } else { 5.0 }))
                             .child(
                                 button(
                                     "duplicate-selected-mask",
