@@ -2547,33 +2547,22 @@ impl crate::App {
                         ),
                 )
             })
-            .child(
-                div().w_full().flex().items_center().gap(px(6.0))
-                    .child(div().flex_1().child("Rotate").text_size(px(12.0)).text_color(theme.text_soft))
-                    .child(button("rotate-left", "90° left", ButtonKind::Secondary, Some("↶"), !self.checking, cx,
-                        |app, cx| app.rotate_prepare(-1, cx)).h(px(compact_control)).px(px(8.0)))
-                    .child(button("rotate-right", "90° right", ButtonKind::Secondary, Some("↻"), !self.checking, cx,
-                        |app, cx| app.rotate_prepare(1, cx)).h(px(compact_control)).px(px(8.0)))
-                    .child(button("rotation-reset", &format!("Reset {}°", self.prepare.rotation as u16 * 90), ButtonKind::Ghost, Some("refresh"),
-                        !self.checking && self.prepare.rotation != 0, cx,
-                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
-                        .h(px(compact_control)).px(px(8.0)))
-            )
             .child(edit_crop_switch(theme, crop_enabled, is_studio, cx))
             .child(
-                div()
-                    .child("Framing preset")
-                    .text_size(px(if is_studio { 11.0 } else { 10.5 }))
-                    .text_color(if is_studio {
-                        theme.text_soft
-                    } else {
-                        theme.muted
-                    })
-                    .font_weight(if is_studio {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::MEDIUM
-                    }),
+                div().w_full().flex().items_center().gap(px(4.0))
+                    .child(div().flex_1().child("Framing preset")
+                        .text_size(px(11.0)).text_color(theme.muted))
+                    .child(workbench_button("rotate-left", "", "↶", ButtonKind::Ghost,
+                        !self.checking, true, "Rotate video 90° left", cx,
+                        |app, cx| app.rotate_prepare(-1, cx)).w(px(28.0)).h(px(28.0)))
+                    .child(workbench_button("rotate-right", "", "↻", ButtonKind::Ghost,
+                        !self.checking, true, "Rotate video 90° right", cx,
+                        |app, cx| app.rotate_prepare(1, cx)).w(px(28.0)).h(px(28.0)))
+                    .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
+                        "refresh", ButtonKind::Ghost, !self.checking && self.prepare.rotation != 0,
+                        false, "Reset video rotation", cx,
+                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
+                        .min_w(px(54.0)).h(px(28.0)).text_size(px(11.0)))
             )
             .child(
                 div()
