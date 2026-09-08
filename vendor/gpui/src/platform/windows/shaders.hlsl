@@ -460,6 +460,8 @@ float quarter_ellipse_sdf(float2 pt, float2 radii) {
 */
 
 struct Quad {
+    float backdrop_blur;
+    uint backdrop_pad;
     uint order;
     uint border_style;
     Bounds bounds;

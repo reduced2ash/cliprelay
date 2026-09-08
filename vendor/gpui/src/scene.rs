@@ -322,10 +322,14 @@ impl<'a> Iterator for BatchIterator<'a> {
                 let quads_start = self.quads_start;
                 let mut quads_end = quads_start + 1;
                 self.quads_iter.next();
-                while self
-                    .quads_iter
-                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
-                    .is_some()
+                while self.quads[quads_start].backdrop_blur == 0.0
+                    && self
+                        .quads_iter
+                        .next_if(|quad| {
+                            quad.backdrop_blur == 0.0
+                                && (quad.order, batch_kind) < max_order_and_kind
+                        })
+                        .is_some()
                 {
                     quads_end += 1;
                 }
@@ -451,6 +455,9 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[derive(Default, Debug, Clone)]
 #[repr(C)]
 pub(crate) struct Quad {
+    /// Radius in device pixels; zero is an ordinary quad.
+    pub backdrop_blur: f32,
+    pub backdrop_pad: u32,
     pub order: DrawOrder,
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
@@ -829,5 +836,34 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod backdrop_tests {
+    use super::*;
+
+    #[test]
+    fn backdrop_quads_split_batches_without_losing_draw_order() {
+        let mut scene = Scene::default();
+        scene.quads = [0.0, 0.0, 16.0, 16.0, 0.0, 0.0]
+            .into_iter()
+            .enumerate()
+            .map(|(index, radius)| Quad {
+                order: index as DrawOrder,
+                backdrop_blur: radius,
+                ..Default::default()
+            })
+            .collect();
+        let batches: Vec<_> = scene
+            .batches()
+            .map(|batch| {
+                let PrimitiveBatch::Quads(quads) = batch else {
+                    panic!("expected quads")
+                };
+                quads.iter().map(|q| q.order).collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(batches, vec![vec![0, 1], vec![2], vec![3], vec![4, 5]]);
     }
 }

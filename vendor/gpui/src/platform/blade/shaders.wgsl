@@ -476,6 +476,8 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
 // --- quads --- //
 
 struct Quad {
+    backdrop_blur: f32,
+    backdrop_pad: u32,
     order: u32,
     border_style: u32,
     bounds: Bounds,
@@ -1293,4 +1295,38 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         1.0);
 
     return ycbcr_to_RGB * y_cb_cr;
+}
+
+// Snapshot is captured immediately before this quad, never from a previous frame.
+var t_backdrop: texture_2d<f32>;
+var s_backdrop: sampler;
+@fragment
+fn fs_backdrop(input: QuadVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) { discard; }
+    let quad = b_quads[input.quad_id];
+    let half_size = quad.bounds.size * 0.5;
+    let p = input.position.xy - quad.bounds.origin - half_size;
+    let radius = pick_corner_radius(p, quad.corner_radii);
+    let q = abs(p) - half_size + vec2<f32>(radius);
+    let distance = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+    let coverage = clamp(0.5 - distance, 0.0, 1.0);
+    var sum = vec4<f32>(0.0);
+    var weight_sum = 0.0;
+    // A bounded 9x9 Gaussian kernel, sampled only inside the popup.
+    for (var y = -4; y <= 4; y += 1) {
+        for (var x = -4; x <= 4; x += 1) {
+            let offset = vec2<f32>(f32(x), f32(y));
+            let weight = exp(-dot(offset, offset) / 8.0);
+            let uv = (input.position.xy + offset * quad.backdrop_blur / 4.0) / globals.viewport_size;
+            sum += textureSampleLevel(t_backdrop, s_backdrop, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0) * weight;
+            weight_sum += weight;
+        }
+    }
+    let blurred = sum / weight_sum;
+    // The fallback supplies a stable base if the window itself has alpha.
+    let base = input.background_solid.rgb;
+    // Both blend pipelines accumulate premultiplied RGB in the target:
+    // ALPHA_BLENDING multiplies in hardware, the other in blend_color.
+    let rgb = blurred.rgb + base * (1.0 - blurred.a);
+    return blend_color(vec4<f32>(rgb, input.background_solid.a), coverage);
 }

@@ -2337,7 +2337,9 @@ impl App {
     }
 
     pub fn toggle_combo(&mut self, id: &str, cx: &mut Context<Self>) {
-        if !self.open_combos.remove(id) {
+        let was_open = self.open_combos.contains(id);
+        self.open_combos.clear();
+        if !was_open {
             self.open_combos.insert(id.to_string());
         }
         cx.notify();

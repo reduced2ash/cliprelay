@@ -2834,6 +2834,44 @@ impl Window {
         }
     }
 
+    /// Blur already painted content beneath a transient surface. Blade supports
+    /// this on Linux/FreeBSD and macOS with `macos-blade`; other renderers
+    /// paint the supplied opaque fallback. Call only during the paint phase.
+    pub fn paint_backdrop_blur(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        radius: Pixels,
+        corners: Corners<Pixels>,
+        fallback: Hsla,
+    ) {
+        self.invalidator.debug_assert_paint();
+        let scale = self.scale_factor();
+        // Include the sampled border in draw-order dependencies so nearby
+        // geometry has been painted before the renderer takes its snapshot.
+        self.paint_layer(bounds.dilate(radius), |window| {
+            window.next_frame.scene.insert_primitive(Quad {
+                backdrop_blur: if cfg!(any(
+                    target_os = "linux",
+                    target_os = "freebsd",
+                    all(target_os = "macos", feature = "macos-blade")
+                )) {
+                    f32::from(radius).max(0.0) * scale
+                } else {
+                    0.0
+                },
+                backdrop_pad: 0,
+                order: 0,
+                bounds: bounds.scale(scale),
+                content_mask: window.content_mask().scale(scale),
+                background: fallback.opacity(window.element_opacity()).into(),
+                border_color: crate::hsla(0.0, 0.0, 0.0, 0.0),
+                corner_radii: corners.scale(scale),
+                border_widths: Default::default(),
+                border_style: Default::default(),
+            })
+        });
+    }
+
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`], [`outline`], and [`quad`] to construct this type.
@@ -2850,6 +2888,8 @@ impl Window {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         self.next_frame.scene.insert_primitive(Quad {
+            backdrop_blur: 0.0,
+            backdrop_pad: 0,
             order: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),

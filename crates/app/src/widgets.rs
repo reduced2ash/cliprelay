@@ -51,8 +51,8 @@ fn overlay_anchor_spec(
 }
 
 /// Keep a popup in the coordinate space of its source while drawing it above
-/// the rest of the application. Popup renderers own their occluding hitbox and
-/// wheel capture so GPUI measures the actual surface rather than a wrapper.
+/// the rest of the application. The shared surface blocks input to covered
+/// controls and blurs the already-painted scene beneath translucent menus.
 pub fn anchored_overlay(
     trigger: impl IntoElement,
     popup: Option<impl IntoElement>,
@@ -68,7 +68,35 @@ pub fn anchored_overlay(
                     .offset(anchor.offset)
                     .anchor(anchor.corner)
                     .snap_to_window_with_margin(px(8.0))
-                    .child(popup),
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .occlude()
+                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                            .child(
+                                canvas(
+                                    |bounds, _, _| bounds,
+                                    |_, bounds, window, _| {
+                                        let theme = current_theme();
+                                        if theme.is_frosted() || !theme.surface.is_opaque() {
+                                            let mut base = theme.ink;
+                                            base.a = 1.0;
+                                            window.paint_backdrop_blur(
+                                                bounds,
+                                                px(16.0),
+                                                Corners::all(px(MENU_RADIUS)),
+                                                base.blend(theme.surface),
+                                            );
+                                        }
+                                    },
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
+                            .child(popup),
+                    ),
             )
             .with_priority(10),
         );
@@ -1216,6 +1244,81 @@ pub fn current_theme() -> crate::theme::Theme {
 mod tests {
     use super::{overlay_anchor_spec, FieldState, OverlayPlacement};
     use gpui::{point, px, size, Corner};
+
+    struct PopupInputProbe {
+        underlying_clicks: usize,
+        page_scrolls: usize,
+        menu_clicks: usize,
+        underlying_hovered: bool,
+    }
+    impl gpui::Render for PopupInputProbe {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::prelude::*;
+            use gpui::*;
+            div()
+                .size_full()
+                .relative()
+                .on_scroll_wheel(cx.listener(|view, _, _, _| view.page_scrolls += 1))
+                .child(
+                    div()
+                        .id("covered-control")
+                        .absolute()
+                        .top(px(36.0))
+                        .left_0()
+                        .w(px(160.0))
+                        .h(px(80.0))
+                        .on_hover(cx.listener(|view, hovered, _, _| view.underlying_hovered = *hovered))
+                        .on_click(cx.listener(|view, _, _, _| view.underlying_clicks += 1)),
+                )
+                .child(super::anchored_overlay(
+                    div().w(px(160.0)).h(px(32.0)),
+                    Some(
+                        div()
+                            .id("menu")
+                            .w(px(160.0))
+                            .h(px(80.0))
+                            .on_click(cx.listener(|view, _, _, _| view.menu_clicks += 1)),
+                    ),
+                    super::OverlayPlacement::BelowStart,
+                    size(px(160.0), px(32.0)),
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn popup_blocks_hover_clicks_and_scroll_on_covered_controls(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| PopupInputProbe {
+            underlying_clicks: 0,
+            page_scrolls: 0,
+            menu_clicks: 0,
+            underlying_hovered: false,
+        });
+        cx.simulate_mouse_move(point(px(40.0), px(60.0)), None, Default::default());
+        cx.simulate_click(point(px(40.0), px(60.0)), Default::default());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(40.0), px(60.0)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-30.0))),
+            modifiers: Default::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| {
+            assert!(!view.underlying_hovered);
+            assert_eq!(view.underlying_clicks, 0);
+            assert_eq!(view.menu_clicks, 1);
+            assert_eq!(view.page_scrolls, 0);
+        });
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(200.0), px(60.0)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-30.0))),
+            modifiers: Default::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.page_scrolls, 1));
+    }
 
     fn assert_renders(state: &FieldState) {
         // rendered() must never slice mid-character.

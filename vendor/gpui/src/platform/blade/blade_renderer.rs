@@ -8,9 +8,9 @@ use crate::{
 };
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
+use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use image as _;
-use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 use std::sync::Arc;
@@ -54,6 +54,14 @@ struct SurfaceParams {
 struct ShaderQuadsData {
     globals: GlobalParams,
     b_quads: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ShaderBackdropData {
+    globals: GlobalParams,
+    b_quads: gpu::BufferPiece,
+    t_backdrop: gpu::TextureView,
+    s_backdrop: gpu::Sampler,
 }
 
 #[derive(blade_macros::ShaderData)]
@@ -125,6 +133,7 @@ struct PathRasterizationVertex {
 }
 
 struct BladePipelines {
+    backdrop: gpu::RenderPipeline,
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
     path_rasterization: gpu::RenderPipeline,
@@ -169,6 +178,20 @@ impl BladePipelines {
         }];
 
         Self {
+            backdrop: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "backdrop-blur",
+                data_layouts: &[&ShaderBackdropData::layout()],
+                vertex: shader.at("vs_quad"),
+                vertex_fetches: &[],
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: Some(shader.at("fs_backdrop")),
+                color_targets,
+                multisample_state: gpu::MultisampleState::default(),
+            }),
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
                 data_layouts: &[&ShaderQuadsData::layout()],
@@ -306,6 +329,7 @@ impl BladePipelines {
     }
 
     fn destroy(&mut self, gpu: &gpu::Context) {
+        gpu.destroy_render_pipeline(&mut self.backdrop);
         gpu.destroy_render_pipeline(&mut self.quads);
         gpu.destroy_render_pipeline(&mut self.shadows);
         gpu.destroy_render_pipeline(&mut self.path_rasterization);
@@ -327,6 +351,7 @@ pub struct BladeSurfaceConfig {
 // But that is complicated by the fact that pipelines depend on
 // the format and alpha mode.
 pub struct BladeRenderer {
+    backdrop: Option<(gpu::Texture, gpu::TextureView, gpu::Extent)>,
     gpu: Arc<gpu::Context>,
     surface: gpu::Surface,
     surface_config: gpu::SurfaceConfig,
@@ -351,14 +376,9 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
-        // Linux visual tests read the rendered swapchain image back before it
-        // is presented. Vulkan requires swapchain images used as transfer
-        // sources to be created with copy usage; TARGET alone leaves that
-        // copy undefined even when the driver happens to accept it.
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        // Backdrop snapshots and dev captures read the rendered surface.
+        // COPY also disables framebuffer-only textures on Metal.
         let surface_usage = gpu::TextureUsage::TARGET | gpu::TextureUsage::COPY;
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let surface_usage = gpu::TextureUsage::TARGET;
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
             usage: surface_usage,
@@ -421,6 +441,7 @@ impl BladeRenderer {
         };
 
         Ok(Self {
+            backdrop: None,
             gpu: Arc::clone(&context.gpu),
             surface,
             surface_config,
@@ -633,6 +654,10 @@ impl BladeRenderer {
 
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
+        if let Some((texture, view, _)) = self.backdrop.take() {
+            self.gpu.destroy_texture_view(view);
+            self.gpu.destroy_texture(texture);
+        }
         self.atlas.destroy();
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
@@ -651,6 +676,26 @@ impl BladeRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene, capture: Option<std::path::PathBuf>) {
+        if scene.quads.iter().any(|q| q.backdrop_blur > 0.0)
+            && self
+                .backdrop
+                .as_ref()
+                .is_none_or(|b| b.2 != self.surface_config.size)
+        {
+            self.wait_for_gpu();
+            if let Some((texture, view, _)) = self.backdrop.take() {
+                self.gpu.destroy_texture_view(view);
+                self.gpu.destroy_texture(texture);
+            }
+            let size = self.surface_config.size;
+            let (texture, view) = create_path_intermediate_texture(
+                &self.gpu,
+                self.surface.info().format,
+                size.width,
+                size.height,
+            );
+            self.backdrop = Some((texture, view, size));
+        }
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -686,9 +731,58 @@ impl BladeRenderer {
 
         profiling::scope!("render pass");
         for batch in scene.batches() {
+            if matches!(&batch, PrimitiveBatch::Quads(q) if q[0].backdrop_blur > 0.0) {
+                drop(pass);
+                let (texture, _, size) =
+                    self.backdrop.expect("backdrop allocated before rendering");
+                self.command_encoder.init_texture(texture);
+                {
+                    let mut transfer = self.command_encoder.transfer("snapshot-popup-backdrop");
+                    transfer.copy_texture_to_texture(
+                        gpu::TexturePiece {
+                            texture: frame.texture(),
+                            mip_level: 0,
+                            array_layer: 0,
+                            origin: [0, 0, 0],
+                        },
+                        gpu::TexturePiece {
+                            texture,
+                            mip_level: 0,
+                            array_layer: 0,
+                            origin: [0, 0, 0],
+                        },
+                        size,
+                    );
+                }
+                pass = self.command_encoder.render(
+                    "popup-backdrop",
+                    gpu::RenderTargetSet {
+                        colors: &[gpu::RenderTarget {
+                            view: frame.texture_view(),
+                            init_op: gpu::InitOp::Load,
+                            finish_op: gpu::FinishOp::Store,
+                        }],
+                        depth_stencil: None,
+                    },
+                );
+            }
             match batch {
                 PrimitiveBatch::Quads(quads) => {
                     let instance_buf = unsafe { self.instance_belt.alloc_typed(quads, &self.gpu) };
+                    if quads[0].backdrop_blur > 0.0 {
+                        let mut encoder = pass.with(&self.pipelines.backdrop);
+                        encoder.bind(
+                            0,
+                            &ShaderBackdropData {
+                                globals,
+                                b_quads: instance_buf,
+                                t_backdrop: self.backdrop.unwrap().1,
+                                s_backdrop: self.atlas_sampler,
+                            },
+                        );
+                        encoder.draw(0, 4, 0, quads.len() as u32);
+                        continue;
+                    }
                     let mut encoder = pass.with(&self.pipelines.quads);
                     encoder.bind(
                         0,
@@ -939,7 +1033,11 @@ impl BladeRenderer {
                 },
                 buffer.into(),
                 bytes_per_row,
-                gpu::Extent { width, height, depth: 1 },
+                gpu::Extent {
+                    width,
+                    height,
+                    depth: 1,
+                },
             );
             drop(transfers);
             capture_data = Some((buffer, width, height, path));

@@ -1,6 +1,6 @@
 # gpui 0.2.2 fork — local platform patches
 
-This is a vendored copy of `gpui 0.2.2` with four small platform patches.
+This is a vendored copy of `gpui 0.2.2` with local platform and rendering patches.
 It is wired into the workspace via `[patch.crates-io]` in the root
 `Cargo.toml` so the changes survive `cargo clean` and work on any
 machine, not just the dev box.
@@ -45,3 +45,16 @@ To refresh from a registry download, copy only the standalone manifest,
 license, build script, platform resources, and `src/` tree. Reapply these
 patches, remove registry metadata and upstream examples, then validate the
 entire ClipRelay workspace.
+
+## 5. Popup backdrop blur (`window.rs`, `scene.rs`, Blade renderer/shader)
+
+`Window::paint_backdrop_blur` inserts a sampling dependency and an isolated
+quad batch. Blade snapshots the painted surface into a reusable texture before
+that batch, then samples a Gaussian kernel inside the popup's rounded bounds.
+The surface requires copy usage on both Vulkan and Metal. Opaque menus skip
+this work in ClipRelay's shared overlay widget.
+
+The Quad layout is kept in sync with WGSL and HLSL (the native Metal shader
+uses generated headers). Non-Blade renderers draw the opaque fallback instead.
+The Linux Blade path is covered by live Agent Workspace checks; macOS Blade
+and Windows fallback require verification on those platforms.

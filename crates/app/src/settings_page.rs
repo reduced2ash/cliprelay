@@ -2721,6 +2721,8 @@ fn combo(
     let theme = current_theme();
     let on_change = std::sync::Arc::new(on_change);
     let selected_label = options.get(selected).copied().unwrap_or("");
+    let trigger_bounds = std::rc::Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
+    let measured_trigger = trigger_bounds.clone();
     let trigger = div()
         .id(SharedString::from(format!("{id}-trigger")))
         .w(px(width))
@@ -2759,15 +2761,37 @@ fn combo(
                 .text_size(px(13.0))
                 .text_color(theme.text),
         )
-        .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted));
+        .child(icon(if open { "▴" } else { "▾" }, 12.0, theme.muted))
+        .child(
+            canvas(
+                move |bounds, _, _| measured_trigger.set(Some(bounds)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        );
     // The trigger always owns the row's layout slot; the open menu floats
     // above the page so it never pushes surrounding content around.
     let popup = open.then(|| {
         let mut menu = div()
             .id(id)
+            .occlude()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(move |app, event: &MouseDownEvent, _, cx| {
+                // Let the owning trigger toggle on click. Other triggers can
+                // open immediately, without a close/reopen timing heuristic.
+                if !trigger_bounds
+                    .get()
+                    .is_some_and(|bounds| bounds.contains(&event.position))
+                {
+                    app.close_combo(id, cx);
+                }
+            }))
             .w(px(width))
             .rounded(px(MENU_RADIUS))
-            .bg(theme.surface_soft)
+            .bg(theme.overlay_surface())
             .border_1()
             .border_color(theme.border_strong)
             .py(px(4.0))
@@ -2785,6 +2809,7 @@ fn combo(
                     .items_center()
                     .gap(px(8.0))
                     .cursor_pointer()
+                    .hover(|style| style.bg(theme.hover))
                     .bg(if index == selected {
                         theme.active
                     } else {
@@ -2813,6 +2838,7 @@ fn combo(
                             }),
                     )
                     .on_click(cx.listener(move |app, _event, _window, cx| {
+                        cx.stop_propagation();
                         app.close_combo(id, cx);
                         on_change(app, cx, index);
                     })),
