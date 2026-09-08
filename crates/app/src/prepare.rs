@@ -83,6 +83,7 @@ pub struct PrepareState {
     pub compression_index: i64,
     pub target_mb: String,
     pub cleanup_index: i64,
+    pub rotation: u8,
     pub crop_enabled: bool,
     pub crop: CropSpec,
     pub guide_mode: i64, // 0 None, 1 Thirds, 2 Safe area
@@ -136,6 +137,7 @@ impl Default for PrepareState {
             compression_index: 4,
             target_mb: String::new(),
             cleanup_index: 0,
+            rotation: 0,
             crop_enabled: false,
             crop: CropSpec {
                 x: 0.0,
@@ -184,6 +186,7 @@ impl PrepareState {
             self.inspector_tab = 0;
             self.compact_inspector_open = false;
             self.active_action.clear();
+            self.rotation = 0;
             self.crop_enabled = false;
             self.crop = CropSpec {
                 x: 0.0,
@@ -217,8 +220,37 @@ impl PrepareState {
         }
     }
 
+    /// Keep crop and privacy regions attached to the same pixels as the frame turns.
+    pub fn rotate(&mut self, turns: i32) {
+        for _ in 0..turns.rem_euclid(4) {
+            self.crop = CropSpec {
+                x: 1.0 - self.crop.y - self.crop.height,
+                y: self.crop.x,
+                width: self.crop.height,
+                height: self.crop.width,
+            };
+            for shape in &mut self.shapes {
+                let (x, y, width, height) = (shape.x, shape.y, shape.width, shape.height);
+                shape.x = 1.0 - y - height;
+                shape.y = x;
+                shape.width = height;
+                shape.height = width;
+            }
+            self.rotation = (self.rotation + 1) % 4;
+        }
+        self.drag = DragHandle::None;
+    }
+
+    pub fn oriented_ratio(&self, ratio: f64) -> f64 {
+        if self.rotation % 2 == 1 {
+            1.0 / ratio.max(0.001)
+        } else {
+            ratio
+        }
+    }
+
     pub fn has_edits(&self) -> bool {
-        self.crop_enabled || !self.shapes.is_empty()
+        self.rotation != 0 || self.crop_enabled || !self.shapes.is_empty()
     }
 
     pub fn cut_active(&self) -> bool {
@@ -256,7 +288,7 @@ impl PrepareState {
                 })
             })
             .collect();
-        serde_json::json!({ "crop": crop, "overlays": overlays })
+        serde_json::json!({ "rotation": self.rotation as u16 * 90, "crop": crop, "overlays": overlays })
     }
 
     pub fn load_edit_spec(&mut self, value: &serde_json::Value) {
@@ -264,6 +296,7 @@ impl PrepareState {
         self.shapes.clear();
         self.selected_shape = None;
         let spec = cliprelay_core::media::normalize_edit_spec(value);
+        self.rotation = spec.rotation;
         if let Some(crop) = spec.crop {
             self.crop_enabled = true;
             self.crop = crop;
@@ -668,6 +701,31 @@ pub(crate) fn playback_control_availability(video_ready: bool, duration: f64) ->
 #[cfg(test)]
 mod prepare_tests {
     use super::*;
+
+    #[test]
+    fn rotation_preserves_crop_masks_and_drafts() {
+        let mut state = PrepareState::default();
+        state.apply_crop_aspect(1.0, 2.0);
+        state.add_mask_preset(MaskPreset::Box);
+        let original = state.edit_spec();
+        state.rotate(1);
+        assert_eq!(state.oriented_ratio(2.0), 0.5);
+        assert!((state.crop.height - 0.5).abs() < 1e-9);
+        let mut restored = PrepareState::default();
+        restored.load_edit_spec(&state.edit_spec());
+        assert_eq!(restored.rotation, 1);
+        restored.rotate(-1);
+        assert_eq!(restored.rotation, 0);
+        let before = cliprelay_core::media::normalize_edit_spec(&original);
+        assert!((restored.crop.x - before.crop.unwrap().x).abs() < 1e-9);
+        assert!((restored.shapes[0].x - before.overlays[0].x).abs() < 1e-9);
+        state.on_media_changed(123, 2.0);
+        assert_eq!(state.rotation, 0);
+        assert!(!state.has_edits());
+        state.rotate(-1);
+        assert_eq!(state.rotation, 3);
+        assert!(state.has_edits());
+    }
 
     #[test]
     fn metadata_arrival_updates_the_existing_selection() {

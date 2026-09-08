@@ -2460,7 +2460,7 @@ impl App {
         if cancel.load(Ordering::Acquire) {
             return Err("video loading cancelled".into());
         }
-        let direct_error = match Self::load_video(path.clone(), options.clone()) {
+        let direct_error = match crate::video_element::load_rotatable_video(&path, options.clone()) {
             Ok(video) => match Self::wait_for_renderable_frame(&video, cancel) {
                 Ok(()) => return Ok((video, None)),
                 Err(error) => error,
@@ -2478,7 +2478,7 @@ impl App {
         if cancel.load(Ordering::Acquire) {
             return Err("video loading cancelled".into());
         }
-        let video = Self::load_video(proxy.clone(), options).map_err(|error| {
+        let video = crate::video_element::load_rotatable_video(&proxy, options).map_err(|error| {
             format!(
                 "{direct_error}; failed to open compatible preview {}: {error}",
                 proxy.display()
@@ -2541,6 +2541,7 @@ impl App {
                         return Some(video);
                     }
                     app.prepare_video_cancel.take();
+                    crate::video_element::set_rotation(&video, app.prepare.rotation);
                     video.set_muted(false);
                     video.set_volume(0.65);
                     video.set_looping(true);

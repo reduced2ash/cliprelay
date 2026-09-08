@@ -77,6 +77,8 @@ pub type CancelFlag = Arc<AtomicBool>;
 /// Normalized edit spec: optional crop + rectangle overlays.
 #[derive(Debug, Clone, Default)]
 pub struct EditSpec {
+    /// Clockwise quarter turns, applied before crop and privacy overlays.
+    pub rotation: u8,
     pub crop: Option<CropSpec>,
     pub overlays: Vec<OverlaySpec>,
 }
@@ -99,7 +101,7 @@ pub struct OverlaySpec {
 
 impl EditSpec {
     pub fn is_empty(&self) -> bool {
-        self.crop.is_none() && self.overlays.is_empty()
+        self.rotation % 4 == 0 && self.crop.is_none() && self.overlays.is_empty()
     }
 }
 
@@ -118,6 +120,12 @@ fn unit_number(raw: &serde_json::Value, default: f64) -> f64 {
 /// Port of `normalize_edit_spec`.
 pub fn normalize_edit_spec(value: &serde_json::Value) -> EditSpec {
     let mut spec = EditSpec::default();
+    spec.rotation = value
+        .get("rotation")
+        .and_then(|v| v.as_i64())
+        .filter(|degrees| degrees % 90 == 0)
+        .map(|degrees| (degrees / 90).rem_euclid(4) as u8)
+        .unwrap_or(0);
     if let Some(crop) = value.get("crop").and_then(|c| c.as_object()) {
         let enabled = crop
             .get("enabled")
@@ -161,6 +169,12 @@ pub fn normalize_edit_spec(value: &serde_json::Value) -> EditSpec {
 /// Build the `-vf` filter string from an edit spec + target height.
 pub fn build_filter(edits: &EditSpec, height: i64) -> String {
     let mut parts: Vec<String> = Vec::new();
+    match edits.rotation % 4 {
+        1 => parts.push("transpose=clock".into()),
+        2 => parts.push("hflip,vflip".into()),
+        3 => parts.push("transpose=cclock".into()),
+        _ => {}
+    }
     if let Some(crop) = edits.crop {
         parts.push(format!(
             "crop=w='max(2,trunc(iw*{:.8}/2)*2)':h='max(2,trunc(ih*{:.8}/2)*2)':x='min(iw-ow,max(0,trunc(iw*{:.8}/2)*2))':y='min(ih-oh,max(0,trunc(ih*{:.8}/2)*2))'",
@@ -2265,6 +2279,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rotation_is_normalized_and_exported_before_crop() {
+        for (degrees, turns) in [(0, 0), (90, 1), (180, 2), (-90, 3), (450, 1), (45, 0)] {
+            let spec = normalize_edit_spec(&serde_json::json!({"rotation": degrees}));
+            assert_eq!(spec.rotation, turns);
+            assert_eq!(spec.is_empty(), turns == 0);
+        }
+        let spec = normalize_edit_spec(&serde_json::json!({
+            "rotation": 90, "crop": {"x":0,"y":0,"width":0.5,"height":1}, "overlays": []
+        }));
+        assert!(build_filter(&spec, 720).starts_with("transpose=clock,crop="));
+        // The source's red left half must become the portrait output's top half.
+        let filter = build_filter(
+            &normalize_edit_spec(&serde_json::json!({"rotation": 90})),
+            720,
+        );
+        let output = Command::new(ffmpeg_path().expect("ffmpeg required"))
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=red:s=64x32,drawbox=x=32:y=0:w=32:h=32:color=blue:t=fill",
+                "-vf",
+                &filter,
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout.len(), 32 * 64 * 3);
+        let top = &output.stdout[(8 * 32 + 16) * 3..][..3];
+        let bottom = &output.stdout[(48 * 32 + 16) * 3..][..3];
+        assert!(top[0] > 200 && top[2] < 30);
+        assert!(bottom[2] > 200 && bottom[0] < 30);
+    }
+
+    #[test]
     fn edit_spec_normalization() {
         // Empty spec.
         let spec = normalize_edit_spec(&serde_json::json!({}));
@@ -2298,6 +2360,7 @@ mod tests {
     #[test]
     fn filter_chain_shape() {
         let edits = EditSpec {
+            rotation: 0,
             crop: Some(CropSpec {
                 x: 0.0,
                 y: 0.0,

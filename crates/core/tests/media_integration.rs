@@ -555,6 +555,29 @@ fn hardware_export_honors_size_target() {
 }
 
 #[test]
+fn rotation_only_exports_a_rotated_copy_even_with_original_preset() {
+    let fixture = Fixture::new();
+    let video = fixture.video("rotation.mp4", 1);
+    let metadata = fixture.indexer.probe(&video, &fixture.root, None).unwrap();
+    let media_id = fixture.db.upsert_media(&metadata).unwrap();
+    let row = fixture.db.get_media(media_id).unwrap().unwrap();
+    let spec = normalize_edit_spec(&serde_json::json!({"rotation": 90}));
+    let progress: ProgressCallback = Arc::new(|_, _| {});
+    let result = fixture
+        .processor
+        .export(&row, 0.0, 0.0, "original", 0.0, &spec, &progress)
+        .unwrap();
+    assert!(result.generated);
+    assert_ne!(result.path, video);
+    let output = fixture
+        .indexer
+        .probe(&result.path, &fixture.export_dir, None)
+        .unwrap();
+    assert_eq!((output.width, output.height), (240, 320));
+    assert!(video.is_file());
+}
+
+#[test]
 fn edit_spec_crop_and_overlays_produce_edited_copy() {
     let fixture = Fixture::new();
     let video = fixture.video("edited.mp4", 4);

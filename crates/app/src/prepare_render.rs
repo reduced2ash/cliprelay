@@ -865,14 +865,8 @@ impl crate::App {
             48.0
         } else if is_studio {
             78.0
-        } else if self.window_size.1 >= 1200.0 {
-            92.0
-        } else if self.window_size.1 >= 1000.0 {
-            76.0
-        } else if self.window_size.1 >= 820.0 {
-            66.0
         } else {
-            58.0
+            42.0
         };
         // Track origin in window coordinates.
         let track_left = if is_studio {
@@ -957,8 +951,11 @@ impl crate::App {
                 }
             })
             .unwrap_or(16.0 / 9.0);
-        let (media_left, media_top, media_width, media_height) =
-            fitted_media_rect(track_width, frame_height, source_ratio);
+        let (media_left, media_top, media_width, media_height) = fitted_media_rect(
+            track_width,
+            frame_height,
+            self.prepare.oriented_ratio(source_ratio as f64) as f32,
+        );
         self.prepare.frame_rect = (
             frame_x + media_left,
             frame_top + media_top,
@@ -2508,6 +2505,7 @@ impl crate::App {
                             true,
                             cx,
                             |app, cx| {
+                                app.rotate_prepare(-(app.prepare.rotation as i32), cx);
                                 app.prepare.reset_crop();
                                 app.prepare.clear_shapes();
                                 app.save_draft();
@@ -2536,6 +2534,7 @@ impl crate::App {
                                 true,
                                 cx,
                                 |app, cx| {
+                                    app.rotate_prepare(-(app.prepare.rotation as i32), cx);
                                     app.prepare.reset_crop();
                                     app.prepare.clear_shapes();
                                     app.save_draft();
@@ -2548,6 +2547,18 @@ impl crate::App {
                         ),
                 )
             })
+            .child(
+                div().w_full().flex().items_center().gap(px(6.0))
+                    .child(div().flex_1().child("Rotate").text_size(px(12.0)).text_color(theme.text_soft))
+                    .child(button("rotate-left", "90° left", ButtonKind::Secondary, Some("↶"), !self.checking, cx,
+                        |app, cx| app.rotate_prepare(-1, cx)).h(px(compact_control)).px(px(8.0)))
+                    .child(button("rotate-right", "90° right", ButtonKind::Secondary, Some("↻"), !self.checking, cx,
+                        |app, cx| app.rotate_prepare(1, cx)).h(px(compact_control)).px(px(8.0)))
+                    .child(button("rotation-reset", &format!("Reset {}°", self.prepare.rotation as u16 * 90), ButtonKind::Ghost, Some("refresh"),
+                        !self.checking && self.prepare.rotation != 0, cx,
+                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
+                        .h(px(compact_control)).px(px(8.0)))
+            )
             .child(edit_crop_switch(theme, crop_enabled, is_studio, cx))
             .child(
                 div()
@@ -3419,6 +3430,7 @@ impl crate::App {
                             "Reset all frame edits",
                             cx,
                             |app, cx| {
+                                app.rotate_prepare(-(app.prepare.rotation as i32), cx);
                                 app.prepare.reset_crop();
                                 app.prepare.clear_shapes();
                                 app.save_draft();
@@ -5792,6 +5804,21 @@ fn caption_area(
 }
 
 impl crate::App {
+    fn rotate_prepare(&mut self, turns: i32, cx: &mut Context<Self>) {
+        if self.checking {
+            return;
+        }
+        self.prepare.rotate(turns);
+        if let Some(video) = &self.prepare.video {
+            crate::video_element::set_rotation(video, self.prepare.rotation);
+            // A paused frame must also be decoded again with its new orientation.
+            self.prepare
+                .seek(self.prepare.position, self.prepare.duration);
+        }
+        self.save_draft();
+        cx.notify();
+    }
+
     pub fn prepare_crop_preset(&self) -> usize {
         let crop = self.prepare.crop;
         let full_frame = (crop.width - 1.0).abs() < 0.001 && (crop.height - 1.0).abs() < 0.001;
@@ -5809,7 +5836,8 @@ impl crate::App {
                     }
                 })
                 .unwrap_or(16.0 / 9.0);
-            let visible_ratio = source_ratio * crop.width / crop.height.max(0.001);
+            let visible_ratio =
+                self.prepare.oriented_ratio(source_ratio) * crop.width / crop.height.max(0.001);
             if (visible_ratio - 1.0).abs() < 0.02 {
                 2
             } else if (visible_ratio - 16.0 / 9.0).abs() < 0.03 {
@@ -5834,6 +5862,7 @@ impl crate::App {
                 }
             })
             .unwrap_or(16.0 / 9.0);
+        let source_ratio = self.prepare.oriented_ratio(source_ratio);
         match index {
             0 => {
                 self.prepare.crop_enabled = true;

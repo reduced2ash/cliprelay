@@ -100,6 +100,52 @@ pub(crate) fn frame_converts(video: &Video, data: &[u8]) -> bool {
         .is_some()
 }
 
+/// Prepare's orientation is handled by GStreamer off the UI thread, before
+/// frames enter the existing NV12 renderer.
+pub(crate) fn load_rotatable_video(
+    path: &std::path::Path,
+    options: gpui_video_player::VideoOptions,
+) -> Result<Video, String> {
+    let load = || -> anyhow::Result<Video> {
+        gst::init()?;
+        let uri = gpui_video_player::Url::from_file_path(path)
+            .map_err(|_| anyhow::anyhow!("Invalid video path"))?;
+        let pipeline = gst::parse::launch(
+            "playbin video-sink=\"videoflip name=prepare_rotation method=none ! videoscale ! videoconvert ! appsink name=gpui_video drop=true max-buffers=2 enable-last-sample=false caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"",
+        )?.downcast::<gst::Pipeline>().map_err(|_| anyhow::anyhow!("Invalid playback pipeline"))?;
+        pipeline.set_property("uri", uri.as_str());
+        let sink: gst::Element = pipeline.property("video-sink");
+        let bin = sink
+            .downcast::<gst::Bin>()
+            .map_err(|_| anyhow::anyhow!("Invalid video sink"))?;
+        let sink = bin
+            .by_name("gpui_video")
+            .ok_or_else(|| anyhow::anyhow!("Missing video sink"))?
+            .downcast()
+            .map_err(|_| anyhow::anyhow!("Invalid appsink"))?;
+        Video::from_gst_pipeline_with_options(pipeline, sink, None, options)
+            .map_err(|error| anyhow::anyhow!("Video startup failed: {error:?}"))
+    };
+    load().map_err(|error| error.to_string())
+}
+
+pub(crate) fn set_rotation(video: &Video, turns: u8) {
+    let sink: gst::Element = video.pipeline().property("video-sink");
+    if let Ok(bin) = sink.downcast::<gst::Bin>() {
+        if let Some(flip) = bin.by_name("prepare_rotation") {
+            flip.set_property_from_str(
+                "method",
+                match turns % 4 {
+                    1 => "clockwise",
+                    2 => "rotate-180",
+                    3 => "counterclockwise",
+                    _ => "none",
+                },
+            );
+        }
+    }
+}
+
 pub(crate) fn video(
     video: Video,
     id: impl Into<ElementId>,
