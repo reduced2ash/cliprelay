@@ -2548,22 +2548,7 @@ impl crate::App {
                 )
             })
             .child(edit_crop_switch(theme, crop_enabled, is_studio, cx))
-            .child(
-                div().w_full().flex().items_center().gap(px(4.0))
-                    .child(div().flex_1().child("Framing preset")
-                        .text_size(px(11.0)).text_color(theme.muted))
-                    .child(workbench_button("rotate-left", "", "↶", ButtonKind::Ghost,
-                        !self.checking, true, "Rotate video 90° left", cx,
-                        |app, cx| app.rotate_prepare(-1, cx)).w(px(28.0)).h(px(28.0)))
-                    .child(workbench_button("rotate-right", "", "↻", ButtonKind::Ghost,
-                        !self.checking, true, "Rotate video 90° right", cx,
-                        |app, cx| app.rotate_prepare(1, cx)).w(px(28.0)).h(px(28.0)))
-                    .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
-                        "refresh", ButtonKind::Ghost, !self.checking && self.prepare.rotation != 0,
-                        false, "Reset video rotation", cx,
-                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
-                        .min_w(px(54.0)).h(px(28.0)).text_size(px(11.0)))
-            )
+            .child(div().child("Framing preset").text_size(px(11.0)).text_color(theme.muted))
             .child(
                 div()
                     .w_full()
@@ -2644,6 +2629,22 @@ impl crate::App {
                             cx.notify();
                         },
                     )),
+            )
+            .child(
+                div().w_full().flex().gap(px(6.0))
+                    .child(workbench_button("rotate-left", "Rotate left", "↶", ButtonKind::Secondary,
+                        !self.checking, false, "Rotate video 90° left", cx,
+                        |app, cx| app.rotate_prepare(-1, cx))
+                        .flex_1().h(px(36.0)))
+                    .child(workbench_button("rotate-right", "Rotate right", "↻", ButtonKind::Secondary,
+                        !self.checking, false, "Rotate video 90° right", cx,
+                        |app, cx| app.rotate_prepare(1, cx))
+                        .flex_1().h(px(36.0)))
+                    .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
+                        "refresh", ButtonKind::Secondary, !self.checking && self.prepare.rotation != 0,
+                        false, "Reset video rotation", cx,
+                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
+                        .w(px(68.0)).h(px(36.0)))
             )
             .child(
                 div()
