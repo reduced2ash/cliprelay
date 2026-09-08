@@ -1406,6 +1406,8 @@ impl App {
         });
         let new_mode = ThemeMode::parse(mode);
         if new_mode != self.theme_mode {
+            self.settings_page.picker_draft = None;
+            self.settings_page.color_picker_role = None;
             self.theme = Theme::resolve(&new_mode, &self.custom_theme_list());
             self.theme_mode = new_mode;
         }
@@ -2241,6 +2243,11 @@ impl App {
             "prepare-out" => Some(self.prepare.format_time_precise(self.prepare.trim_end)),
             "caption-shared" | "caption-tg" => Some(self.prepare.caption.clone()),
             "caption-x" => Some(self.prepare.x_caption.clone()),
+            "theme-active-name" => Some(self.theme_display_name()),
+            _ if id.starts_with("theme-hex-") => crate::theme::THEME_ROLES
+                .iter()
+                .find(|role| Some(role.key) == id.strip_prefix("theme-hex-"))
+                .map(|role| crate::theme::hsla_to_hex((role.get)(&self.theme))),
             _ => None,
         };
         if let Some(text) = seed {
