@@ -1,11 +1,11 @@
 //! Application settings, ported from `settings.py`.
 
 use crate::db::Database;
-use std::sync::Arc;
 use crate::paths::default_export_dir;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub const LIBRARY_ROOT: &str = "library_root";
 pub const WORKSPACE_TABS: &str = "workspace_tabs";
@@ -51,7 +51,10 @@ pub fn defaults() -> HashMap<&'static str, Value> {
     map.insert(WORKSPACE_TABS, Value::Array(vec![]));
     map.insert(ACTIVE_WORKSPACE_ID, json_str(""));
     map.insert(CLOSED_WORKSPACE_TABS, Value::Array(vec![]));
-    map.insert(EXPORT_DIR, json_str(&default_export_dir().to_string_lossy()));
+    map.insert(
+        EXPORT_DIR,
+        json_str(&default_export_dir().to_string_lossy()),
+    );
     map.insert(FAST_RANDOM, Value::Bool(true));
     map.insert(AUTO_INDEX, Value::Bool(false));
     map.insert(VERIFY_DURING_INDEX, Value::Bool(true));
@@ -101,10 +104,7 @@ impl Settings {
 
     /// Raw JSON value for `key`, falling back to the app default.
     pub fn get(&self, key: &str) -> Result<Value> {
-        let fallback = defaults()
-            .get(key)
-            .cloned()
-            .unwrap_or(Value::Null);
+        let fallback = defaults().get(key).cloned().unwrap_or(Value::Null);
         let raw = self.database.get_setting_raw(key)?;
         match raw {
             Some(stored) => match serde_json::from_str::<Value>(&stored) {
@@ -152,7 +152,10 @@ impl Settings {
             value = if matches!(
                 text.as_str(),
                 "relay" | "pitch_black" | "full_white" | "frosted_glass" | "graphite_glass"
-            ) {
+            ) || text
+                .strip_prefix("custom:")
+                .is_some_and(|id| !id.trim().is_empty())
+            {
                 Value::String(text)
             } else {
                 Value::String("relay".into())
@@ -272,6 +275,31 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(dir.path().join("test.sqlite3")).unwrap();
         Settings::new(Arc::new(db))
+    }
+
+    #[test]
+    fn custom_theme_selection_and_edits_survive_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("themes.sqlite3");
+        let colors = serde_json::json!([{
+            "id": "custom-1", "name": "Ocean", "base": "graphite_glass",
+            "colors": { "accent": "#2266CC" }
+        }]);
+        {
+            let settings = Settings::new(Arc::new(Database::open(&path).unwrap()));
+            settings.set(CUSTOM_THEMES, colors.clone()).unwrap();
+            settings
+                .set(THEME_MODE, Value::String("custom:custom-1".into()))
+                .unwrap();
+            assert_eq!(settings.as_map().unwrap()[THEME_MODE], "custom:custom-1");
+        }
+        let settings = Settings::new(Arc::new(Database::open(&path).unwrap()));
+        assert_eq!(settings.get_string(THEME_MODE).unwrap(), "custom:custom-1");
+        assert_eq!(settings.get(CUSTOM_THEMES).unwrap(), colors);
+        settings
+            .set(THEME_MODE, Value::String("custom:".into()))
+            .unwrap();
+        assert_eq!(settings.get_string(THEME_MODE).unwrap(), "relay");
     }
 
     #[test]

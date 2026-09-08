@@ -5,11 +5,11 @@ use crate::settings_import::*;
 use crate::state::*;
 use crate::theme::*;
 use crate::widgets::*;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use serde_json::json;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct SettingsUiState {
     pub bot_token: String,
     pub bot_destination: String,
@@ -27,7 +27,8 @@ pub struct SettingsUiState {
     /// Role key whose color picker panel is open (`None` closes it).
     pub color_picker_role: Option<String>,
     /// Uncommitted color, scoped to the active theme and role.
-    pub picker_draft: Option<(String, String, Hsla)>,
+    pub picker_draft: Option<Entity<crate::color_picker::ColorPicker>>,
+    picker_subscription: Option<Subscription>,
 }
 
 /// Pretty labels for [`BUILTIN_THEME_MODES`], used by the rebase picker.
@@ -1069,6 +1070,10 @@ impl crate::App {
                     .overflow_scroll()
                     .scrollbar_width(px(10.0))
                     .track_scroll(&self.settings_scroll)
+                    .on_scroll_wheel(cx.listener(|app, _, _, cx| {
+                        app.close_theme_picker();
+                        cx.notify();
+                    }))
                     .child(
                         div()
                             .w_full()
@@ -1097,6 +1102,10 @@ impl crate::App {
                         .overflow_scroll()
                         .scrollbar_width(px(10.0))
                         .track_scroll(&self.settings_scroll)
+                        .on_scroll_wheel(cx.listener(|app, _, _, cx| {
+                            app.close_theme_picker();
+                            cx.notify();
+                        }))
                         .child(
                             div()
                                 .w_full()
@@ -1998,7 +2007,7 @@ fn theme_color_editor(
     group = group.child(help_text(
         theme,
         if is_custom {
-            "Hex edits apply instantly; picker selections save with Apply. Glass bases keep their translucency."
+            "Choose a color, then Apply to save. Glass bases keep their translucency."
         } else {
             "Editing any color creates a personal copy of this theme and applies your edit."
         },
@@ -2030,9 +2039,6 @@ fn theme_color_editor(
                 role,
                 &empty_field,
             ));
-            if app.settings_page.color_picker_role.as_deref() == Some(role.key) {
-                group = group.child(theme_picker_panel(app, cx, theme, role, &resolved));
-            }
         }
     }
     let advanced_open = app.settings_page.advanced_colors;
@@ -2103,310 +2109,149 @@ fn theme_color_editor(
                     role,
                     &empty_field,
                 ));
-                if app.settings_page.color_picker_role.as_deref() == Some(role.key) {
-                    group = group.child(theme_picker_panel(app, cx, theme, role, &resolved));
-                }
             }
         }
     }
     group
 }
 
-/// Picker geometry: a fixed 192px saturation/lightness square (24 x 24
-/// selectable cells) plus a 48-segment hue strip, so the knob math needs no
-/// layout reads.
-const PICKER_SV: f32 = 192.0;
-const SV_CELLS: usize = 24;
-const SV_CELL: f32 = 8.0;
-const HUE_SEGS: usize = 48;
-const HUE_SEG_W: f32 = 6.0;
-
-/// Color choices activate on click or keyboard activation, never pointer entry.
-fn picker_choice<T: 'static>(
-    id: String,
-    color: Hsla,
-    cx: &mut Context<T>,
-    select: impl Fn(&mut T, Hsla, &mut Context<T>) + 'static,
-) -> Stateful<Div> {
-    let select = std::rc::Rc::new(select);
-    let keyboard_select = select.clone();
-    div()
-        .id(ElementId::Name(id.into()))
-        .bg(color)
-        .cursor_pointer()
-        .on_click(cx.listener(move |state, _: &ClickEvent, _, cx| select(state, color, cx)))
-        .on_action(
-            cx.listener(move |state, _: &crate::Activate, _, cx| keyboard_select(state, color, cx)),
-        )
-}
-
-fn draft_choice(
-    id: String,
-    role: String,
-    color: Hsla,
-    cx: &mut Context<crate::App>,
-) -> Stateful<Div> {
-    picker_choice(id, color, cx, move |app, color, cx| {
-        app.settings_page.picker_draft =
-            Some((app.theme_mode.as_str().to_string(), role.clone(), color));
-        cx.notify();
-    })
-}
-
-/// Selection stays local until Apply; hover and scrolling never edit a theme.
 fn theme_picker_panel(
     app: &crate::App,
     cx: &mut Context<crate::App>,
-    theme: &crate::theme::Theme,
+    theme: &Theme,
     role: &ThemeRole,
-    resolved: &Theme,
-) -> Div {
-    let original = (role.get)(resolved);
-    let current = app
+) -> Stateful<Div> {
+    let picker = app
         .settings_page
         .picker_draft
-        .as_ref()
-        .filter(|(mode, key, _)| mode == app.theme_mode.as_str() && key == role.key)
-        .map(|(_, _, color)| *color)
-        .unwrap_or(original);
-    let role_key = role.key.to_string();
-    let live_hex = hsla_to_hex(current);
-
-    let mut square = div().flex().flex_col().flex_none();
-    for row in 0..SV_CELLS {
-        let mut line = div().flex().flex_row().flex_none();
-        for col in 0..SV_CELLS {
-            let cell = Hsla {
-                h: current.h,
-                s: col as f32 / (SV_CELLS - 1) as f32,
-                l: 1.0 - row as f32 / (SV_CELLS - 1) as f32,
-                a: 1.0,
-            };
-            line = line.child(
-                draft_choice(format!("theme-sv-{row}-{col}"), role_key.clone(), cell, cx)
-                    .w(px(SV_CELL))
-                    .h(px(SV_CELL))
-                    .flex_none(),
-            );
-        }
-        square = square.child(line);
-    }
-    let square_key = role_key.clone();
-    let square = div()
-        .id("theme-picker-square")
-        .tab_index(0)
-        .focus(|style| style.border_color(current_theme().accent))
-        .on_key_down(cx.listener(move |app, event: &KeyDownEvent, _, cx| {
-            let mut color = current;
-            match event.keystroke.key.as_str() {
-                "left" => color.s = (color.s - 0.01).max(0.0),
-                "right" => color.s = (color.s + 0.01).min(1.0),
-                "up" => color.l = (color.l + 0.01).min(1.0),
-                "down" => color.l = (color.l - 0.01).max(0.0),
-                _ => return,
-            }
-            app.settings_page.picker_draft = Some((
-                app.theme_mode.as_str().to_string(),
-                square_key.clone(),
-                color,
-            ));
-            cx.stop_propagation();
+        .clone()
+        .expect("open picker has a draft");
+    let apply_picker = picker.clone();
+    let key = role.key.to_string();
+    let live_hex = hsla_to_hex(picker.read(cx).color());
+    let empty = FieldState::default();
+    let hex_state = app.fields.get("theme-picker-hex").unwrap_or(&empty);
+    let invalid = app
+        .fields
+        .get("theme-picker-hex")
+        .is_some_and(|state| normalize_hex_color(&state.text).is_none());
+    div()
+        .id("theme-picker-popover")
+        .occlude()
+        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+        .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+            app.close_theme_picker();
+            app.mark_menu_closed();
             cx.notify();
         }))
-        .relative()
-        .flex_none()
-        .w(px(PICKER_SV))
-        .h(px(PICKER_SV))
+        .on_key_down(cx.listener(|app, event: &KeyDownEvent, _, cx| {
+            if event.keystroke.key == "escape" {
+                app.close_theme_picker();
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
+        .w(px(304.0))
+        .max_h(px((app.window_size.1 - 16.0).max(240.0)))
+        .overflow_y_scroll()
+        .p(px(14.0))
+        .flex()
+        .flex_col()
+        .gap(px(12.0))
+        .rounded(px(12.0))
+        .bg(theme.overlay_surface())
         .border_1()
-        .border_color(theme.border)
-        .child(square)
+        .border_color(theme.border_strong)
+        .shadow_lg()
         .child(
             div()
-                .absolute()
-                .left(px((current.s * (PICKER_SV - SV_CELL) + SV_CELL / 2.0
-                    - 7.0)
-                    .clamp(0.0, PICKER_SV - 14.0)))
-                .top(px(((1.0 - current.l) * (PICKER_SV - SV_CELL)
-                    + SV_CELL / 2.0
-                    - 7.0)
-                    .clamp(0.0, PICKER_SV - 14.0)))
-                .w(px(14.0))
-                .h(px(14.0))
-                .rounded(px(7.0))
-                .border_2()
-                .border_color(white())
-                .bg(theme.transparent()),
-        );
-
-    // Keep HSL in the draft so choosing a hue on gray/white/black survives
-    // until saturation and lightness change; RGB roundtrips lose that hue.
-    let active_seg = (current.h * HUE_SEGS as f32).floor() as usize;
-    let mut strip = div().flex().flex_row().items_center().flex_none();
-    for seg in 0..HUE_SEGS {
-        let hue = seg as f32 / HUE_SEGS as f32;
-        let selection = Hsla {
-            h: hue,
-            s: current.s,
-            l: current.l,
-            a: 1.0,
-        };
-        let mut cell = draft_choice(format!("theme-hue-{seg}"), role_key.clone(), selection, cx)
-            .w(px(HUE_SEG_W))
-            .flex_none()
-            .bg(Hsla {
-                h: hue,
-                s: 1.0,
-                l: 0.5,
-                a: 1.0,
-            });
-        if seg == active_seg {
-            cell = cell.h(px(24.0)).border_1().border_color(white());
-        } else {
-            cell = cell.h(px(24.0));
-        }
-        strip = strip.child(cell);
-    }
-    let hue_key = role_key.clone();
-    let strip = div()
-        .id("theme-picker-hue")
-        .tab_index(0)
-        .focus(|style| style.border_color(current_theme().accent))
-        .on_key_down(cx.listener(move |app, event: &KeyDownEvent, _, cx| {
-            let step = match event.keystroke.key.as_str() {
-                "left" | "down" => -1.0 / 360.0,
-                "right" | "up" => 1.0 / 360.0,
-                _ => return,
-            };
-            let color = Hsla {
-                h: (current.h + step).rem_euclid(1.0),
-                ..current
-            };
-            app.settings_page.picker_draft =
-                Some((app.theme_mode.as_str().to_string(), hue_key.clone(), color));
-            cx.stop_propagation();
-            cx.notify();
-        }))
-        .flex_none()
-        .w(px(HUE_SEG_W * HUE_SEGS as f32))
-        .border_1()
-        .border_color(theme.border)
-        .child(strip);
-
-    let mut presets = div().flex().flex_row().flex_wrap().gap(px(6.0));
-    for preset in THEME_PRESETS {
-        // Display through the same hex parse the commit path uses, so the
-        // swatch matches the stored color exactly.
-        let swatch = parse_hex_color(preset)
-            .map(|(r, g, b)| Hsla::from(Rgba { r, g, b, a: 1.0 }))
-            .unwrap_or(theme.text);
-        let mut cell = draft_choice(
-            format!("theme-preset-{preset}"),
-            role_key.clone(),
-            swatch,
-            cx,
+                .child(role.label)
+                .text_size(px(14.0))
+                .text_color(theme.text)
+                .font_weight(FontWeight::SEMIBOLD),
         )
-        .w(px(26.0))
-        .h(px(26.0))
-        .flex_none()
-        .rounded(px(RADIUS_SM))
-        .tab_index(0)
-        .focus(|style| style.border_2().border_color(current_theme().accent));
-        if live_hex == preset {
-            cell = cell.border_2().border_color(theme.accent);
-        } else {
-            cell = cell.border_1().border_color(theme.border);
-        }
-        presets = presets.child(cell);
-    }
+        .child(picker)
+        .child(field(
+            "theme-picker-hex",
+            &live_hex,
+            hex_state,
+            app.focused_field.as_deref() == Some("theme-picker-hex"),
+            true,
+            false,
+            cx,
+        ))
+        .when(invalid, |panel| {
+            panel.child(help_text(theme, "Use a hex color such as #3B82F6."))
+        })
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .gap(px(8.0))
+                .child(button(
+                    "theme-picker-cancel",
+                    "Cancel",
+                    ButtonKind::Ghost,
+                    None,
+                    true,
+                    cx,
+                    |app, cx| {
+                        app.close_theme_picker();
+                        cx.notify();
+                    },
+                ))
+                .child(button(
+                    "theme-picker-apply",
+                    "Apply",
+                    ButtonKind::Primary,
+                    None,
+                    !invalid,
+                    cx,
+                    move |app, cx| {
+                        let hex = hsla_to_hex(apply_picker.read(cx).color());
+                        if app.set_active_role_hex(&key, &hex, cx) {
+                            app.fields.remove(&format!("theme-hex-{key}"));
+                            app.close_theme_picker();
+                        }
+                        cx.notify();
+                    },
+                )),
+        )
+}
 
-    let done = button(
-        "theme-picker-done",
-        "Cancel",
-        ButtonKind::Ghost,
-        None,
-        true,
-        cx,
-        |app, cx| {
-            app.settings_page.color_picker_role = None;
-            app.settings_page.picker_draft = None;
-            cx.notify();
-        },
-    );
-    div().w_full().child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .bg(theme.raised)
-            .border_1()
-            .border_color(theme.border)
-            .rounded(px(RADIUS_MD))
-            .p(px(12.0))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(format!("{} · {}", role.label, live_hex))
-                            .text_size(px(12.0))
-                            .text_color(theme.muted),
-                    )
-                    .child(
-                        div()
-                            .w(px(24.0))
-                            .h(px(24.0))
-                            .flex_none()
-                            .bg(current)
-                            .border_1()
-                            .border_color(theme.border),
-                    )
-                    .child(done)
-                    .child(button(
-                        "theme-picker-apply",
-                        "Apply",
-                        ButtonKind::Primary,
-                        None,
-                        live_hex != hsla_to_hex(original),
-                        cx,
-                        move |app, cx| {
-                            if app.set_active_role_hex(&role_key, &hsla_to_hex(current), cx) {
-                                app.fields.remove(&format!("theme-hex-{role_key}"));
-                                app.settings_page.color_picker_role = None;
-                                app.settings_page.picker_draft = None;
-                            }
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(help_text(
-                theme,
-                "Click to choose; use arrow keys on focused controls for fine adjustments. Apply to save.",
-            ))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(12.0))
-                    .child(square)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .flex_col()
-                            .gap(px(10.0))
-                            .min_w(px(HUE_SEG_W * HUE_SEGS as f32 + 2.0))
-                            .child(strip)
-                            .child(presets),
-                    ),
-            ),
-    )
+impl crate::App {
+    pub fn close_theme_picker(&mut self) {
+        self.settings_page.color_picker_role = None;
+        self.settings_page.picker_draft = None;
+        self.settings_page.picker_subscription = None;
+        self.fields.remove("theme-picker-hex");
+        if self.focused_field.as_deref() == Some("theme-picker-hex") {
+            self.focused_field = None;
+            self.platform_input_focus = None;
+        }
+    }
+    fn toggle_theme_picker(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.menu_reopen_allowed() {
+            return;
+        }
+        if self.settings_page.color_picker_role.as_deref() == Some(key) {
+            self.close_theme_picker();
+        } else if let Some(role) = THEME_ROLES.iter().find(|role| role.key == key) {
+            self.close_theme_picker();
+            let color = (role.get)(&self.theme);
+            let picker = cx.new(|cx| crate::color_picker::ColorPicker::new(color, cx));
+            self.settings_page.picker_subscription = Some(cx.observe(&picker, |app, _, cx| {
+                if app.focused_field.as_deref() != Some("theme-picker-hex") {
+                    app.fields.remove("theme-picker-hex");
+                }
+                cx.notify();
+            }));
+            self.settings_page.picker_draft = Some(picker);
+            self.settings_page.color_picker_role = Some(key.to_string());
+            self.settings_page.theme_error = None;
+        }
+        cx.notify();
+    }
 }
 
 /// One editable color: override dot, live swatch, label, hex field, reset.
@@ -2417,7 +2262,7 @@ fn theme_role_row(
     custom: &CustomTheme,
     resolved: &Theme,
     role: &ThemeRole,
-    empty_field: &FieldState,
+    _empty_field: &FieldState,
 ) -> Div {
     let overridden = custom.colors.contains_key(role.key);
     // One editor is ever visible, so the role alone identifies the field.
@@ -2427,7 +2272,6 @@ fn theme_role_row(
     let reset_field = field_id.clone();
     let picker_open = app.settings_page.color_picker_role.as_deref() == Some(role.key);
     let toggle_key = role.key.to_string();
-    let toggle_key_action = role.key.to_string();
     div()
         .w_full()
         .flex()
@@ -2447,42 +2291,14 @@ fn theme_role_row(
                 }),
         )
         .child(
-            // The swatch doubles as the picker toggle: click (or Enter on
-            // keyboard focus) opens the panel below this row.
             div()
-                .id(ElementId::Name(format!("theme-swatch-{}", role.key).into()))
                 .w(px(24.0))
                 .h(px(24.0))
                 .flex_none()
                 .rounded(px(RADIUS_SM))
                 .bg((role.get)(resolved))
                 .border_1()
-                .border_color(if picker_open {
-                    theme.accent
-                } else {
-                    theme.border
-                })
-                .cursor_pointer()
-                .tab_index(0)
-                .on_click(cx.listener(move |app, _: &ClickEvent, _window, cx| {
-                    app.settings_page.picker_draft = None;
-                    let open =
-                        app.settings_page.color_picker_role.as_deref() == Some(toggle_key.as_str());
-                    app.settings_page.color_picker_role =
-                        if open { None } else { Some(toggle_key.clone()) };
-                    cx.notify();
-                }))
-                .on_action(cx.listener(move |app, _: &crate::Activate, _window, cx| {
-                    app.settings_page.picker_draft = None;
-                    let open = app.settings_page.color_picker_role.as_deref()
-                        == Some(toggle_key_action.as_str());
-                    app.settings_page.color_picker_role = if open {
-                        None
-                    } else {
-                        Some(toggle_key_action.clone())
-                    };
-                    cx.notify();
-                })),
+                .border_color(theme.border),
         )
         .child(
             div()
@@ -2494,15 +2310,28 @@ fn theme_role_row(
                 .font_weight(FontWeight::MEDIUM)
                 .text_ellipsis(),
         )
-        .child(div().w(px(120.0)).flex_none().child(field(
-            field_id.clone(),
-            &custom.role_hex(role),
-            app.fields.get(&field_id).unwrap_or(empty_field),
-            app.focused_field.as_deref() == Some(field_id.as_str()),
-            true,
-            false,
-            cx,
-        )))
+        .child(
+            anchored_overlay(
+                button(
+                    format!("theme-color-{}", role.key),
+                    &custom.role_hex(role),
+                    ButtonKind::Ghost,
+                    Some("chevron-down"),
+                    true,
+                    cx,
+                    move |app, cx| app.toggle_theme_picker(&toggle_key, cx),
+                ),
+                if picker_open && app.settings_page.picker_draft.is_some() {
+                    Some(theme_picker_panel(app, cx, theme, role))
+                } else {
+                    None
+                },
+                OverlayPlacement::BelowEnd,
+                size(px(120.0), px(36.0)),
+            )
+            .w(px(120.0))
+            .flex_none(),
+        )
         .child(button(
             format!("theme-reset-{}-{}", custom.id, role.key),
             "Reset",
@@ -3032,43 +2861,4 @@ fn diagnostic_cell(theme: &crate::theme::Theme, label: &str, value: &str) -> Div
                 .font_weight(FontWeight::MEDIUM)
                 .text_ellipsis(),
         )
-}
-
-#[cfg(test)]
-mod picker_tests {
-    use super::*;
-    use core::prelude::v1::test;
-
-    #[derive(Default)]
-    struct ChoiceProbe {
-        selections: Vec<Hsla>,
-    }
-
-    impl Render for ChoiceProbe {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            picker_choice("choice".into(), gpui::red(), cx, |probe, color, cx| {
-                probe.selections.push(color);
-                cx.notify();
-            })
-            .w(px(80.0))
-            .h(px(80.0))
-            .tab_index(0)
-        }
-    }
-
-    #[gpui::test]
-    fn picker_choice_ignores_hover_and_commits_only_on_activation(cx: &mut TestAppContext) {
-        let (probe, cx) = cx.add_window_view(|_, _| ChoiceProbe::default());
-        cx.run_until_parked();
-        for position in [point(px(20.0), px(20.0)), point(px(60.0), px(60.0))] {
-            cx.simulate_mouse_move(position, None, Modifiers::none());
-        }
-        probe.read_with(cx, |probe, _| assert!(probe.selections.is_empty()));
-        cx.simulate_click(point(px(20.0), px(20.0)), Modifiers::none());
-        probe.read_with(cx, |probe, _| assert_eq!(probe.selections.len(), 1));
-        cx.simulate_mouse_move(point(px(60.0), px(60.0)), None, Modifiers::none());
-        probe.read_with(cx, |probe, _| assert_eq!(probe.selections.len(), 1));
-        cx.dispatch_action(crate::Activate);
-        probe.read_with(cx, |probe, _| assert_eq!(probe.selections.len(), 2));
-    }
 }

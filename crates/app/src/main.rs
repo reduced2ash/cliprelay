@@ -3,6 +3,7 @@
 //! Single root view (`App`) owns all UI state; a background controller
 //! thread (`controller`) owns services and streams `Event`s back here.
 
+mod color_picker;
 mod controller;
 use crate::settings_import::*;
 mod settings_import {
@@ -91,6 +92,7 @@ pub struct App {
     pub event_tx: flume::Sender<Event>,
     pub page: Page,
     pub theme_mode: ThemeMode,
+    boot_theme_override: Option<String>,
     pub ui_scale: f32,
     pub sidebar_collapsed: bool,
     pub density: String,
@@ -239,6 +241,9 @@ impl App {
         }
         if page == Page::Settings && self.page != Page::Settings {
             self.command(Command::Diagnostics);
+        }
+        if page != Page::Settings {
+            self.close_theme_picker();
         }
         self.page = page;
         cx.notify();
@@ -425,6 +430,7 @@ impl App {
             _global_shortcut_subscription: global_shortcut_subscription,
             focus_library_selection: false,
             theme_mode: boot_theme_mode,
+            boot_theme_override,
             ui_scale: 1.0,
             sidebar_collapsed: false,
             density: "default".into(),
@@ -1395,10 +1401,7 @@ impl App {
     }
 
     fn apply_settings(&mut self) {
-        let mode_override = std::env::var("CLIPRELAY_THEME_MODE")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        let mode = mode_override.as_deref().unwrap_or_else(|| {
+        let mode = self.boot_theme_override.as_deref().unwrap_or_else(|| {
             self.settings
                 .get(THEME_MODE)
                 .and_then(|value| value.as_str())
@@ -1406,11 +1409,11 @@ impl App {
         });
         let new_mode = ThemeMode::parse(mode);
         if new_mode != self.theme_mode {
-            self.settings_page.picker_draft = None;
-            self.settings_page.color_picker_role = None;
-            self.theme = Theme::resolve(&new_mode, &self.custom_theme_list());
+            self.close_theme_picker();
             self.theme_mode = new_mode;
         }
+        // Overrides can change without changing the selected custom theme ID.
+        self.theme = Theme::resolve(&self.theme_mode, &self.custom_theme_list());
         if let Some(scale) = self.settings.get(UI_SCALE).and_then(|v| v.as_f64()) {
             self.ui_scale = scale as f32;
         }
@@ -2025,6 +2028,11 @@ impl App {
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value, cx: &mut Context<Self>) {
+        // A development launch theme is only a starting point; explicit user
+        // selection (including the first custom edit) must take precedence.
+        if key == THEME_MODE {
+            self.boot_theme_override = None;
+        }
         if [
             THEME_MODE,
             CUSTOM_THEMES,
@@ -2243,6 +2251,11 @@ impl App {
             "prepare-out" => Some(self.prepare.format_time_precise(self.prepare.trim_end)),
             "caption-shared" | "caption-tg" => Some(self.prepare.caption.clone()),
             "caption-x" => Some(self.prepare.x_caption.clone()),
+            "theme-picker-hex" => self
+                .settings_page
+                .picker_draft
+                .as_ref()
+                .map(|picker| hsla_to_hex(picker.read(cx).color())),
             "theme-active-name" => Some(self.theme_display_name()),
             _ if id.starts_with("theme-hex-") => crate::theme::THEME_ROLES
                 .iter()
@@ -3002,6 +3015,18 @@ impl App {
 
     fn on_field_changed(&mut self, field_id: &str, cx: &mut Context<Self>) {
         let text = self.field_text(field_id);
+        if field_id == "theme-picker-hex" {
+            if let (Some(picker), Some((r, g, b))) = (
+                self.settings_page.picker_draft.clone(),
+                parse_hex_color(&text),
+            ) {
+                picker.update(cx, |picker, cx| {
+                    picker.set_color(Hsla::from(Rgba { r, g, b, a: 1.0 }), cx)
+                });
+            }
+            cx.notify();
+            return;
+        }
         if field_id == "command-center" {
             self.command_query = text.clone();
             self.command_open = true;
