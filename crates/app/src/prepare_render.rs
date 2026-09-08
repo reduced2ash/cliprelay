@@ -410,7 +410,13 @@ enum EditTileVisual {
     Mask(MaskPreset),
 }
 
-fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, selected: bool) -> Div {
+fn edit_tile_preview(
+    theme: &crate::theme::Theme,
+    visual: EditTileVisual,
+    selected: bool,
+    compact: bool,
+) -> Div {
+    let scale = if compact { 0.75 } else { 1.0 };
     let line = if selected {
         theme.accent_text
     } else {
@@ -419,50 +425,50 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
     let canvas = theme.ink;
     match visual {
         EditTileVisual::FreeFrame => div()
-            .w(px(32.0))
-            .h(px(22.0))
+            .w(px(32.0 * scale))
+            .h(px(22.0 * scale))
             .relative()
             .flex()
             .items_center()
             .justify_center()
             .child(
                 div()
-                    .w(px(30.0))
-                    .h(px(20.0))
-                    .rounded(px(2.0))
+                    .w(px(30.0 * scale))
+                    .h(px(20.0 * scale))
+                    .rounded(px(2.0 * scale))
                     .border_1()
                     .border_color(line.opacity(0.48)),
             )
             .child(
                 div()
                     .absolute()
-                    .top(px(5.0))
-                    .left(px(7.0))
-                    .w(px(18.0))
-                    .h(px(12.0))
+                    .top(px(5.0 * scale))
+                    .left(px(7.0 * scale))
+                    .w(px(18.0 * scale))
+                    .h(px(12.0 * scale))
                     .border_1()
                     .border_color(line),
             ),
         EditTileVisual::FrameRatio(width, height) => div()
-            .w(px(32.0))
-            .h(px(22.0))
+            .w(px(32.0 * scale))
+            .h(px(22.0 * scale))
             .flex()
             .items_center()
             .justify_center()
             .child(
                 div()
-                    .w(px(width))
-                    .h(px(height))
-                    .rounded(px(2.0))
+                    .w(px(width * scale))
+                    .h(px(height * scale))
+                    .rounded(px(2.0 * scale))
                     .bg(canvas)
                     .border_1()
                     .border_color(line),
             ),
         EditTileVisual::Guides(mode) => {
             let mut preview = div()
-                .w(px(32.0))
-                .h(px(22.0))
-                .rounded(px(2.0))
+                .w(px(32.0 * scale))
+                .h(px(22.0 * scale))
+                .rounded(px(2.0 * scale))
                 .bg(canvas)
                 .border_1()
                 .border_color(line.opacity(if mode == 0 { 0.42 } else { 0.82 }))
@@ -473,7 +479,7 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
                         div()
                             .absolute()
                             .top_0()
-                            .left(px(position))
+                            .left(px(position * scale))
                             .w(px(1.0))
                             .h_full()
                             .bg(line.opacity(0.72)),
@@ -483,7 +489,7 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
                     preview = preview.child(
                         div()
                             .absolute()
-                            .top(px(position))
+                            .top(px(position * scale))
                             .left_0()
                             .w_full()
                             .h(px(1.0))
@@ -495,19 +501,19 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
                     .child(
                         div()
                             .absolute()
-                            .top(px(4.0))
-                            .left(px(5.0))
-                            .w(px(20.0))
-                            .h(px(12.0))
+                            .top(px(4.0 * scale))
+                            .left(px(5.0 * scale))
+                            .w(px(20.0 * scale))
+                            .h(px(12.0 * scale))
                             .border_1()
                             .border_color(line.opacity(0.80)),
                     )
                     .child(
                         div()
                             .absolute()
-                            .top(px(10.0))
-                            .left(px(14.0))
-                            .w(px(4.0))
+                            .top(px(10.0 * scale))
+                            .left(px(14.0 * scale))
+                            .w(px(4.0 * scale))
                             .h(px(1.0))
                             .bg(line.opacity(0.80)),
                     );
@@ -521,9 +527,9 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
                 MaskPreset::LowerBar => (5.0, 13.0, 22.0, 5.0),
             };
             div()
-                .w(px(32.0))
-                .h(px(22.0))
-                .rounded(px(2.0))
+                .w(px(32.0 * scale))
+                .h(px(22.0 * scale))
+                .rounded(px(2.0 * scale))
                 .bg(canvas)
                 .border_1()
                 .border_color(line.opacity(0.52))
@@ -531,10 +537,10 @@ fn edit_tile_preview(theme: &crate::theme::Theme, visual: EditTileVisual, select
                 .child(
                     div()
                         .absolute()
-                        .top(px(top))
-                        .left(px(left))
-                        .w(px(width))
-                        .h(px(height))
+                        .top(px(top * scale))
+                        .left(px(left * scale))
+                        .w(px(width * scale))
+                        .h(px(height * scale))
                         .bg(line),
                 )
         }
@@ -549,6 +555,7 @@ fn edit_choice_tile(
     selected: bool,
     enabled: bool,
     height: f32,
+    compact: bool,
     visual: EditTileVisual,
     cx: &mut Context<crate::App>,
     on_select: impl Fn(&mut crate::App, &mut Context<crate::App>) + 'static,
@@ -584,11 +591,15 @@ fn edit_choice_tile(
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(5.0))
-        .child(edit_tile_preview(theme, visual, selected))
+        .gap(px(if compact { 3.0 } else { 5.0 }))
+        .child(
+            edit_tile_preview(theme, visual, selected, compact)
+                .when(compact, |preview| preview.flex_none()),
+        )
         .child(
             div()
                 .child(label)
+                .when(compact, |label| label.flex_none().line_height(px(14.0)))
                 .text_size(px(11.0))
                 .text_color(if selected {
                     theme.accent_text
@@ -2561,6 +2572,7 @@ impl crate::App {
                         crop_preset == 0,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::FreeFrame,
                         cx,
                         |app, cx| {
@@ -2576,6 +2588,7 @@ impl crate::App {
                         crop_preset == 1,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::FrameRatio(30.0, 20.0),
                         cx,
                         |app, cx| {
@@ -2591,6 +2604,7 @@ impl crate::App {
                         crop_preset == 2,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::FrameRatio(20.0, 20.0),
                         cx,
                         |app, cx| {
@@ -2606,6 +2620,7 @@ impl crate::App {
                         crop_preset == 3,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::FrameRatio(30.0, 17.0),
                         cx,
                         |app, cx| {
@@ -2621,6 +2636,7 @@ impl crate::App {
                         crop_preset == 4,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::FrameRatio(12.0, 21.0),
                         cx,
                         |app, cx| {
@@ -2635,11 +2651,13 @@ impl crate::App {
                     .child(workbench_button("rotate-left", "Rotate left", "↶", ButtonKind::Secondary,
                         !self.checking, false, "Rotate video 90° left", cx,
                         |app, cx| app.rotate_prepare(-1, cx))
-                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 })))
+                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 }))
+                        .when(!is_studio, |control| control.line_height(px(16.0))))
                     .child(workbench_button("rotate-right", "Rotate right", "↻", ButtonKind::Secondary,
                         !self.checking, false, "Rotate video 90° right", cx,
                         |app, cx| app.rotate_prepare(1, cx))
-                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 })))
+                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 }))
+                        .when(!is_studio, |control| control.line_height(px(16.0))))
                     .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
                         "refresh", ButtonKind::Secondary, !self.checking && self.prepare.rotation != 0,
                         false, "Reset video rotation", cx,
@@ -2706,7 +2724,8 @@ impl crate::App {
                                     },
                                 )
                                 .w(px(compact_control))
-                                .h(px(compact_control)),
+                                .h(px(compact_control))
+                                .when(!is_studio, |control| control.text_size(px(11.0)).line_height(px(16.0))),
                             )
                             .child(
                                 workbench_button(
@@ -2726,7 +2745,8 @@ impl crate::App {
                                     },
                                 )
                                 .w(px(compact_control))
-                                .h(px(compact_control)),
+                                .h(px(compact_control))
+                                .when(!is_studio, |control| control.text_size(px(11.0)).line_height(px(16.0))),
                             )
                             .child(
                                 workbench_button(
@@ -2746,7 +2766,8 @@ impl crate::App {
                                     },
                                 )
                                 .w(px(compact_control))
-                                .h(px(compact_control)),
+                                .h(px(compact_control))
+                                .when(!is_studio, |control| control.text_size(px(11.0)).line_height(px(16.0))),
                             )
                             .child(
                                 workbench_button(
@@ -2766,7 +2787,8 @@ impl crate::App {
                                     },
                                 )
                                 .w(px(compact_control))
-                                .h(px(compact_control)),
+                                .h(px(compact_control))
+                                .when(!is_studio, |control| control.text_size(px(11.0)).line_height(px(16.0))),
                             )
                             .child(
                                 workbench_button(
@@ -2786,7 +2808,8 @@ impl crate::App {
                                     },
                                 )
                                 .w(px(compact_control))
-                                .h(px(compact_control)),
+                                .h(px(compact_control))
+                                .when(!is_studio, |control| control.text_size(px(11.0)).line_height(px(16.0))),
                             ),
                     ),
             )
@@ -2830,6 +2853,7 @@ impl crate::App {
                         guide_mode == 0,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Guides(0),
                         cx,
                         |app, cx| {
@@ -2845,6 +2869,7 @@ impl crate::App {
                         guide_mode == 1,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Guides(1),
                         cx,
                         |app, cx| {
@@ -2860,6 +2885,7 @@ impl crate::App {
                         guide_mode == 2,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Guides(2),
                         cx,
                         |app, cx| {
@@ -2929,6 +2955,7 @@ impl crate::App {
                         false,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Mask(MaskPreset::Box),
                         cx,
                         |app, cx| {
@@ -2944,6 +2971,7 @@ impl crate::App {
                         false,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Mask(MaskPreset::Square),
                         cx,
                         |app, cx| {
@@ -2959,6 +2987,7 @@ impl crate::App {
                         false,
                         true,
                         tile_height,
+                        !is_studio,
                         EditTileVisual::Mask(MaskPreset::LowerBar),
                         cx,
                         |app, cx| {
@@ -2994,6 +3023,7 @@ impl crate::App {
                         theme,
                         EditTileVisual::Mask(MaskPreset::Box),
                         false,
+                        !is_studio,
                     ))
                     .child(
                         div()
@@ -3073,6 +3103,7 @@ impl crate::App {
                             theme,
                             EditTileVisual::Mask(preset),
                             is_selected,
+                            !is_studio,
                         ))
                         .child(
                             div()
@@ -3154,6 +3185,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3172,6 +3206,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3190,6 +3227,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3208,6 +3248,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             ),
                     )
@@ -3232,6 +3275,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3250,6 +3296,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3268,6 +3317,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             ),
                     )
@@ -3292,6 +3344,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             )
                             .child(
@@ -3309,6 +3364,9 @@ impl crate::App {
                                     },
                                 )
                                 .h(px(compact_control))
+                                .when(!is_studio, |control| {
+                                    control.text_size(px(11.0)).line_height(px(16.0))
+                                })
                                 .flex_1(),
                             ),
                     );
@@ -3328,7 +3386,10 @@ impl crate::App {
                             cx.notify();
                         },
                     )
-                    .h(px(compact_control)),
+                    .h(px(compact_control))
+                    .when(!is_studio, |control| {
+                        control.text_size(px(11.0)).line_height(px(16.0))
+                    }),
                 );
             }
         }
