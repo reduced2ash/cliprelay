@@ -18,6 +18,8 @@ body:
         - macOS Intel
         - Windows 11
         - Windows 10
+        - Linux (Wayland)
+        - Linux (X11)
         - Other
     validations:
       required: true

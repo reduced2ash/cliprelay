@@ -39,7 +39,10 @@ non-destructive until an export is requested.
 
 The docked Prepare panel and full Studio view share the same live state:
 selection, playback position, trim, crop, masks, captions, compression,
-destinations, progress, and errors.
+destinations, progress, and errors. At narrow sizes, Library and Prepare swap
+surfaces instead of competing for width. Interface scale changes the GPUI
+layout viewport and composes with display DPI; input coordinates are converted
+at the platform boundary.
 
 ## Persistence and delivery
 

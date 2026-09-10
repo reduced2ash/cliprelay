@@ -12,18 +12,10 @@ Requirements are Docker Engine and Docker Compose v2.20 or newer. Run:
 make ui-test
 ```
 
-The command validates the Compose model, builds the Rust 1.96.0 image, and
-launches five app-level states: library, history, settings, command center, and
-an exercised library workflow (paging, scroll recovery, hover preview, Random,
-GPUI playback, and source reveal).
-State selection uses ClipRelay's boot environment hooks; the runner never sends
-screen-coordinate input. Each state must create a visible `ClipRelay` X11
-window of the requested size and remain alive through capture. Screenshots are
-read back from GPUI's rendered Blade surface rather than from the X11 drawable,
-so Vulkan presentation remains visible under Xvfb. The resulting
-history, settings, command-center, and workflow images must also differ
-materially from the library image, so ignored boot hooks cannot pass as five
-duplicate tests.
+The command builds the app and captures Library, History, Settings, menus,
+and Prepare using disposable media and app data. Captures and logs are saved
+under `artifacts/ui-test/`. Use the focused runs below for ordinary changes;
+reserve the full suite for broad work or release checkpoints.
 
 Set `GUI_TEST_THEME_MODE=frosted_glass` or
 `GUI_TEST_THEME_MODE=graphite_glass` to run the same state matrix through the
@@ -58,9 +50,8 @@ artifacts/ui-test/<UTC timestamp>-<pid>/
   diffs/
 ```
 
-Agents should read those files only after a failure. `make ui-test-clean`
-removes only this harness's inspection containers and network; it never prunes
-Docker globally or deletes artifacts.
+`make ui-test-clean` removes only the harness's inspection containers and
+network; it does not prune Docker globally or delete artifacts.
 
 ## Optional visual baselines
 
@@ -69,13 +60,6 @@ exists under `tools/ui-test/baselines/`, it also writes an amplified visual diff
 and enforces `GUI_TEST_MAX_DIFF_PIXELS` (default `0`) after a 2% per-pixel fuzz.
 No baseline is accepted automatically. Create or update one only after a human
 reviews the image produced by the pinned container.
-
-The checkout did not contain Linux reference images when this harness was
-added, so the first Docker-capable run is a launch-and-capture gate rather than
-a pre-approved pixel regression gate. The next useful app-specific hook would
-be a small test-mode state/ready endpoint that reports the active page and
-settled async generation; that would replace the bounded settle interval with
-an explicit readiness assertion.
 
 ## Human inspection with noVNC
 

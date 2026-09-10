@@ -1,5 +1,4 @@
-//! Settings page: interface, performance, files, Telegram, X handoff,
-//! diagnostics — with the exact labels from the QML spec.
+//! Settings page: interface, performance, files, Telegram, X handoff, and diagnostics.
 
 use crate::settings_import::*;
 use crate::state::*;

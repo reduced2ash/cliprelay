@@ -1339,7 +1339,7 @@ impl crate::App {
             0.0
         };
         let show_prepare = prepare_width > 1.0;
-        // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
+        // Available toolbar space determines which action labels fit.
         let toolbar_width = (width - sidebar_width).max(0.0);
         let slot_reserved = if show_explorer { explorer_width } else { 1.0 }
             + if show_prepare {

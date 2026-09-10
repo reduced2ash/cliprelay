@@ -51,3 +51,12 @@ Copies of GNU GPL version 3 and GNU LGPL version 3 are retained in `LICENSES`
 for packaged media components. Anyone redistributing a binary should audit the
 exact build and provide all notices and corresponding source required by its
 dependency and codec configuration.
+
+## README screenshot
+
+The screenshot shows the running app with short demonstration clips from
+*Big Buck Bunny*. Film: (c) copyright 2008, Blender Foundation /
+[www.bigbuckbunny.org](https://www.bigbuckbunny.org/), licensed under
+[Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).
+The clips were excerpted, renamed, and muted for the demonstration. See the
+[project's license information](https://peach.blender.org/about/).

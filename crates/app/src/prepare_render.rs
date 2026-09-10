@@ -1,10 +1,3 @@
-//! THESIS: Focused Prepare is one continuous delivery workstation; Edit is a spatial framing console, never a legacy checkbox form or miniature NLE.
-//! OWN-WORLD: Blue-black planes, hairline steel borders, square controls, coral commit actions, and cyan temporal focus.
-//! STORY: Review the clip, set an exact range, shape the frame with visual presets and guides, cover private regions, then prepare delivery without leaving context.
-//! FIRST VIEWPORT: A 52px breadcrumb header spans the window; the media/timeline stack fills the left and a 428px inspector turns Edit into a full-width preset rail, live geometry readout, and mask workbench.
-//! FORM: User-pinned 1672×941 editor workbench, ranked first in the inherited surface hand; seed 0181ccb2.
-//! FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
-//!
 //! Prepare workspace renderers: stage (frame + transport + timeline),
 //! inspector tabs, edit/publish inspectors, action dock.
 

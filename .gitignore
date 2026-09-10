@@ -25,6 +25,7 @@ secrets.json
 
 # Rust build output
 /target
+.muse/
 .impeccable/
 .agents/
 skills-lock.json
