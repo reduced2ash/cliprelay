@@ -48,6 +48,7 @@ impl crate::App {
             .id("settings")
             .flex_1()
             .min_w(px(0.0))
+            .min_h(px(0.0))
             .flex()
             .flex_col()
             .bg(theme.ink);
@@ -83,7 +84,7 @@ impl crate::App {
         // The shared field widget sets flex-basis: 0, which overrides
         // width, so pin the basis too for a true fixed width.
         let search_field = if narrow {
-            search_field.w_full()
+            search_field.flex_1().min_w(px(80.0))
         } else {
             search_field.w(px(300.0)).flex_none().flex_basis(px(300.0))
         };
@@ -92,7 +93,7 @@ impl crate::App {
             .flex()
             .gap(px(if narrow { 12.0 } else { 16.0 }));
         if narrow {
-            header_row = header_row.flex_col();
+            header_row = header_row.flex_row().items_center();
         } else {
             header_row = header_row.flex_row().items_end();
         }
@@ -100,18 +101,19 @@ impl crate::App {
             div()
                 .w_full()
                 .px(px(gutter))
-                .pt(px(if narrow { 16.0 } else { 24.0 }))
-                .pb(px(16.0))
+                .pt(px(if narrow { 8.0 } else { 24.0 }))
+                .pb(px(if narrow { 8.0 } else { 16.0 }))
                 .flex()
                 .flex_col()
                 .child(
                     header_row
                         .child(
                             div()
-                                .flex_1()
+                                .when(narrow, |title| title.flex_none())
+                                .when(!narrow, |title| title.flex_1())
                                 .min_w(px(0.0))
                                 .child("Settings")
-                                .text_size(px(24.0))
+                                .text_size(px(if narrow { 18.0 } else { 24.0 }))
                                 .text_color(theme.text)
                                 .font_weight(FontWeight::SEMIBOLD),
                         )
@@ -175,37 +177,30 @@ impl crate::App {
                 "presets",
             ],
         ) {
-            let mut group = seamed_group(&theme);
-            group = group.child(theme_choices(self, cx, &theme));
-            inner = inner
-                .child(section_head(&theme, "Interface", searching))
-                .child(group);
-            if let Some(customs) = theme_custom_group(self, cx, &theme) {
-                inner = inner.child(customs);
-            }
-            inner = inner.child(theme_color_editor(self, cx, &theme));
-            let mut scale_group = seamed_group(&theme);
+            inner = inner.when(!narrow || searching, |inner| {
+                inner.child(section_head(&theme, "Interface", searching))
+            });
+            let mut scale_group = seamed_group(&theme).p(px(if narrow { 12.0 } else { 20.0 }));
             scale_group = scale_group
                 .child(setting_row(
                     cx,
                     &theme,
+                    narrow,
                     "Interface scale",
-                    &["Compact · 80%", "Balanced · 90%", "Standard · 100%"],
+                    &crate::responsive::SCALE_LABELS,
                     self.scale_index(),
                     "scale-select",
                     self.open_combos.contains("scale-select"),
                     move |app, cx, index| {
-                        let value = match index {
-                            0 => 0.8,
-                            1 => 0.9,
-                            _ => 1.0,
-                        };
+                        let value = crate::responsive::SCALES
+                            [index.min(crate::responsive::SCALES.len() - 1)];
                         app.set_setting(UI_SCALE, json!(value), cx);
                     },
                 ))
                 .child(setting_row(
                     cx,
                     &theme,
+                    narrow,
                     "Library density",
                     &["Default", "Compact"],
                     if self.density == "compact" { 1 } else { 0 },
@@ -229,7 +224,18 @@ impl crate::App {
                         app.set_setting(FIT_LIBRARY_THUMBNAILS, json!(value), cx);
                     },
                 ));
-            inner = inner.child(scale_group);
+            inner = inner.child(scale_group).child(
+                div().text_size(px(13.0)).text_color(theme.muted).child(
+                    "Scale changes text, icons and controls together. Applies immediately and is saved automatically. 100% follows your display scaling; Library density only changes the grid."
+                )
+            );
+            let mut group = seamed_group(&theme);
+            group = group.child(theme_choices(self, cx, &theme));
+            inner = inner.child(group);
+            if let Some(customs) = theme_custom_group(self, cx, &theme) {
+                inner = inner.child(customs);
+            }
+            inner = inner.child(theme_color_editor(self, cx, &theme));
             any_visible = true;
         }
 
@@ -264,6 +270,7 @@ impl crate::App {
                 .child(setting_row(
                     cx,
                     &theme,
+                    narrow,
                     "Performance mode",
                     &["Automatic", "Maximum performance"],
                     if self.settings_value(PERFORMANCE_MODE) == "maximum" {
@@ -284,6 +291,7 @@ impl crate::App {
                 .child(setting_row(
                     cx,
                     &theme,
+                    narrow,
                     "Export encoder",
                     &["Automatic", "Prefer hardware", "Software only"],
                     match self.settings_value(EXPORT_ENCODER).as_str() {
@@ -1066,6 +1074,7 @@ impl crate::App {
             page = page.child(
                 div()
                     .id("settings-scroll")
+                    .min_h(px(0.0))
                     .flex_1()
                     .min_w(px(0.0))
                     .overflow_scroll()
@@ -1098,6 +1107,7 @@ impl crate::App {
                 body.child(
                     div()
                         .id("settings-detail")
+                        .min_h(px(0.0))
                         .flex_1()
                         .min_w(px(0.0))
                         .overflow_scroll()
@@ -1178,13 +1188,10 @@ impl crate::App {
     }
 
     pub fn scale_index(&self) -> usize {
-        if self.ui_scale < 0.85 {
-            0
-        } else if self.ui_scale < 0.95 {
-            1
-        } else {
-            2
-        }
+        crate::responsive::SCALES
+            .iter()
+            .position(|scale| *scale == self.ui_scale)
+            .unwrap_or(2)
     }
 
     /// Stored user themes, oldest first. Corrupt entries are dropped on read
@@ -1607,16 +1614,21 @@ fn section_rail(
     active: &str,
     stacked: bool,
     gutter: f32,
-) -> Div {
-    let mut rail = div().flex().gap(px(4.0));
+) -> impl Element {
+    let mut rail = div()
+        .id("settings-section-rail")
+        .flex_none()
+        .min_w(px(0.0))
+        .flex()
+        .gap(px(4.0));
     if stacked {
         rail = rail
             .w_full()
             .px(px(gutter))
             .pt(px(4.0))
-            .pb(px(12.0))
+            .pb(px(4.0))
             .flex_row()
-            .flex_wrap()
+            .overflow_x_scroll()
             .border_b_1()
             .border_color(theme.border);
     } else {
@@ -1678,7 +1690,7 @@ fn section_rail(
         let mut row = div()
             .id(SharedString::from(format!("settings-rail-{click_id}")))
             .px(px(8.0))
-            .py(px(8.0))
+            .py(px(if stacked { 6.0 } else { 8.0 }))
             .rounded(px(RADIUS_MD))
             .flex()
             .flex_row()
@@ -1717,7 +1729,7 @@ fn section_rail(
             .focus(|style| style.border_color(theme.accent))
             .cursor_pointer()
             .tab_index(0)
-            .child(tile)
+            .when(!stacked, |row| row.child(tile))
             .child(
                 div()
                     .flex_1()
@@ -1737,13 +1749,15 @@ fn section_rail(
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_ellipsis(),
                     )
-                    .child(
-                        div()
-                            .child(status)
-                            .text_size(px(12.0))
-                            .text_color(theme.muted)
-                            .text_ellipsis(),
-                    ),
+                    .when(!stacked, |label| {
+                        label.child(
+                            div()
+                                .child(status)
+                                .text_size(px(12.0))
+                                .text_color(theme.muted)
+                                .text_ellipsis(),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |app, _event, _window, cx| {
                 app.settings_page.active_section = Some(click_id.clone());
@@ -1760,7 +1774,7 @@ fn section_rail(
                 }),
             );
         if stacked {
-            row = row.flex_1().min_w(px(170.0));
+            row = row.flex_none().w(px(118.0));
         } else {
             row = row.w_full();
         }
@@ -2008,6 +2022,7 @@ fn theme_color_editor(
         group = group.child(setting_row(
             cx,
             theme,
+            app.window_size.0 < 820.0,
             "Based on",
             &THEME_BASE_LABELS,
             base_index,
@@ -2683,6 +2698,7 @@ fn theme_choices(
 fn setting_row(
     cx: &mut Context<crate::App>,
     theme: &crate::theme::Theme,
+    narrow: bool,
     label: &'static str,
     options: &'static [&'static str],
     selected: usize,
@@ -2695,12 +2711,13 @@ fn setting_row(
         .min_h(px(52.0))
         .py(px(6.0))
         .flex()
-        .flex_row()
-        .items_center()
+        .when(narrow, |row| row.flex_col().items_start())
+        .when(!narrow, |row| row.flex_row().items_center())
         .gap(px(12.0))
         .child(
             div()
-                .flex_1()
+                .when(!narrow, |label| label.flex_1())
+                .min_w(px(0.0))
                 .child(label)
                 .text_size(px(15.0))
                 .text_color(theme.text_soft)
@@ -2720,6 +2737,7 @@ fn combo(
 ) -> impl Element {
     let theme = current_theme();
     let on_change = std::sync::Arc::new(on_change);
+    let keyboard_change = std::sync::Arc::clone(&on_change);
     let selected_label = options.get(selected).copied().unwrap_or("");
     let trigger_bounds = std::rc::Rc::new(std::cell::Cell::new(None::<Bounds<Pixels>>));
     let measured_trigger = trigger_bounds.clone();
@@ -2749,6 +2767,29 @@ fn combo(
                 .shadow(theme.tactile_shadow(TactileState::Pressed, false))
         })
         .cursor_pointer()
+        .tab_index(0)
+        .focus(|style| style.border_color(theme.accent))
+        .on_action(cx.listener(move |app, _: &crate::Activate, _, cx| {
+            app.toggle_combo(id, cx);
+            cx.stop_propagation();
+        }))
+        .on_action(cx.listener(move |app, _: &crate::ActivateSpace, _, cx| {
+            app.toggle_combo(id, cx);
+            cx.stop_propagation();
+        }))
+        .on_key_down(cx.listener(move |app, event: &KeyDownEvent, _, cx| {
+            let last = options.len().saturating_sub(1);
+            let next = match event.keystroke.key.as_str() {
+                "up" | "left" => selected.saturating_sub(1),
+                "down" | "right" => (selected + 1).min(last),
+                "home" => 0,
+                "end" => last,
+                _ => return,
+            };
+            app.close_combo(id, cx);
+            keyboard_change(app, cx, next);
+            cx.stop_propagation();
+        }))
         .flex()
         .items_center()
         .justify_between()
@@ -2800,6 +2841,7 @@ fn combo(
         for (index, option) in options.iter().enumerate() {
             let option = *option;
             let on_change = std::sync::Arc::clone(&on_change);
+            let activate_change = std::sync::Arc::clone(&on_change);
             menu = menu.child(
                 div()
                     .id(SharedString::from(format!("{id}-item-{index}")))
@@ -2809,6 +2851,13 @@ fn combo(
                     .items_center()
                     .gap(px(8.0))
                     .cursor_pointer()
+                    .tab_index(0)
+                    .focus(|style| style.bg(theme.hover))
+                    .on_action(cx.listener(move |app, _: &crate::Activate, _, cx| {
+                        app.close_combo(id, cx);
+                        activate_change(app, cx, index);
+                        cx.stop_propagation();
+                    }))
                     .hover(|style| style.bg(theme.hover))
                     .bg(if index == selected {
                         theme.active

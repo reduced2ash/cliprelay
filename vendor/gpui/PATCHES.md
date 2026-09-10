@@ -58,3 +58,19 @@ The Quad layout is kept in sync with WGSL and HLSL (the native Metal shader
 uses generated headers). Non-Blade renderers draw the opaque fallback instead.
 The Linux Blade path is covered by live Agent Workspace checks; macOS Blade
 and Windows fallback require verification on those platforms.
+
+## Application zoom (`window.rs`, `interactive.rs`, `platform.rs`)
+
+`Window::set_ui_scale` composes application zoom with native display DPI.
+Call it between frames (ClipRelay schedules it with `on_next_frame`). The
+layout viewport shrinks as zoom increases; native window bounds and persisted
+window dimensions retain OS logical units. Paint and text rasterization use
+the composed scale. Native pointer, pixel scroll and file-drop coordinates
+are converted once at `on_input`; synthetic events already use layout units.
+Line scroll units stay unchanged. IME rectangles, point lookup, native window
+menus and client insets convert at their platform boundaries. The default is
+1.0, preserving upstream behavior for other windows.
+
+Regression coverage lives in `crates/app/src/responsive.rs`, including native
+bounds stability, display/zoom composition, pointer/drop/scroll conversion,
+and compatibility with the old stored scale presets.

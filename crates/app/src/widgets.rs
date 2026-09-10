@@ -784,6 +784,7 @@ pub fn field_with_icon_hint(
     let mut element = div()
         .id(id)
         .flex_1()
+        .min_w(px(0.0))
         .h(px(CONTROL_HEIGHT))
         .px(px(13.0))
         .rounded(px(RADIUS_SM))
@@ -812,7 +813,13 @@ pub fn field_with_icon_hint(
     // instead of the old static glyph: the caret is the typing indicator.
     if focused {
         let (before, after) = state.rendered_parts(password);
-        let mut row = div().flex().flex_row().items_center().overflow_hidden();
+        let mut row = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .overflow_hidden();
         if !before.is_empty() {
             row = row.child(
                 div()
@@ -862,6 +869,8 @@ pub fn field_with_icon_hint(
         };
         element = element.child(
             div()
+                .flex_1()
+                .min_w(px(0.0))
                 .child(display)
                 .text_color(if state.text.is_empty() {
                     theme.muted
@@ -1271,7 +1280,9 @@ mod tests {
                         .left_0()
                         .w(px(160.0))
                         .h(px(80.0))
-                        .on_hover(cx.listener(|view, hovered, _, _| view.underlying_hovered = *hovered))
+                        .on_hover(
+                            cx.listener(|view, hovered, _, _| view.underlying_hovered = *hovered),
+                        )
                         .on_click(cx.listener(|view, _, _, _| view.underlying_clicks += 1)),
                 )
                 .child(super::anchored_overlay(

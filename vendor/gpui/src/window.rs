@@ -856,6 +856,7 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    ui_scale: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1125,7 +1126,9 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .update(&mut cx, |_, window, cx| {
+                        window.dispatch_event(event.into_ui_coordinates(window.ui_scale), cx)
+                    })
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
             })
@@ -1239,6 +1242,7 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            ui_scale: 1.0,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -1673,8 +1677,8 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
+        self.scale_factor = self.platform_window.scale_factor() * self.ui_scale;
+        self.viewport_size = self.platform_window.content_size() / self.ui_scale;
         self.display_id = self.platform_window.display().map(|display| display.id());
 
         self.refresh();
@@ -1717,6 +1721,41 @@ impl Window {
         self.viewport_size
     }
 
+    /// Application zoom, independent of the operating system display scale.
+    pub fn ui_scale(&self) -> f32 {
+        self.ui_scale
+    }
+
+    pub(crate) fn ui_to_native_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        Bounds {
+            origin: bounds.origin * self.ui_scale,
+            size: size(
+                bounds.size.width * self.ui_scale,
+                bounds.size.height * self.ui_scale,
+            ),
+        }
+    }
+
+    /// Set application zoom between frames. Layout, rasterization and platform
+    /// input share the same coordinate space; native window bounds stay unzoomed.
+    pub fn set_ui_scale(&mut self, scale: f32, cx: &mut App) {
+        let scale = if scale.is_finite() {
+            scale.clamp(0.5, 3.0)
+        } else {
+            1.0
+        };
+        if self.ui_scale == scale {
+            return;
+        }
+        self.mouse_position = self.mouse_position * (self.ui_scale / scale);
+        self.ui_scale = scale;
+        if let Some(inset) = self.client_inset {
+            self.platform_window.set_client_inset(inset * scale);
+        }
+        self.bounds_changed(cx);
+        self.invalidate_character_coordinates();
+    }
+
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
         self.active.get()
@@ -1744,7 +1783,8 @@ impl Window {
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
-        self.platform_window.show_window_menu(position)
+        self.platform_window
+            .show_window_menu(position * self.ui_scale)
     }
 
     /// Tells the compositor to take control of window movement (Wayland and X11)
@@ -1764,7 +1804,7 @@ impl Window {
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);
-        self.platform_window.set_client_inset(inset);
+        self.platform_window.set_client_inset(inset * self.ui_scale);
     }
 
     /// Returns the client_inset value by [`Self::set_client_inset`].

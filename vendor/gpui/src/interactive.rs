@@ -566,6 +566,30 @@ pub enum PlatformInput {
 }
 
 impl PlatformInput {
+    /// Convert native window coordinates exactly once, at the platform boundary.
+    /// Synthetic events dispatched by views already use layout coordinates.
+    pub fn into_ui_coordinates(mut self, scale: f32) -> Self {
+        match &mut self {
+            Self::MouseDown(event) => event.position = event.position / scale,
+            Self::MouseUp(event) => event.position = event.position / scale,
+            Self::MouseMove(event) => event.position = event.position / scale,
+            Self::MouseExited(event) => event.position = event.position / scale,
+            Self::ScrollWheel(event) => {
+                event.position = event.position / scale;
+                if let ScrollDelta::Pixels(delta) = &mut event.delta {
+                    *delta = *delta / scale;
+                }
+            }
+            Self::FileDrop(
+                FileDropEvent::Entered { position, .. }
+                | FileDropEvent::Pending { position }
+                | FileDropEvent::Submit { position },
+            ) => *position = *position / scale,
+            _ => {}
+        }
+        self
+    }
+
     pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,

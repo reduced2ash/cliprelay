@@ -866,7 +866,7 @@ impl crate::App {
         let disabled = checking;
         let (play_enabled, seek_enabled) =
             crate::prepare::playback_control_availability(self.prepare.video.is_some(), duration);
-        let is_studio = self.prepare.studio_mode;
+        let is_studio = self.prepare_is_focused();
         let stacked_precision = is_studio && panel_width < 780.0;
         let precision_height = if stacked_precision { 118.0 } else { 70.0 };
         let stage_gutter = if is_studio { 16.0 } else { PREPARE_GUTTER };
@@ -891,6 +891,7 @@ impl crate::App {
 
         let mut stage = div()
             .id("prepare-stage")
+            .flex_none()
             .w_full()
             .min_h(px(0.0))
             .flex()
@@ -900,9 +901,6 @@ impl crate::App {
             .pb(px(if is_studio { 0.0 } else { 6.0 }))
             .gap(px(stage_gap))
             .bg(theme.ink);
-        if is_studio {
-            stage = stage.h_full();
-        }
         stage.interactivity().on_mouse_move(cx.listener(
             move |app, event: &MouseMoveEvent, _window, cx| {
                 let x: f32 = event.position.x.into();
@@ -941,16 +939,6 @@ impl crate::App {
             // row in the media budget instead of squeezing its controls.
             frame_height = (frame_height - (precision_height - 70.0) - 28.0).max(118.0);
         }
-        // Frame rect in window coordinates (used by crop/mask drag math).
-        // The workspace tabs live at the window bottom, so the frame sits
-        // below the app and context toolbars, the optional studio/status
-        // header, and this stage's compact top inset.
-        let frame_x = track_left;
-        let frame_top = if is_studio {
-            52.0 + 1.0 + 17.0 + if self.checking { 34.0 } else { 0.0 }
-        } else {
-            TITLE_BAR_HEIGHT + CONTEXT_TOOLBAR_HEIGHT + if self.checking { 34.0 } else { 0.0 }
-        } + 6.0;
         let source_ratio = self
             .selected
             .as_ref()
@@ -967,25 +955,10 @@ impl crate::App {
             frame_height,
             self.prepare.oriented_ratio(source_ratio as f64) as f32,
         );
-        self.prepare.frame_rect = (
-            frame_x + media_left,
-            frame_top + media_top,
-            media_width,
-            media_height,
-        );
-        self.prepare.mask_frame_rect = if self.prepare.crop_enabled {
-            (
-                frame_x + media_left + self.prepare.crop.x as f32 * media_width,
-                frame_top + media_top + self.prepare.crop.y as f32 * media_height,
-                self.prepare.crop.width as f32 * media_width,
-                self.prepare.crop.height as f32 * media_height,
-            )
-        } else {
-            self.prepare.frame_rect
-        };
         let has_edits = self.prepare.has_edits();
         let mut frame = div()
             .id("prepare-frame")
+            .flex_none()
             .w(px(track_width))
             .h(px(frame_height))
             .rounded(px(2.0))
@@ -998,6 +971,33 @@ impl crate::App {
             })
             .overflow_hidden()
             .relative();
+        // Measure the media after layout so crop/mask input follows resizing,
+        // application zoom and the short-window stage's scroll offset.
+        let app = cx.entity().downgrade();
+        frame = frame.child(
+            canvas(
+                move |bounds, _, cx| {
+                    let _ = app.update(cx, |app, _| {
+                        let x = f32::from(bounds.origin.x) + media_left;
+                        let y = f32::from(bounds.origin.y) + media_top;
+                        app.prepare.frame_rect = (x, y, media_width, media_height);
+                        app.prepare.mask_frame_rect = if app.prepare.crop_enabled {
+                            (
+                                x + app.prepare.crop.x as f32 * media_width,
+                                y + app.prepare.crop.y as f32 * media_height,
+                                app.prepare.crop.width as f32 * media_width,
+                                app.prepare.crop.height as f32 * media_height,
+                            )
+                        } else {
+                            app.prepare.frame_rect
+                        };
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        );
         let image_source = (!thumbnail.is_empty()).then(|| PathBuf::from(thumbnail));
         if let Some(video) = self.prepare.video.clone() {
             frame = frame.child(video_element(
@@ -1186,6 +1186,7 @@ impl crate::App {
         };
         let mut track = div()
             .id("timeline-track")
+            .flex_none()
             .w(px(track_width))
             .h(px(track_height))
             .rounded(px(2.0))
@@ -2335,7 +2336,7 @@ impl crate::App {
     pub fn render_prepare_tabs(&mut self, cx: &mut Context<Self>) -> impl Element {
         let theme = current_theme();
         let active_tab = self.prepare.inspector_tab;
-        let compact = !self.prepare.studio_mode;
+        let compact = !self.prepare_is_focused();
         let edit = prepare_inspector_tab(&theme, "tab-edit", "Edit", 0, active_tab, compact, cx);
         let clean = prepare_inspector_tab(&theme, "tab-clean", "Clean", 2, active_tab, compact, cx);
         let deliver =
@@ -2368,7 +2369,7 @@ impl crate::App {
             .id("prepare-inspector")
             .w_full()
             .flex_1()
-            .min_h(px(120.0))
+            .min_h(px(0.0))
             .flex()
             .flex_col()
             .overflow_hidden();
@@ -2384,13 +2385,17 @@ impl crate::App {
                 .render_publish_inspector(cx, theme, panel_width)
                 .into_any(),
         };
-        let inspector_padding = if self.prepare.studio_mode {
+        let inspector_padding = if self.prepare_is_focused() {
             20.0
         } else {
             PREPARE_GUTTER
         };
-        let inspector_top = if self.prepare.studio_mode { 26.0 } else { 8.0 };
-        let inspector_bottom = if self.prepare.studio_mode { 20.0 } else { 14.0 };
+        let inspector_top = if self.prepare_is_focused() { 26.0 } else { 8.0 };
+        let inspector_bottom = if self.prepare_is_focused() {
+            20.0
+        } else {
+            14.0
+        };
         let mut scroll = div()
             .id("inspector-scroll")
             .flex_1()
@@ -2434,7 +2439,7 @@ impl crate::App {
             scroll = scroll.opacity(0.5);
         }
         column = column.child(scroll);
-        if self.prepare.studio_mode && self.prepare.inspector_tab == 1 {
+        if self.prepare_is_focused() && self.prepare.inspector_tab == 1 {
             column = column.child(self.render_action_dock(cx, theme, panel_width));
         }
         column
@@ -2446,7 +2451,7 @@ impl crate::App {
         theme: &crate::theme::Theme,
         _panel_width: f32,
     ) -> impl Element {
-        let is_studio = self.prepare.studio_mode;
+        let is_studio = self.prepare_is_focused();
         let crop_enabled = self.prepare.crop_enabled;
         let crop_preset = self.prepare_crop_preset();
         let guide_mode = self.prepare.guide_mode;
@@ -3759,7 +3764,7 @@ impl crate::App {
         theme: &crate::theme::Theme,
         _panel_width: f32,
     ) -> impl Element {
-        let is_studio = self.prepare.studio_mode;
+        let is_studio = self.prepare_is_focused();
         let cleanup_index = self.prepare.cleanup_index as usize;
         let cleanup_detail = match cleanup_index {
             1 => "Move the generated copy to trash after every requested destination succeeds.",
@@ -3836,7 +3841,7 @@ impl crate::App {
         theme: &crate::theme::Theme,
         _panel_width: f32,
     ) -> impl Element {
-        let is_studio = self.prepare.studio_mode;
+        let is_studio = self.prepare_is_focused();
         let telegram_connected = self.bot_connected() || self.personal_configured();
         let telegram_mode = self.prepare.telegram_mode_index as usize;
         let telegram_status = if telegram_connected {
@@ -4002,7 +4007,7 @@ impl crate::App {
         theme: &crate::theme::Theme,
         _panel_width: f32,
     ) -> impl Element {
-        let is_studio = self.prepare.studio_mode;
+        let is_studio = self.prepare_is_focused();
         let compact = !is_studio;
         let estimated = self.estimate_output_size_label();
         let compression_index = self.prepare.compression_index as usize;
@@ -5161,6 +5166,7 @@ impl crate::App {
         let estimate = self.estimate_output_size_label();
         let mut footer = div()
             .id("prepare-dock-footer")
+            .flex_none()
             .w_full()
             .mt_auto()
             .bg(theme.canvas_background())

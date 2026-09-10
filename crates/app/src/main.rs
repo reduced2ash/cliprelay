@@ -13,6 +13,7 @@ mod history;
 mod icons;
 mod library;
 mod prepare;
+mod responsive;
 mod settings_page;
 mod shortcuts;
 mod state;
@@ -94,6 +95,7 @@ pub struct App {
     pub theme_mode: ThemeMode,
     boot_theme_override: Option<String>,
     pub ui_scale: f32,
+    pub compact_library_visible: bool,
     pub sidebar_collapsed: bool,
     pub density: String,
     pub prepare_expanded: bool,
@@ -432,6 +434,7 @@ impl App {
             theme_mode: boot_theme_mode,
             boot_theme_override,
             ui_scale: 1.0,
+            compact_library_visible: false,
             sidebar_collapsed: false,
             density: "default".into(),
             prepare_expanded: false,
@@ -818,6 +821,7 @@ impl App {
                 cx.notify();
             }
             Event::SelectedMediaChanged(row) => {
+                self.compact_library_visible = false;
                 // Keep the freshly selected tile inside the viewport; when it
                 // lives beyond the loaded page, ask the controller for its
                 // index and chase it across pages.
@@ -1415,7 +1419,7 @@ impl App {
         // Overrides can change without changing the selected custom theme ID.
         self.theme = Theme::resolve(&self.theme_mode, &self.custom_theme_list());
         if let Some(scale) = self.settings.get(UI_SCALE).and_then(|v| v.as_f64()) {
-            self.ui_scale = scale as f32;
+            self.ui_scale = responsive::normalize_scale(scale as f32);
         }
         self.sidebar_collapsed = self
             .settings
@@ -1548,8 +1552,9 @@ impl App {
             self.history_more_menu_closed_at = std::time::Instant::now();
             window.focus(&self.history_source_focus);
             true
-        } else if self.prepare.studio_mode {
+        } else if self.prepare_is_focused() {
             self.prepare.studio_mode = false;
+            self.compact_library_visible = true;
             true
         } else if window.is_fullscreen() {
             window.toggle_fullscreen();
@@ -2462,7 +2467,8 @@ impl App {
         if cancel.load(Ordering::Acquire) {
             return Err("video loading cancelled".into());
         }
-        let direct_error = match crate::video_element::load_rotatable_video(&path, options.clone()) {
+        let direct_error = match crate::video_element::load_rotatable_video(&path, options.clone())
+        {
             Ok(video) => match Self::wait_for_renderable_frame(&video, cancel) {
                 Ok(()) => return Ok((video, None)),
                 Err(error) => error,
@@ -2480,12 +2486,13 @@ impl App {
         if cancel.load(Ordering::Acquire) {
             return Err("video loading cancelled".into());
         }
-        let video = crate::video_element::load_rotatable_video(&proxy, options).map_err(|error| {
-            format!(
-                "{direct_error}; failed to open compatible preview {}: {error}",
-                proxy.display()
-            )
-        })?;
+        let video =
+            crate::video_element::load_rotatable_video(&proxy, options).map_err(|error| {
+                format!(
+                    "{direct_error}; failed to open compatible preview {}: {error}",
+                    proxy.display()
+                )
+            })?;
         Self::wait_for_renderable_frame(&video, cancel).map_err(|error| {
             format!(
                 "{direct_error}; compatible preview {} is not renderable: {error}",
@@ -3196,19 +3203,27 @@ impl App {
             self.command_open = false;
             self.finish_command_session();
         }
+        // Apply between frames so root constraints, deferred menus and paint
+        // all see the same viewport on the first frame at the new zoom.
+        if window.ui_scale() != self.ui_scale {
+            let scale = self.ui_scale;
+            window.on_next_frame(move |window, cx| window.set_ui_scale(scale, cx));
+        }
+        let viewport = window.viewport_size();
+        self.window_size = (viewport.width.into(), viewport.height.into());
         let size = window.bounds().size;
-        self.window_size = (size.width.into(), size.height.into());
+        let native_size: (f32, f32) = (size.width.into(), size.height.into());
         // Persist the window size (throttled) so the next launch restores it.
-        if (self.window_size.0 - self.saved_bounds.0).abs() > 24.0
-            || (self.window_size.1 - self.saved_bounds.1).abs() > 24.0
+        if (native_size.0 - self.saved_bounds.0).abs() > 24.0
+            || (native_size.1 - self.saved_bounds.1).abs() > 24.0
         {
-            self.saved_bounds = self.window_size;
+            self.saved_bounds = native_size;
             self.command(Command::SetSetting(
                 WINDOW_BOUNDS.to_string(),
                 serde_json::json!(format!(
                     "{}x{}",
-                    self.window_size.0.round() as i64,
-                    self.window_size.1.round() as i64
+                    native_size.0.round() as i64,
+                    native_size.1.round() as i64
                 )),
             ));
         }
@@ -3249,7 +3264,7 @@ impl App {
         widgets::set_current_theme(&theme);
 
         let focused_studio =
-            self.page == Page::Library && self.prepare.studio_mode && self.selected.is_some();
+            self.page == Page::Library && self.prepare_is_focused() && self.selected.is_some();
         // Both glass themes use one window-level material, including the
         // focused Studio shell. The media aperture itself stays opaque in the
         // Studio renderer, while capable backends blur behind the chrome.
@@ -3346,9 +3361,38 @@ impl App {
         let page = self.page;
         let page_content = match page {
             Page::Library => {
-                if self.selected.is_some() && !self.prepare.studio_mode {
+                if self.selected.is_some() && self.prepare_is_focused() {
+                    self.render_prepare_studio(cx).into_any()
+                } else if self.selected.is_some() && self.window_size.0 < responsive::DOCK_MIN_WIDTH
+                {
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .min_h(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            button(
+                                "compact-open-prepare",
+                                "Return to Prepare",
+                                ButtonKind::Secondary,
+                                Some("panel"),
+                                true,
+                                cx,
+                                |app, cx| {
+                                    app.compact_library_visible = false;
+                                    cx.notify();
+                                },
+                            )
+                            .w(px(200.0))
+                            .flex_none(),
+                        )
+                        .child(self.render_library(cx))
+                        .into_any()
+                } else if self.selected.is_some() && !self.prepare.studio_mode {
                     let mut row = div()
                         .id("library-row")
+                        .min_h(px(0.0))
                         .flex_1()
                         .flex()
                         .flex_row()
@@ -3452,6 +3496,7 @@ impl App {
             });
         }
         if self.focus_library_selection
+            && !focused_studio
             && self.page == Page::Library
             && self.library_location.is_current(self.library.generation)
             && self
@@ -3474,7 +3519,8 @@ impl App {
         // Toasts.
         let toasts = self.toasts.clone();
         if !toasts.is_empty() {
-            let toast_x = ((self.window_size.0 - 460.0) / 2.0).max(0.0);
+            let toast_width = (self.window_size.0 - 24.0).min(460.0);
+            let toast_x = (self.window_size.0 - toast_width) / 2.0;
             let mut toast_column = div()
                 .absolute()
                 .bottom(px(WORKSPACE_TAB_HEIGHT + 12.0))
@@ -3482,7 +3528,7 @@ impl App {
                 .flex()
                 .flex_col()
                 .gap(px(8.0))
-                .w(px(460.0));
+                .w(px(toast_width));
             for toast in toasts {
                 let toast_id = toast.id;
                 let (bg, border, glyph, color) = match toast.kind {

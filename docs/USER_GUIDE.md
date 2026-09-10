@@ -161,7 +161,21 @@ large or remote library.
 Visible thumbnails use a bounded background queue. Hover previews are also
 generated in the background and may be disabled.
 
-Interface scale presets provide 80, 90, and 100 percent workspace density.
+**Settings → Interface → Interface scale** changes text, icons, controls,
+menus, and media tools together. Choose 80%, 90%, 100% (default), 110%, 125%,
+or 150%. Changes apply immediately and are saved for the next launch; select
+100% to reset. This multiplies your operating system's display scaling. Focus
+the selector and use the arrow keys to adjust it, or open it with Enter.
+Library density remains an independent grid preference.
+
+Layouts respond to the space remaining at your chosen scale. Navigation
+collapses before the workspace gets crowded. When Library and Prepare no
+longer fit together, Prepare uses a full-window view: **Back to Library** and
+**Return to Prepare** switch between them without discarding the selection or
+edit draft. **Inspector** switches between the preview and editing/delivery
+controls. Short windows scroll the preview's lower controls; Settings uses
+compact section tabs and scrollable content.
+
 The Interface settings also include **Fit the whole video inside Library
 thumbnails**. Enable it to keep every edge of portrait, square, or ultrawide
 videos visible; the thumbnail uses letterboxing instead of cropping to fill.

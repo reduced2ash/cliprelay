@@ -691,8 +691,8 @@ impl crate::App {
         let entries = self.command_entries();
         let selected = self.command_selected;
         let scope = self.effective_command_scope();
-        let popup_width = (self.window_size.0 - 340.0).clamp(360.0, 680.0);
-        let results_height = (self.window_size.1 - 140.0).clamp(180.0, 320.0);
+        let popup_width = (self.window_size.0 - 32.0).clamp(280.0, 680.0);
+        let results_height = (self.window_size.1 - 140.0).clamp(100.0, 320.0);
         let mut popup = div()
             .id("command-center-popup")
             .track_focus(&self.command_popup_focus)
@@ -1329,12 +1329,15 @@ impl crate::App {
         let show_explorer =
             page == Page::Library && has_root && self.explorer_visible() && !studio_mode;
         let explorer_width = EXPLORER_WIDTH;
-        let prepare_width =
-            if page == Page::Library && self.selected.is_some() && !self.prepare.studio_mode {
-                self.prepare_dock_width()
-            } else {
-                0.0
-            };
+        let prepare_width = if page == Page::Library
+            && self.selected.is_some()
+            && !self.prepare.studio_mode
+            && width >= crate::responsive::DOCK_MIN_WIDTH
+        {
+            self.prepare_dock_width()
+        } else {
+            0.0
+        };
         let show_prepare = prepare_width > 1.0;
         // Slot width for responsive thresholds (matches QML libraryContextSlot.width <680 / <500)
         let toolbar_width = (width - sidebar_width).max(0.0);
@@ -2708,7 +2711,7 @@ impl crate::App {
         let compact = width < 1120.0;
         let very_compact = width < 1000.0;
         let titlebar_leading = if cfg!(target_os = "macos") {
-            116.0
+            116.0 / self.ui_scale
         } else {
             16.0
         };
@@ -2875,6 +2878,8 @@ impl crate::App {
             "command-center",
             if self.effective_command_scope() == "commands" {
                 "Run a command"
+            } else if width < 700.0 {
+                "Search"
             } else if very_compact {
                 "Search ClipRelay"
             } else {
@@ -2910,7 +2915,13 @@ impl crate::App {
                 size(px(0.0), px(34.0)),
             )
             .flex_1()
-            .min_w(px(if very_compact { 200.0 } else { 280.0 }))
+            .min_w(px(if width < 700.0 {
+                80.0
+            } else if very_compact {
+                200.0
+            } else {
+                280.0
+            }))
             .max_w(px(680.0))
             .h(px(34.0)),
         );
@@ -4168,7 +4179,7 @@ impl crate::App {
         let checking = self.checking;
         // A narrow Studio becomes a deliberate one-pane workspace. Keeping a
         // usable inspector matters more than squeezing both panes into slivers.
-        let compact_studio = width < 980.0;
+        let compact_studio = width < crate::responsive::DOCK_MIN_WIDTH;
         let compact_inspector_open = self.prepare.compact_inspector_open;
         let inspector_width = self.prepare.studio_width.clamp(400.0, 520.0) as f32;
         let studio_inset = 12.0;
@@ -4203,13 +4214,18 @@ impl crate::App {
             .child(
                 button(
                     "studio-mode-active",
-                    "Back to Prepare",
+                    if width < crate::responsive::DOCK_MIN_WIDTH {
+                        "Back to Library"
+                    } else {
+                        "Back to Prepare"
+                    },
                     ButtonKind::Secondary,
                     Some("arrow-left"),
                     true,
                     cx,
                     |app, cx| {
                         app.prepare.studio_mode = false;
+                        app.compact_library_visible = true;
                         app.prepare.compact_inspector_open = false;
                         cx.notify();
                     },
@@ -4328,7 +4344,14 @@ impl crate::App {
                     .child(self.render_prepare_inspector(cx, &theme, stage_width)),
             );
         } else {
-            stage_col = stage_col.child(self.render_prepare_stage(cx, &theme, stage_width));
+            stage_col = stage_col.child(
+                div()
+                    .id("studio-stage-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .child(self.render_prepare_stage(cx, &theme, stage_width)),
+            );
         }
 
         let mut workbench = div()
@@ -4752,7 +4775,7 @@ impl crate::App {
         let has_explicit_selection = self.random_has_selection;
         let compact = self.window_size.0 < 820.0 || self.window_size.1 < 620.0;
         let popup_width = if compact { 400.0 } else { 456.0 };
-        let popup_height = (self.window_size.1 - 82.0).clamp(304.0, 560.0);
+        let popup_height = (self.window_size.1 - 82.0).clamp(200.0, 560.0);
         let direct_folder_count = self.random_list.folder_count;
         let total_video_count = self.random_list.video_count;
         let folder_count_label = format!(

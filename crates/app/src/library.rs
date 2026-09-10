@@ -242,7 +242,10 @@ impl Layout {
         let mut grid_width = (page_width - explorer_width).max(1.0);
         // The docked Prepare panel shares the page row; the scrollbar
         // reserves 10px of content width inside the grid column.
-        if app.selected.is_some() && !app.prepare.studio_mode {
+        if app.selected.is_some()
+            && !app.prepare.studio_mode
+            && window_width >= crate::responsive::DOCK_MIN_WIDTH
+        {
             grid_width = (grid_width - app.prepare_dock_width()).max(1.0);
         }
         // The original insets the grid 14px per side (libraryGridInset);
