@@ -2505,59 +2505,39 @@ impl crate::App {
                                     .text_color(theme.muted),
                             ),
                     )
-                    .child(if has_edits {
-                        button(
-                            "reset-frame-edits",
-                            "Reset all",
-                            ButtonKind::Ghost,
-                            Some("refresh"),
-                            true,
-                            cx,
-                            |app, cx| {
-                                app.rotate_prepare(-(app.prepare.rotation as i32), cx);
-                                app.prepare.reset_crop();
-                                app.prepare.clear_shapes();
-                                app.save_draft();
-                                cx.notify();
-                            },
-                        )
-                        .h(px(32.0))
-                        .px(px(8.0))
-                        .into_any()
-                    } else {
-                        div().into_any()
-                    }),
             ))
-            .when(!is_studio && has_edits, |column| {
-                column.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .justify_end()
-                        .child(
-                            button(
-                                "reset-frame-edits",
-                                "Reset all",
-                                ButtonKind::Ghost,
-                                Some("refresh"),
-                                true,
-                                cx,
-                                |app, cx| {
-                                    app.rotate_prepare(-(app.prepare.rotation as i32), cx);
-                                    app.prepare.reset_crop();
-                                    app.prepare.clear_shapes();
-                                    app.save_draft();
-                                    cx.notify();
-                                },
-                            )
-                            .h(px(28.0))
-                            .px(px(7.0))
-                            .text_size(px(11.0)),
-                        ),
-                )
-            })
-            .child(edit_crop_switch(theme, crop_enabled, is_studio, cx))
-            .child(div().child("Framing preset").text_size(px(11.0)).text_color(theme.muted))
+            .child(
+                div().w_full().flex().items_center().gap(px(6.0))
+                    .child(edit_crop_switch(theme, crop_enabled, is_studio, cx)
+                        .flex_1().min_w(px(0.0)))
+                    .child(workbench_button("rotate-left", "Rotate left", "↶", ButtonKind::Secondary,
+                        !self.checking, true, "Rotate video 90° left", cx,
+                        |app, cx| app.rotate_prepare(-1, cx))
+                        .w(px(if is_studio { 56.0 } else { 44.0 }))
+                        .h(px(if is_studio { 68.0 } else { 44.0 })))
+                    .child(workbench_button("rotate-right", "Rotate right", "↻", ButtonKind::Secondary,
+                        !self.checking, true, "Rotate video 90° right", cx,
+                        |app, cx| app.rotate_prepare(1, cx))
+                        .w(px(if is_studio { 56.0 } else { 44.0 }))
+                        .h(px(if is_studio { 68.0 } else { 44.0 })))
+            )
+            .child(
+                div().w_full().h(px(28.0)).flex().items_center().gap(px(6.0))
+                    .child(div().flex_1().child("Framing preset").text_size(px(11.0)).text_color(theme.muted))
+                    .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
+                        "refresh", ButtonKind::Ghost, !self.checking && self.prepare.rotation != 0,
+                        false, "Reset video rotation", cx,
+                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
+                        .w(px(62.0)).h(px(28.0)))
+                    .child(button("reset-frame-edits", "Reset all", ButtonKind::Ghost,
+                        Some("refresh"), has_edits && !self.checking, cx, |app, cx| {
+                            app.rotate_prepare(-(app.prepare.rotation as i32), cx);
+                            app.prepare.reset_crop();
+                            app.prepare.clear_shapes();
+                            app.save_draft();
+                            cx.notify();
+                        }).h(px(28.0)).px(px(7.0)).text_size(px(11.0)))
+            )
             .child(
                 div()
                     .w_full()
@@ -2643,24 +2623,6 @@ impl crate::App {
                             cx.notify();
                         },
                     )),
-            )
-            .child(
-                div().w_full().flex().gap(px(if is_studio { 6.0 } else { 5.0 }))
-                    .child(workbench_button("rotate-left", "Rotate left", "↶", ButtonKind::Secondary,
-                        !self.checking, false, "Rotate video 90° left", cx,
-                        |app, cx| app.rotate_prepare(-1, cx))
-                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 }))
-                        .when(!is_studio, |control| control.line_height(px(16.0))))
-                    .child(workbench_button("rotate-right", "Rotate right", "↻", ButtonKind::Secondary,
-                        !self.checking, false, "Rotate video 90° right", cx,
-                        |app, cx| app.rotate_prepare(1, cx))
-                        .flex_1().h(px(if is_studio { 36.0 } else { 32.0 }))
-                        .when(!is_studio, |control| control.line_height(px(16.0))))
-                    .child(workbench_button("rotation-reset", &format!("{}°", self.prepare.rotation as u16 * 90),
-                        "refresh", ButtonKind::Secondary, !self.checking && self.prepare.rotation != 0,
-                        false, "Reset video rotation", cx,
-                        |app, cx| app.rotate_prepare(-(app.prepare.rotation as i32), cx))
-                        .w(px(68.0)).h(px(if is_studio { 36.0 } else { 32.0 })))
             )
             .child(
                 div()
