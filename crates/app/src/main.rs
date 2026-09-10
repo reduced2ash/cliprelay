@@ -4073,6 +4073,16 @@ fn configure_linux_backend() {
     let wayland_available =
         std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
 
+    // GPUI's headless backend cannot open our window, and quitting from its
+    // startup callback leaves the event loop running. Fail before starting it.
+    if !display_available && !wayland_available {
+        eprintln!(
+            "ClipRelay needs a graphical desktop session, but neither DISPLAY nor WAYLAND_DISPLAY is set.\n\
+             Run it from a terminal inside your desktop session, or pass that session's display environment."
+        );
+        std::process::exit(1);
+    }
+
     // GPUI 0.2.2's native Wayland Blade path can accept input under niri
     // without presenting the resulting frames. Its X11 path presents
     // reliably through XWayland, so prefer that path when it is available.
@@ -4167,9 +4177,9 @@ fn init_bundled_gstreamer() {
 }
 
 fn main() {
+    configure_linux_backend();
     init_bundled_gstreamer();
     env_logger::init();
-    configure_linux_backend();
     let (mut window_width, mut window_height) = parse_cli_args();
     let cli_size = std::env::args().any(|a| {
         a == "--window-width"
