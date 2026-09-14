@@ -37,22 +37,10 @@ fn prepare_frame_height(
         let width_aware_height = (track_width * 0.58).max(minimum_height);
         available_height.min(width_aware_height)
     } else {
-        // Docked Prepare also owns the full tabbed inspector. Let the proofing
-        // canvas yield first so those controls remain present at laptop
-        // heights, with overflow handled by the inspector's scroll region.
-        let reserved_height = if checking { 540.0 } else { 506.0 };
-        let available_height = (window_height - reserved_height).max(118.0);
-        let width_aware_height = (track_width * 0.87).clamp(280.0, 420.0);
-        let viewport_cap = if window_height < 820.0 {
-            220.0
-        } else if window_height < 1000.0 {
-            280.0
-        } else if window_height < 1200.0 {
-            320.0
-        } else {
-            380.0
-        };
-        available_height.min(width_aware_height).min(viewport_cap)
+        // Keep transport, tabs, footer and a usable scrollable inspector visible,
+        // while allowing tall clips to use more of the dock than landscape clips.
+        let reserved_height = if checking { 574.0 } else { 540.0 };
+        (window_height - reserved_height).max(118.0)
     }
 }
 
@@ -922,14 +910,11 @@ impl crate::App {
             }),
         );
 
-        // Video frame.
-        // Portrait and landscape clips receive the same proofing area and
-        // letterbox inside it; the source ratio must not collapse the canvas.
+        // The dock player follows the oriented source aspect ratio. Studio
+        // retains its proofing canvas; crop/mask coordinates use the media rect.
         let mut frame_height =
             prepare_frame_height(is_studio, self.checking, self.window_size.1, track_width);
         if is_studio {
-            // Reserve the inset panel's outside spacing and optional second
-            // row in the media budget instead of squeezing its controls.
             frame_height = (frame_height - (precision_height - 70.0) - 28.0).max(118.0);
         }
         let source_ratio = self
@@ -943,16 +928,22 @@ impl crate::App {
                 }
             })
             .unwrap_or(16.0 / 9.0);
-        let (media_left, media_top, media_width, media_height) = fitted_media_rect(
-            track_width,
-            frame_height,
-            self.prepare.oriented_ratio(source_ratio as f64) as f32,
-        );
+        let oriented_ratio = self.prepare.oriented_ratio(source_ratio as f64) as f32;
+        let frame_width = if is_studio {
+            track_width
+        } else {
+            let (_, _, width, height) =
+                fitted_media_rect(track_width, frame_height, oriented_ratio);
+            frame_height = height;
+            width
+        };
+        let (media_left, media_top, media_width, media_height) =
+            fitted_media_rect(frame_width, frame_height, oriented_ratio);
         let has_edits = self.prepare.has_edits();
         let mut frame = div()
             .id("prepare-frame")
             .flex_none()
-            .w(px(track_width))
+            .w(px(frame_width))
             .h(px(frame_height))
             .rounded(px(2.0))
             .bg(color_from_hex("#05070B"))
@@ -996,7 +987,7 @@ impl crate::App {
             frame = frame.child(video_element(
                 video,
                 "prepare-video",
-                px(track_width),
+                px(frame_width),
                 px(frame_height),
                 VideoFit::Contain,
             ));
@@ -1042,7 +1033,7 @@ impl crate::App {
             media_width,
             media_height,
         ));
-        stage = stage.child(frame);
+        stage = stage.child(div().w_full().flex().justify_center().child(frame));
 
         // Transport row (precise centiseconds like the original).
         let time_label = self.prepare.format_time_precise(position);
@@ -5925,10 +5916,19 @@ mod prepare_tests {
     }
 
     #[test]
-    fn dock_stage_yields_to_the_persistent_inspector() {
-        assert_eq!(prepare_frame_height(false, false, 760.0, 370.0), 220.0);
-        assert_eq!(prepare_frame_height(false, false, 1440.0, 592.0), 380.0);
-        assert_eq!(prepare_frame_height(false, false, 1440.0, 900.0), 380.0);
+    fn dock_stage_reserves_controls_and_follows_source_ratio() {
+        let budget = prepare_frame_height(false, false, 960.0, 510.0);
+        assert_eq!(budget, 420.0);
+        let (_, _, landscape_width, landscape_height) =
+            fitted_media_rect(510.0, budget, 16.0 / 9.0);
+        let (_, _, portrait_width, portrait_height) = fitted_media_rect(510.0, budget, 9.0 / 16.0);
+        assert_eq!(landscape_width, 510.0);
+        assert!((landscape_height - 286.875).abs() < 0.01);
+        assert_eq!(portrait_height, budget);
+        assert!((portrait_width / portrait_height - 9.0 / 16.0).abs() < 0.001);
+        assert!(portrait_height > landscape_height);
+        assert_eq!(prepare_frame_height(false, true, 760.0, 370.0), 186.0);
+        assert_eq!(prepare_frame_height(false, false, 520.0, 370.0), 118.0);
     }
 
     #[test]
