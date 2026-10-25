@@ -4112,12 +4112,54 @@ fn should_prefer_x11(
         })
 }
 
+/// Recover a local session only when there is one unambiguous live compositor.
+#[cfg(target_os = "linux")]
+fn discover_wayland_display(runtime: &std::path::Path) -> Option<std::ffi::OsString> {
+    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::net::UnixStream;
+
+    let mut sockets = std::fs::read_dir(runtime).ok()?.filter_map(|entry| {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("wayland-")
+            || !entry.file_type().ok()?.is_socket()
+            || UnixStream::connect(entry.path()).is_err()
+        {
+            return None;
+        }
+        Some(name)
+    });
+    let socket = sockets.next()?;
+    sockets.next().is_none().then_some(socket)
+}
+
 #[cfg(target_os = "linux")]
 fn configure_linux_backend() {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
     let display_available = std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty());
-    let wayland_available =
+    let mut wayland_available =
         std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
+
+    // Launchers can omit display variables even inside a running desktop.
+    // Do not redirect explicit displays or remote/headless sessions.
+    if !display_available
+        && !wayland_available
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
+        && std::env::var_os("SSH_CONNECTION").is_none()
+        && std::env::var_os("SSH_TTY").is_none()
+        && std::env::var_os("ZED_HEADLESS").is_none()
+    {
+        if let Some(socket) = std::env::var_os("XDG_RUNTIME_DIR")
+            .and_then(|runtime| discover_wayland_display(std::path::Path::new(&runtime)))
+        {
+            eprintln!(
+                "ClipRelay: using local Wayland display {}",
+                socket.to_string_lossy()
+            );
+            std::env::set_var("WAYLAND_DISPLAY", socket);
+            wayland_available = true;
+        }
+    }
 
     // GPUI's headless backend cannot open our window, and quitting from its
     // startup callback leaves the event loop running. Fail before starting it.
@@ -4346,7 +4388,22 @@ mod page_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_backend_tests {
-    use super::should_prefer_x11;
+    use super::{discover_wayland_display, should_prefer_x11};
+
+    #[test]
+    fn discovers_only_one_live_wayland_socket() {
+        use std::os::unix::net::UnixListener;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(discover_wayland_display(dir.path()).is_none());
+        std::fs::write(dir.path().join("wayland-0.lock"), "").unwrap();
+        let stale = dir.path().join("wayland-stale");
+        drop(UnixListener::bind(&stale).unwrap());
+        assert!(discover_wayland_display(dir.path()).is_none());
+        let _first = UnixListener::bind(dir.path().join("wayland-1")).unwrap();
+        assert_eq!(discover_wayland_display(dir.path()).unwrap(), "wayland-1");
+        let _second = UnixListener::bind(dir.path().join("wayland-2")).unwrap();
+        assert!(discover_wayland_display(dir.path()).is_none());
+    }
 
     #[test]
     fn niri_prefers_x11_only_when_both_backends_are_available() {
